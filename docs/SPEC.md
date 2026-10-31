@@ -1,4 +1,5 @@
 # Specs : Icomic
+<!-- version: 2 -->
 
 ## 1. Project Overview
 
@@ -6,30 +7,33 @@ project name - Icomic
 
 ### 1.1 Purpose
 
-Build an AI-powered comic book generator.
+Build an AI-powered comic book generator designed to be sold to end users (free tier first, then a paywall).
 
 The user provides a written script.
 
-The system converts the script into a comic book.
+The system converts the script into a comic book through a staged, approval-gated pipeline.
 
 The user can:
 
 - Enter a script.
 - Select the number of chapters.
 - Select an art style.
-- Review the generated story.
-- Review and edit comic panels.
-- Generate comic book images.
-- Download the final comic book.
+- Define and approve character profiles and reference images.
+- Review a cheap draft sketch of each page and approve composition.
+- Review and approve final line art.
+- Colour the comic (AI-suggested palette with automatic apply, fully editable, paint-bucket fill tool).
+- Download the finished comic book.
 - Publish the comic book.
 
-The system must use Meta AI models only for AI tasks.
+The system must use Meta AI models only for all AI tasks.
 
 ### 1.2 Product Goal
 
 Allow a user to turn a written story into a publishable comic book without drawing skills.
 
-The system must provide control over the story, images, and generation cost.
+The system must provide control over the story, images, and generation cost at every stage.
+
+The product must be ready to introduce paid plans and access entitlements without rewriting the billing layer.
 
 ### 1.3 Target Users
 
@@ -39,6 +43,18 @@ The system must provide control over the story, images, and generation cost.
 - Artists
 - Content creators
 - Students
+
+All users must be 18 years of age or older (Meta API terms requirement; see section 11).
+
+### 1.4 AI Model Policy
+
+All AI features use Meta models only (Meta Model API at `api.meta.ai`).
+
+Image generation uses `muse-image-1.0`, which is currently available only as a hosted API; no open-weights image model from Meta exists. The image generation adapter port must remain independent so a future self-hosted or alternative image model can be substituted without rewriting the product. The hosting decision for image generation is a pending captain decision.
+
+Real Meta API integration is deferred until API credits are available. The product must run end-to-end with no network access and no API key in development and test, using deterministic fake adapters (see section 8 and ARCHITECTURE.md).
+
+---
 
 ## Thought Process
 
@@ -62,25 +78,24 @@ The second is the character design that based on the script the user has provide
 
 ## 2. Core User Flow
 
-The main workflow is:
+The main pipeline is:
 
 1. User creates a project.
 2. User provides a script.
 3. System asks how many chapters the user wants.
-4. User selects the number of chapters.
-5. User selects the comic book style.
-6. System analyzes the script.
-7. System creates a chapter outline.
-8. User reviews the outline.
-9. User approves the outline.
-10. System creates a panel-by-panel storyboard.
-11. User reviews the storyboard.
-12. System generates comic book images.
-13. User reviews and edits the panels.
-14. System assembles the comic book.
-15. User downloads the comic book.
+4. User selects the number of chapters and art style.
+5. System analyzes the script and creates a chapter outline.
+6. User reviews and approves the outline. (Approval gate.)
+7. System extracts characters; user reviews and approves character profiles and reference images. (Approval gate.)
+8. For each chapter, the system generates panel text (scene descriptions, dialogue, narration). The user edits panel text freely. No approval gate - panel text feeds the draft step.
+9. System generates one rough, stick-style draft image per page. User reviews draft composition and approves or regenerates. (Approval gate - no final image is generated before draft approval.)
+10. System generates final black-and-white line art per page. User reviews and approves line art. (Approval gate.)
+11. System suggests a colour palette (AI-generated). User reviews, edits, or overrides palette colours. User applies colours with the paint-bucket fill tool. Per-panel undo is available. User approves colouring. (Approval gate.)
+12. System assembles the comic book.
+13. User reviews the final comic and downloads or publishes.
 
-The system must not generate all images before the user approves the storyboard.
+The system must not generate final line art before the user approves the draft.
+The system must not generate any image before the user approves the content (panel text) for that stage.
 
 ---
 
@@ -142,7 +157,7 @@ Each chapter must contain:
 
 The user must be able to edit the outline.
 
-The system must wait for user approval before generating the storyboard.
+The system must wait for user approval before proceeding to character design.
 
 ### 3.4 Character Design
 
@@ -161,17 +176,17 @@ The profile must contain:
 - Personality
 - Important visual features
 
-The system must generate a character reference image.
+The system must generate a character reference image for each character using the image adapter.
 
 The user must be able to approve or regenerate the reference image.
 
-Approved character references must be reused during image generation.
+Approved character references must be reused during all subsequent image generation stages.
 
-The system must attempt to preserve character identity across all chapters.
+The system must attempt to preserve character identity across all chapters (via reference image anchoring as the API supports).
 
-### 3.5 Comic Panel Generation
+### 3.5 Panel Text Generation
 
-The system must convert each chapter into comic panels.
+The system must convert each chapter into panel descriptions.
 
 Each panel must contain:
 
@@ -182,7 +197,7 @@ Each panel must contain:
 - Background
 - Dialogue
 - Narration
-- Image generation prompt
+- Image generation prompt (derived text, editable)
 
 The user must be able to edit:
 
@@ -192,9 +207,94 @@ The user must be able to edit:
 - Character actions
 - Image prompts
 
-The system must generate images only after the user approves the storyboard.
+Panel text is an editable intermediate; it is not an approval gate. Edited panel text feeds the draft image step directly.
 
-### 3.6 Comic Book Editor
+### 3.6 Draft Sketch Stage
+
+The system must generate one rough draft image per page (not one per panel).
+
+One draft image is one call to the image adapter; it shows all panels for that page in a rough, stick-style composition.
+
+The draft image is used to let the user approve layout and composition before committing to the higher-cost final line art.
+
+The user must be able to:
+
+- Approve the draft (proceeds to final line art).
+- Regenerate the draft (costs one additional image call).
+
+The system must not generate final line art before the user approves the draft.
+
+The draft stage costs one image call per attempt per page. Credit cost for the draft is displayed before generation.
+
+### 3.7 Final Line Art Stage
+
+After draft approval, the system must generate final black-and-white line art per page.
+
+The line art must use prompts that request bold, clean, closed-contour comic book lines (thick black outlines, flat white fills, no shading).
+
+Because the image model cannot guarantee perfectly closed outlines, the colouring tool must tolerate gaps (see section 3.8).
+
+The user must be able to:
+
+- Approve the line art (proceeds to colouring).
+- Regenerate the line art (costs one additional image call).
+
+The system must not start colouring before the user approves the line art.
+
+The final line art forms the fixed line layer in the colour editor. It is never re-rendered during colouring.
+
+### 3.8 Colouring
+
+Colouring is a deterministic fill step applied on top of the approved line art. No image API call is made during colouring fill.
+
+#### 3.8.1 AI Colour Palette Suggestion
+
+Before the user starts colouring, the system must request a colour palette suggestion from a Meta language or vision model.
+
+The suggestion must include:
+
+- A palette name or theme.
+- Per-region colour recommendations (background, character skin, hair, clothing, environment).
+- A hex or RGB value for each recommended colour.
+
+The system must apply the suggested palette automatically as the initial colour state.
+
+The user can accept the suggested palette or override any colour.
+
+#### 3.8.2 Manual Colour Editing
+
+The user must be able to:
+
+- See the full palette in use.
+- Change any colour in the palette.
+- Use an eyedropper to sample a colour from the canvas.
+- Apply a colour to a region with a paint-bucket fill tool.
+
+#### 3.8.3 Paint-Bucket Fill Tool
+
+The paint-bucket fill tool must operate on the approved line art.
+
+Fill regions are bounded by dark pixels in the line art layer.
+
+The fill algorithm must:
+
+- Use a flood-fill algorithm with a configurable darkness threshold so near-black anti-aliased pixels are treated as boundaries.
+- Apply morphological gap-closing before fill so small gaps in the line art do not cause colour leakage.
+- Provide a manual gap-closer tool so the user can draw small bridge strokes to close visible gaps before applying fill.
+
+The fill is computed entirely in the browser (client-side) using ordinary code. No AI call and no API credit is consumed during fill.
+
+#### 3.8.4 Per-Panel Undo
+
+The colour editor must support per-panel undo for every fill action.
+
+The user must be able to undo the last N fill actions (N is configurable, default 20).
+
+#### 3.8.5 Colouring Approval
+
+The user must approve the coloured result for each page before the page is marked complete.
+
+### 3.9 Comic Book Editor
 
 The system must provide a comic book editor.
 
@@ -202,7 +302,8 @@ The editor must allow the user to:
 
 - View all chapters.
 - View all panels.
-- Regenerate an image.
+- Regenerate a draft image.
+- Regenerate a final line art image.
 - Edit dialogue.
 - Edit narration.
 - Change panel order.
@@ -214,7 +315,7 @@ The editor must save changes automatically.
 
 The editor must display generation status.
 
-### 3.7 Comic Book Export
+### 3.10 Comic Book Export
 
 The system must generate a downloadable comic book.
 
@@ -231,7 +332,9 @@ The PDF must contain:
 - Dialogue
 - Narration
 - Page numbers
-- Copyright or attribution information, when required
+- AI-generation disclosure (required; see section 11.4)
+- Meta provenance metadata preserved (required; see section 11.4)
+- Copyright or attribution information
 
 The system must provide a preview before download.
 
@@ -282,12 +385,13 @@ The model layer must support the following tasks:
 | ---------------------- | -------------------------- |
 | Script analysis        | Meta language model        |
 | Chapter planning       | Meta language model        |
-| Storyboard generation  | Meta language model        |
+| Panel text generation  | Meta language model        |
 | Dialogue generation    | Meta language model        |
 | Character descriptions | Meta language model        |
-| Image generation       | Meta image model           |
+| Colour palette suggestion | Meta language or vision model |
+| Image generation (draft, line art, reference) | Meta image model (`muse-image-1.0`) |
 | Image review           | Meta multimodal model      |
-| Video generation       | Meta video model, optional |
+| Video generation       | Meta video model (deferred) |
 
 The system must use the best available Meta model for each task.
 
@@ -295,10 +399,12 @@ The exact model must be configurable.
 
 ### 4.3 Model Access
 
-The system must support two model access methods.
+The system must support two model access methods:
 
-1. Meta-hosted API
-2. Self-hosted Meta models
+1. Meta-hosted API (`api.meta.ai`)
+2. Self-hosted Meta models (open-weights, where available)
+
+**Image generation note:** No open-weights image model from Meta exists. `muse-image-1.0` is hosted-only. The image adapter port must stay independent; the hosting decision is a pending captain decision.
 
 The system must verify that the selected model supports the required task.
 
@@ -313,6 +419,7 @@ The model adapter must support:
 - Error handling
 - Retry handling
 - Usage tracking
+- Hashed user ID on every image call (see section 11.3)
 
 ### 4.4 Model Fallback
 
@@ -321,6 +428,20 @@ The system may use another Meta model if the primary model fails.
 The fallback model must support the same task.
 
 The system must not silently switch to a non-Meta model.
+
+### 4.5 Prompt Pre-Moderation
+
+All prompts sent to AI models must be pre-screened by the backend before dispatch.
+
+A blocked prompt must return a plain error message to the user without calling the AI API.
+
+The system must tolerate HTTP 400 content-policy responses from the API gracefully; on a content-policy 400 the user must see a plain, non-technical message and be given the option to revise the prompt.
+
+### 4.6 AI-Generation Disclosure
+
+All AI-generated content must be disclosed in the export and in the editor UI.
+
+Meta's provenance watermarks and metadata embedded in generated images must be preserved through the export pipeline without alteration or removal.
 
 ---
 
@@ -334,39 +455,40 @@ Large scripts can contain many chapters and panels.
 
 Generating all images without user approval can waste credits.
 
-The system must control generation cost.
+The system must control generation cost at every stage.
 
-### 5.2 Generation Estimate
+### 5.2 Per-Stage Credit Estimates
 
-Before image generation, the system must display an estimate.
+Before each image generation stage, the system must display an estimate for that stage only.
+
+**Pricing basis (verified):** Meta's `muse-image-1.0` charges a flat **$0.01 per image** regardless of size, resolution, quality, or reasoning strength. Colour palette suggestions use a language or vision model call (token-based pricing). Paint-bucket fill is ordinary code and costs no credits.
+
+| Stage | Cost basis |
+| ----- | ---------- |
+| Draft sketch | $0.01 per page image attempt |
+| Final line art | $0.01 per page image attempt |
+| Character reference image | $0.01 per image attempt |
+| Colour palette suggestion | Token cost of one language/vision model call (estimated from configured token price) |
+| Paint-bucket fill | $0.00 (no API call) |
+
+The system must calculate estimates using the actual configured per-image price. The system must not invent credit prices. If a price is not yet configured, the system must label the estimate as "estimate" and make it clear the price is unverified.
 
 The estimate must contain:
 
-- Number of chapters
-- Number of comic pages
-- Number of panels
-- Number of images
-- Estimated credits
-- Estimated cost, when available
-
-The system must calculate the estimate using the selected model's actual pricing or credit usage.
-
-The system must not invent credit prices.
-
-If the model provider does not expose pricing or usage, the system must use a configured estimate and label it as an estimate.
+- Stage name
+- Number of images to be generated
+- Estimated credits or cost
+- Any assumptions made
 
 ### 5.3 Credit Approval
 
-The system must ask the user to approve the estimated cost.
-
-The user must approve before the system starts image generation.
+The system must ask the user to approve the estimated cost before each image generation stage.
 
 The user must be able to:
 
-- Approve generation
+- Approve generation for that stage
 - Cancel generation
-- Reduce the number of panels
-- Generate one chapter at a time
+- Reduce scope (e.g., generate one chapter at a time)
 
 The system must not charge for an image that it has not attempted to generate.
 
@@ -378,12 +500,13 @@ Each generation operation must record:
 
 - User ID
 - Project ID
-- Generation ID
+- Generation job ID
 - Model ID
-- Task type
+- Task type (draft_sketch | final_line_art | character_reference | colour_suggestion)
+- Stage (draft | line_art | colour | reference)
 - Number of images
-- Input usage
-- Output usage
+- Input token usage (for language calls)
+- Output token usage (for language calls)
 - Estimated cost
 - Actual cost
 - Status
@@ -396,11 +519,27 @@ The ledger must support:
 - Usage history
 - Cost reporting
 
-The system must not rely only on frontend credit calculations.
+Credit calculations must happen on the backend. The system must not rely only on frontend credit calculations.
 
-Credit calculations must happen on the backend.
+### 5.5 Per-User Quotas and Global Kill Switch
 
-### 5.5 Generation Limits
+The API has no hard spend cap. The system must therefore enforce spend limits in its own credit layer.
+
+The system must support:
+
+- A configurable per-user daily and monthly image-generation quota.
+- A global budget kill switch: a single operator-set flag that halts all new image generation jobs for all users when the platform-wide spend reaches a configured threshold.
+- Operators must be able to update the kill-switch threshold and reset it without a code deployment.
+
+When a quota or kill switch is active, the system must inform the user clearly and must not initiate the image generation job.
+
+### 5.6 Rate Limiting
+
+The Meta Model API enforces a limit of 150 image requests per minute per team account (verified). The system must not exceed this.
+
+The job queue concurrency setting for image generation jobs must be configured to keep the throughput at or below 150 requests per minute. The default concurrency setting must be conservative (recommend: 2 concurrent image workers; adjustable by operator).
+
+### 5.7 Generation Limits
 
 The system must support configurable limits.
 
@@ -428,33 +567,43 @@ Verification must be a review step.
 
 Verification must not mean that the user has purchased or consumed generation credits.
 
-### 6.2 Story Verification
+### 6.2 Pre-Draft Verification
 
-Before image generation, the user must be able to review:
+Before draft generation, the user must be able to review:
 
 - Chapter outline
-- Character profiles
-- Panel descriptions
-- Dialogue
-- Number of images
-- Estimated cost
+- Character profiles and approved reference images
+- Panel text (scenes, dialogue, narration)
+- Number of draft images to generate
+- Estimated draft cost
 
-The system must require approval before image generation.
+The system must require approval before generating drafts.
 
-### 6.3 Image Verification
+### 6.3 Pre-Line-Art Verification
 
-The system must allow the user to review each generated image.
+Before final line art generation, the user must be able to review:
+
+- Approved draft images
+- Revised panel text (if edited after draft approval)
+- Number of final line art images to generate
+- Estimated final line art cost
+
+The system must require approval before generating final line art.
+
+### 6.4 Image Verification
+
+After each image generation stage the system must allow the user to review each generated image.
 
 The user must be able to:
 
 - Approve the image
 - Reject the image
 - Regenerate the image
-- Edit the image prompt
+- Edit the image prompt and regenerate
 
-Regeneration must display its additional credit cost.
+Regeneration must display its additional credit cost before the call is made.
 
-### 6.4 Final Verification
+### 6.5 Final Verification
 
 Before publishing, the system must show a final review screen.
 
@@ -470,7 +619,7 @@ The review must include:
 
 The user must approve the final comic book before publishing.
 
-### 6.5 Publishing
+### 6.6 Publishing
 
 The initial version must support downloading the comic book.
 
@@ -481,6 +630,7 @@ The system must not claim that a comic book is commercially publishable without 
 The system must provide:
 
 - AI-generated content disclosure
+- Meta provenance metadata (preserved, not stripped)
 - Model and asset information
 - Copyright information
 - License information, when available
@@ -493,11 +643,13 @@ The system must show the applicable terms before commercial publishing.
 
 ## 7. Optional Video Generation
 
-Video generation is not part of the first release.
+**Status: Deferred.** Video generation is not part of the first release or the current roadmap.
 
-The system may add video generation later.
+Meta does not currently offer any video generation model through the `api.meta.ai` commercial API. No open-weights Meta video model exists. This feature cannot be built under the Meta-only requirement until a suitable Meta video API becomes available.
 
-The optional feature must allow the user to:
+The system may add video generation later when a Meta-hosted or open-weights video model is available.
+
+If implemented, the feature must allow the user to:
 
 - Select a comic panel.
 - Generate a short animated scene.
@@ -508,9 +660,7 @@ The system must estimate video generation costs before generation.
 
 The system must require user approval.
 
-The system must use a Meta video model with confirmed access.
-
-The system must not assume that research models are available through a production API.
+The system must use a Meta video model with confirmed commercial API access.
 
 ---
 
@@ -545,10 +695,13 @@ The system must separate the application into services.
       PostgreSQL      Redis       Object Storage
           |             |
           |             v
-          |        Python Worker
+          |        Python AI Worker
           |             |
-          |             v
-          |        Meta Models
+          |      (Ports and Adapters)
+          |        /    |    \
+          |   Language Vision Image
+          |   Adapter  Adapter Adapter
+          |       (fake or real Meta)
           |             |
           +-------------+
                         |
@@ -556,29 +709,41 @@ The system must separate the application into services.
                  Generated Images
                         |
                         v
-                  Comic Editor
+               Colour Editor (Svelte)
                         |
                         v
                     PDF Export
 ```
 
+See ARCHITECTURE.md for the full ports-and-adapters design and fake adapter strategy.
+
 ### 8.3 Go Backend
 
 The Go backend must handle:
 
-- User authentication
+- User authentication and session management
+- 18+ age verification at sign-up (see section 11.2)
+- Geo-blocking check on sign-up and on image generation requests (see section 11.2)
 - Project management
 - Script uploads
 - Chapter management
-- Credit management
-- Generation requests
-- Job status
+- Credit management and ledger writes
+- Credit approval gates (no image job created without approval)
+- Generation job creation and status
 - Download links
 - Publishing metadata
+- Per-user quota enforcement
+- Global kill-switch check before creating any image generation job
+- Hashed user ID generation for image calls
+- Prompt pre-moderation dispatch to Python service
 
 The Go backend must not run long image generation requests directly.
 
 It must create jobs and return a job ID.
+
+All credit-ledger writes must be transactional.
+
+No image generation job must be created unless the user has explicitly approved the stage and its cost.
 
 ### 8.4 Python AI Service
 
@@ -587,31 +752,36 @@ The Python service must handle:
 - Script analysis
 - Story generation
 - Chapter generation
-- Storyboard generation
-- Character generation
-- Image prompt generation
-- Image generation
-- Image review
+- Panel text generation
+- Character profile generation
+- Colour palette suggestion
+- Image generation via the image adapter port
+- Image review via the vision adapter port
+- Prompt pre-moderation (language model call before any AI dispatch)
 - PDF assembly
 
-The service must expose internal APIs.
+The service must expose internal APIs versioned under a common OpenAPI/JSON Schema contract shared with the Go backend (see ARCHITECTURE.md).
 
 The service must not expose model API keys to the frontend.
 
+All AI calls must go through adapter ports so fakes can be substituted for testing.
+
 ### 8.5 Background Jobs
 
-Image generation must use background jobs.
+Image generation must use background jobs via the Redis queue.
 
 The system must support:
 
 - Job creation
 - Job execution
-- Job retries
+- Job retries (idempotent; re-executing a job must not double-charge credits)
 - Job cancellation
 - Job status
 - Failed job recovery
 
 The system must not lose a job when a worker restarts.
+
+Each job must be idempotent: re-running a completed job must return its existing result without generating a new image or charging credits again.
 
 ---
 
@@ -621,15 +791,26 @@ The initial database must contain the following tables.
 
 ### users
 
-- id
+- id (UUID)
 - email
 - password_hash
+- date_of_birth (required; used for 18+ verification)
+- country_code (required; used for geo-blocking check)
+- plan_id (FK to plans; extension point for paywall)
+- created_at
+- updated_at
+
+### plans
+
+- id
+- name (free | paid | ...)
+- entitlements (JSONB; extension point - stores per-plan limits and feature flags)
 - created_at
 
 ### projects
 
-- id
-- user_id
+- id (UUID)
+- user_id (FK)
 - title
 - original_script
 - chapter_count
@@ -640,8 +821,8 @@ The initial database must contain the following tables.
 
 ### chapters
 
-- id
-- project_id
+- id (UUID)
+- project_id (FK)
 - chapter_number
 - title
 - summary
@@ -649,62 +830,107 @@ The initial database must contain the following tables.
 
 ### characters
 
-- id
-- project_id
+- id (UUID)
+- project_id (FK)
 - name
 - description
 - reference_image_url
-- visual_attributes
+- reference_image_job_id (FK to generation_jobs)
+- visual_attributes (JSONB)
+- approved_at
 
-### Panels
+### panels
 
-- id
-- chapter_id
+- id (UUID)
+- chapter_id (FK)
 - panel_number
 - scene_description
 - dialogue
 - narration
-- image_prompt
-- image_url
+- image_prompt (editable text for image generation)
 - status
+
+### pages
+
+- id (UUID)
+- chapter_id (FK)
+- page_number
+- panel_ids (ordered list; which panels appear on this page)
+- draft_image_url
+- draft_image_job_id (FK to generation_jobs)
+- draft_approved_at
+- line_art_image_url
+- line_art_image_job_id (FK to generation_jobs)
+- line_art_approved_at
+
+### colour_palettes
+
+- id (UUID)
+- page_id (FK)
+- suggestion_job_id (FK to generation_jobs; the AI palette suggestion job)
+- palette (JSONB; array of {region_name, hex_color, label})
+- user_modified_at (null if only AI suggestion was applied)
+
+### colour_regions
+
+- id (UUID)
+- page_id (FK)
+- region_label
+- fill_colour_hex
+- fill_applied_at
+- fill_applied_by (user | ai_auto)
+
+### stage_approvals
+
+- id (UUID)
+- project_id (FK)
+- entity_type (chapter_outline | character_reference | draft_page | line_art_page | colour_page)
+- entity_id (UUID; FK to the relevant record)
+- approved_by_user_id (FK)
+- approved_at
+- credit_estimate_at_approval (NUMERIC)
 
 ### generation_jobs
 
-- id
-- project_id
-- user_id
-- job_type
+- id (UUID)
+- project_id (FK)
+- user_id (FK)
+- job_type (script_analysis | chapter_outline | panel_text | character_reference | draft_sketch | final_line_art | colour_suggestion | pdf_assembly)
+- stage (draft | line_art | colour | reference | text | export)
 - model_id
-- status
-- estimated_cost
-- actual_cost
+- status (pending | running | done | failed | cancelled)
+- idempotency_key (unique; prevents double-charge on retry)
+- estimated_cost (NUMERIC)
+- actual_cost (NUMERIC)
+- hashed_user_id (stored; used on image API call)
 - error_message
 - created_at
 - completed_at
 
 ### credit_ledger
 
-- id
-- user_id
-- project_id
-- generation_job_id
-- transaction_type
-- amount
-- balance_after
+- id (UUID)
+- user_id (FK)
+- project_id (FK)
+- generation_job_id (FK)
+- transaction_type (debit | refund | adjustment)
+- amount (NUMERIC)
+- balance_after (NUMERIC)
 - created_at
 
 ### exports
 
-- id
-- project_id
+- id (UUID)
+- project_id (FK)
 - file_url
-- format
+- format (pdf | png_zip)
 - status
+- provenance_metadata_preserved (boolean; must be true before export is marked complete)
 - created_at
 
 The database must use foreign keys.
 
-The system must use transactions for credit operations.
+The system must use transactions for all credit-ledger operations.
 
 ---
 
@@ -715,53 +941,75 @@ The backend must provide the following endpoints.
 ### Projects
 
 ```http
-POST   /api/projects
-GET    /api/projects
-GET    /api/projects/:id
-PATCH  /api/projects/:id
-DELETE /api/projects/:id
+POST   /api/v1/projects
+GET    /api/v1/projects
+GET    /api/v1/projects/:id
+PATCH  /api/v1/projects/:id
+DELETE /api/v1/projects/:id
 ```
 
 ### Story Generation
 
 ```http
-POST   /api/projects/:id/analyze
-POST   /api/projects/:id/chapters
-POST   /api/chapters/:id/storyboard
+POST   /api/v1/projects/:id/analyze
+POST   /api/v1/projects/:id/chapters
+POST   /api/v1/chapters/:id/panels
 ```
 
 ### Character Management
 
 ```http
-GET    /api/projects/:id/characters
-PATCH  /api/characters/:id
-POST   /api/characters/:id/reference-image
+GET    /api/v1/projects/:id/characters
+PATCH  /api/v1/characters/:id
+POST   /api/v1/characters/:id/reference-image
+POST   /api/v1/characters/:id/approve
 ```
 
 ### Panel Management
 
 ```http
-GET    /api/chapters/:id/panels
-PATCH  /api/panels/:id
-POST   /api/panels/:id/generate-image
-POST   /api/panels/:id/regenerate-image
+GET    /api/v1/chapters/:id/panels
+PATCH  /api/v1/panels/:id
 ```
 
-### Generation
+### Draft Sketch Stage
 
 ```http
-POST   /api/projects/:id/estimate
-POST   /api/projects/:id/generate
-GET    /api/generation-jobs/:id
-POST   /api/generation-jobs/:id/cancel
+POST   /api/v1/pages/:id/draft
+POST   /api/v1/pages/:id/draft/approve
+```
+
+### Final Line Art Stage
+
+```http
+POST   /api/v1/pages/:id/line-art
+POST   /api/v1/pages/:id/line-art/approve
+```
+
+### Colouring
+
+```http
+GET    /api/v1/pages/:id/colour-palette
+POST   /api/v1/pages/:id/colour-palette/suggest
+PATCH  /api/v1/pages/:id/colour-palette
+POST   /api/v1/pages/:id/colour/approve
+```
+
+### Generation Jobs and Credits
+
+```http
+POST   /api/v1/projects/:id/estimate
+GET    /api/v1/generation-jobs/:id
+POST   /api/v1/generation-jobs/:id/cancel
+GET    /api/v1/users/:id/credit-usage
 ```
 
 ### Export
 
 ```http
-POST   /api/projects/:id/export
-GET    /api/exports/:id
-GET    /api/exports/:id/download
+POST   /api/v1/projects/:id/export
+GET    /api/v1/exports/:id
+GET    /api/v1/exports/:id/download
 ```
 
 The backend must validate every request.
@@ -770,7 +1018,9 @@ The backend must verify project ownership.
 
 ---
 
-## 11. Security Requirements
+## 11. Security, Compliance and Access Control
+
+### 11.1 General Security
 
 The system must:
 
@@ -786,6 +1036,48 @@ The system must:
 - Log generation failures.
 
 The system must not allow users to access another user's project.
+
+### 11.2 Age Verification and Geo-Blocking
+
+Meta's terms of service require:
+
+- All end users must be 18 years of age or older. The system must collect date of birth at sign-up and must not allow users under 18 to create an account or use any AI generation feature.
+- `muse-image-1.0` may not be used from India or offered to users located in India. The system must block image generation for users whose registered country is India and must not present the image generation feature to such users.
+
+The specific hosting and identity verification approaches are pending captain decisions. The requirement is that both blocks are enforced at the backend before any image generation job is created.
+
+### 11.3 Hashed User ID
+
+Every call to the image generation API must include a hashed identifier of the requesting user, as required by Meta's API terms.
+
+The hash must be:
+
+- A SHA-256 hash of the user's internal UUID.
+- Computed on the backend.
+- Included in the API request.
+- Stored on the generation job record.
+
+The raw user UUID must not be sent to the API.
+
+### 11.4 AI-Generation Disclosure and Provenance
+
+The system must:
+
+- Include an AI-generation disclosure statement in every export.
+- Preserve Meta's provenance watermarks and C2PA metadata in all generated images through every processing step and through export.
+- Not strip, modify, or obscure provenance metadata.
+- Log whether provenance metadata was preserved for every export (the `exports.provenance_metadata_preserved` column must be `true` before an export is marked complete).
+
+### 11.5 Accounts and Paywall Readiness
+
+The product will eventually charge users. The following extension points must be present in the initial release without any billing implementation:
+
+- A `plans` table and a `plan_id` on `users` (see section 9).
+- A `plans.entitlements` JSONB column to hold per-plan feature flags and limits.
+- The Go backend must check the user's plan entitlements before allowing a generation job to be created (the check is a pass-through for the free plan).
+- A credit quota system per user (see section 5.5).
+
+No payment processor integration is required in the first release.
 
 ---
 
@@ -804,13 +1096,15 @@ The system must not allow users to access another user's project.
 - Failed jobs must have a clear status.
 - Credit operations must be transactional.
 - Completed images must be stored persistently.
+- Idempotent jobs must not double-charge on retry.
 
 ### Maintainability
 
-- The AI model layer must be modular.
+- The AI model layer must be modular (ports and adapters).
 - The backend must use clear service boundaries.
 - The system must use structured logs.
 - The system must support model replacement without rewriting the application.
+- The OpenAPI contract between Go and Python must be the single source of truth for the inter-service interface.
 
 ### Scalability
 
@@ -818,6 +1112,7 @@ The system must not allow users to access another user's project.
 - The system must support multiple users.
 - Image generation must use a queue.
 - The system must support configurable concurrency.
+- The image job queue concurrency must be tuned to stay within 150 requests per minute per team.
 
 ---
 
@@ -827,17 +1122,20 @@ The first release must include:
 
 - Script input
 - Chapter selection
-- Chapter outline generation
-- Character profiles
-- Character reference images
-- Storyboard generation
-- Comic panel generation
-- Credit estimation
-- User approval
-- Image review
+- Chapter outline generation and approval
+- Character profiles and approved reference images
+- Panel text generation and editing
+- Draft sketch generation and approval (one image per page)
+- Final line art generation and approval
+- Colouring with AI palette suggestion, manual editing, and paint-bucket fill
+- Credit estimation per stage
+- User approval gates before each image generation stage
+- Per-user quotas and global kill switch
+- 18+ age gate and geo-blocking (India)
 - Comic book editor
-- PDF export
+- PDF export with AI-generation disclosure and preserved provenance metadata
 - Download
+- Accounts and plan/entitlement extension point (no billing)
 
 The first release must not include:
 
@@ -848,6 +1146,7 @@ The first release must not include:
 - Collaborative editing
 - Advanced animation
 - Mobile applications
+- Payment processor integration
 
 ---
 
@@ -860,21 +1159,30 @@ The project is complete when:
 3. A user can select the chapter count.
 4. The system generates a chapter outline.
 5. The user can approve the outline.
-6. The system generates a storyboard.
-7. The user can approve the storyboard.
-8. The system displays an estimated generation cost.
-9. The user can approve the cost.
-10. The system generates comic images.
-11. The system preserves character consistency as far as the selected model allows.
-12. The user can edit panels.
-13. The user can regenerate images.
-14. The system records credit usage.
-15. The system exports a PDF.
-16. The user can download the PDF.
-17. The system uses Meta models only.
-18. The system does not expose model API keys.
-19. The system does not generate images before user approval.
-20. The system does not silently charge for unapproved generation.
+6. The system generates character profiles and reference images.
+7. The user can approve character reference images.
+8. The system generates panel text for each chapter.
+9. The user can edit panel text.
+10. The system generates one draft sketch image per page.
+11. The user can approve or regenerate draft sketches.
+12. The system displays an estimated cost before each image generation stage.
+13. The user can approve or decline the cost estimate.
+14. The system generates final line art per page after draft approval.
+15. The user can approve or regenerate final line art.
+16. The system suggests a colour palette via AI.
+17. The user can edit the palette and apply colours with the paint-bucket tool.
+18. The user can undo fill actions per panel.
+19. The system records credit usage for every image generation job.
+20. The system enforces per-user quotas and the global kill switch.
+21. The system enforces the 18+ age gate and geo-block for India.
+22. The system exports a PDF with AI-generation disclosure and provenance metadata preserved.
+23. The user can download the PDF.
+24. The system uses Meta models only.
+25. The system does not expose model API keys.
+26. The system does not generate images before user approval of each stage.
+27. The system does not silently charge for unapproved generation.
+28. The product runs end-to-end with fake adapters and no API key in development and test.
+29. The system preserves character consistency using reference image anchoring.
 
 ---
 
@@ -893,36 +1201,58 @@ Success:
 
 The user can submit a script and receive an editable chapter outline.
 
-### Phase 2: Storyboard Pipeline
+### Phase 2: Character Pipeline
 
 Build:
 
-- Character profiles
-- Character reference images
-- Panel descriptions
-- Dialogue generation
+- Character profile extraction
+- Character reference image generation (via image adapter)
+- Character approval
 
 Success:
 
-The user can review a complete storyboard before generating comic images.
+The user can approve a set of character reference images before any panels are generated.
 
-### Phase 3: Image Pipeline
+### Phase 3: Panel Text and Draft Sketch Pipeline
 
 Build:
 
-- Meta image model integration
-- Image prompt generation
-- Background image jobs
-- Credit estimation
-- Credit approval
-- Image generation
-- Image review
+- Panel text generation
+- Panel text editing
+- Draft sketch generation (one image per page)
+- Draft approval
 
 Success:
 
-The user can generate and approve comic panels without uncontrolled credit usage.
+The user can review and approve draft page compositions before committing to final line art.
 
-### Phase 4: Comic Book Editor
+### Phase 4: Final Line Art Pipeline
+
+Build:
+
+- Final line art generation
+- Line art approval
+
+Success:
+
+The user can generate and approve final black-and-white line art per page.
+
+### Phase 5: Colouring Pipeline
+
+Build:
+
+- AI colour palette suggestion
+- Manual palette editing
+- Paint-bucket fill tool with gap-closing
+- Manual gap-closer tool
+- Per-panel undo
+- Colour approval
+
+Success:
+
+The user can colour each page using AI palette suggestions and manual fill.
+
+### Phase 6: Comic Book Editor and Export
 
 Build:
 
@@ -931,37 +1261,23 @@ Build:
 - Dialogue editor
 - Image regeneration
 - Comic book preview
-
-Success:
-
-The user can edit the complete comic book.
-
-### Phase 5: Export
-
-Build:
-
-- PDF generation
+- PDF generation with disclosure and provenance
 - PNG export
 - Download
-- Publishing metadata
 
 Success:
 
-The user can download a complete comic book.
+The user can edit the complete comic book and download a PDF.
 
-### Phase 6: Video Generation
+### Phase 7: Video Generation
 
-Build this phase only after the comic book workflow is stable.
-
-Success:
-
-The user can generate short animated scenes from approved comic panels.
+**Deferred.** Build this phase only after the comic book workflow is stable and a suitable Meta video API is available.
 
 ---
 
 ## 16. Important Engineering Rules
 
-- Do not generate images before storyboard approval.
+- Do not generate images before the user approves each stage.
 - Do not generate all chapters in one large request.
 - Generate images chapter by chapter.
 - Reuse approved character reference images.
@@ -970,15 +1286,24 @@ The user can generate short animated scenes from approved comic panels.
 - Use background workers for image generation.
 - Store generated images in object storage.
 - Store project metadata in PostgreSQL.
-- Keep the AI model layer independent.
+- Keep the AI model layer independent (ports and adapters).
 - Use Meta models only.
-- Verify model access before implementation.
 - Do not build video generation in the first release.
+- All credit-ledger writes must be transactional.
+- All image generation jobs must be idempotent.
+- Enforce per-user quotas and the global kill switch on the backend.
+- Pre-moderate all prompts before dispatching to AI.
+- Preserve Meta provenance metadata through export.
+- Include the hashed user ID on every image API call.
+- Enforce the 18+ age gate and India geo-block at the backend.
+- The paint-bucket fill tool must work without any API call.
 
 ## 17. Definition of Done
 
 The first version is complete when a user can:
 
-Provide a script → Select chapters → Approve a storyboard → Approve generation cost → Generate comic panels → Edit the comic → Export a PDF → Download and publish the comic book.
+Provide a script -> Select chapters -> Approve outline -> Approve character references -> Edit panel text -> Approve draft sketches -> Approve final line art -> Colour panels -> Export a PDF -> Download the comic book.
 
-The system must provide a reliable and cost-controlled workflow from script to comic book.
+The system must provide a reliable, cost-controlled, and approval-gated workflow from script to comic book.
+
+The system must run end-to-end with fake adapters in development and test with no network access and no API key.
