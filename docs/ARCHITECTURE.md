@@ -96,7 +96,7 @@ icomic/
 | Service | Technology | Owns |
 |---|---|---|
 | **Frontend** | Svelte | UI rendering, colour editor, paint-bucket fill tool (client-side), job polling, user flows |
-| **Go API** | Go + net/http | Auth, session, project/chapter/panel CRUD, credit ledger, quota enforcement, kill switch, job creation, age gate, geo-block, hashed user ID, approval gates, presigned download URLs |
+| **Go API** | Go + net/http | Auth, session, project/chapter/character/page/panel CRUD, credit ledger, quota enforcement, kill switch, job creation, age gate, geo-block, hashed user ID, approval gates, presigned download URLs |
 | **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, line art, colour suggestion, PDF assembly |
 | **PostgreSQL** | Postgres | Durable project state, credit ledger, job records, stage approvals, colour palettes |
 | **Redis** | Redis | Job queue; pending, running, retried, and cancelled job envelopes |
