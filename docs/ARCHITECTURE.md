@@ -269,6 +269,7 @@ Go enforces this check transactionally before inserting into `generation_jobs` a
 Regeneration rules:
 - Regeneration of character reference images, draft sketches, or line art is explicitly permitted: a prior completed (`status=done`) or failed (`status=failed`) job for the same entity does not block creating a new generation job with a new idempotency key.
 - Concurrency guard: Go rejects creating a duplicate job only if an active job (`status=pending` or `status=running`) already exists for that entity and stage.
+- Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 
 The approval gate invariant (no image generation before prerequisite approval) is enforced strictly and transactionally by Go before queue dispatch. In accordance with Section 2 communication rules, the Python service talks to AI adapter ports only and does not perform reverse callbacks into Go.
 
