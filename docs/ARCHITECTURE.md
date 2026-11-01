@@ -141,7 +141,6 @@ class VisionPort(Protocol):
 ```python
 class ImagePort(Protocol):
     def generate(self, prompt: str, reference_images: list[bytes], hashed_user_id: str, style: str) -> ImageResult: ...
-    def edit(self, prompt: str, base_image: bytes, reference_images: list[bytes], hashed_user_id: str) -> ImageResult: ...
 ```
 
 `ImageResult` carries: `image_bytes`, `provenance_metadata` (raw, must be preserved), `model_id`, `request_id`.
@@ -195,7 +194,7 @@ The `meta.py` adapters implement the same ports using the real `api.meta.ai` end
 Real adapters are never imported in tests or CI.
 
 **MetaImageAdapter specifics:**
-- Endpoint: `POST https://api.meta.ai/v1/images/generations` (text-to-image) and `POST https://api.meta.ai/v1/images/edits` (with reference images).
+- Endpoint: `POST https://api.meta.ai/v1/images/generations` (text-to-image and image-to-image with reference images).
 - Pricing: flat $0.01 per returned image.
 - Rate limit: 150 requests per minute per team. The worker concurrency must be configured to stay within this.
 - Must attach `hashed_user_id` on every call.
@@ -227,9 +226,9 @@ The spec is versioned in the `info.version` field. Breaking changes bump the maj
 
 ```
 POST /internal/v1/analyze-script
+POST /internal/v1/generate-character-reference
 POST /internal/v1/generate-chapter-outline
 POST /internal/v1/generate-panel-text
-POST /internal/v1/generate-character-reference
 POST /internal/v1/generate-draft-sketch
 POST /internal/v1/generate-line-art
 POST /internal/v1/suggest-colour-palette
@@ -259,23 +258,26 @@ All requests include a `job_id` (idempotency key) and `hashed_user_id`.
 
 ### 5.3 Approval Gate Invariant
 
-No image generation job is created unless a `stage_approvals` row exists for the preceding stage.
+No image generation job is created unless the prerequisite approvals for that stage are recorded in `stage_approvals`.
 
-Go enforces this check before inserting into `generation_jobs`. The check is:
+Go enforces this check transactionally before inserting into `generation_jobs` and dispatching to the queue:
 
-```
-approval exists for (project_id, entity_type=<prior_stage>, entity_id=<relevant_id>)
-AND no generation_job with status=done exists for the same entity and stage
-```
+- **Character reference generation:** requires a valid submitted script for `project_id`. No prior stage approval is required.
+- **Draft sketch generation (per page):** requires approved `character_reference` records for all project characters AND an approved `chapter_outline` for the page's parent chapter (`entity_id=chapter_id`).
+- **Final line art generation (per page):** requires an approved `draft_page` for that page (`entity_id=page_id`).
 
-The Python service must also reject a generation request that carries no recorded approval (defence in depth); it checks by calling back to Go's `/internal/v1/approvals/verify` endpoint.
+Regeneration rules:
+- Regeneration of character reference images, draft sketches, or line art is explicitly permitted: a prior completed (`status=done`) or failed (`status=failed`) job for the same entity does not block creating a new generation job with a new idempotency key.
+- Concurrency guard: Go rejects creating a duplicate job only if an active job (`status=pending` or `status=running`) already exists for that entity and stage.
+
+The approval gate invariant (no image generation before prerequisite approval) is enforced strictly and transactionally by Go before queue dispatch. In accordance with Section 2 communication rules, the Python service talks to AI adapter ports only and does not perform reverse callbacks into Go.
 
 ### 5.4 No Image Before Approval - Summary
 
 ```
-chapter_outline approved -> panel text generated
+character reference approved -> chapter_outline approved -> panel text generated
 panel text ready (no separate approval gate) -> draft sketch approved -> line art approved -> colour approved
-character reference approved -> can be used in panel images
+approved character references anchored across all subsequent page generations
 ```
 
 ### 5.5 Per-User Quota and Global Kill Switch
@@ -311,14 +313,13 @@ Both checks read from PostgreSQL. Quota counters are incremented in the same tra
 - Handlers are tested with an in-process `httptest.Server`.
 - Database calls use a test Postgres instance (Docker Compose) with a per-test schema.
 - The Python service is replaced by a Go mock server returning schema-valid responses.
-- Credit-ledger invariants are verified by asserting transaction rollback on injected errors.
+- Credit-ledger and approval gate invariants are verified by asserting transaction rollback on injected errors and rejection when prerequisite stage approvals are missing.
 
 ### 6.3 Boundary Contract Tests
 
 - A Go contract-test binary starts a real Python test server (fake adapters, no network) and exercises every `contracts/openapi/ai-service.yaml` endpoint.
 - Asserts that requests and responses conform to the schema.
 - Asserts that idempotency keys are honoured (send the same key twice, expect the same result).
-- Asserts that the approval gate check is enforced (send a generation request with no recorded approval, expect rejection).
 
 For each port adapter, a contract test sends inputs to both the fake and the real adapter (real adapter skipped when no key is present) and compares output shapes against the port's documented schema.
 

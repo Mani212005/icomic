@@ -82,20 +82,21 @@ The main pipeline is:
 
 1. User creates a project.
 2. User provides a script.
-3. System asks how many chapters the user wants.
-4. User selects the number of chapters and art style.
-5. System analyzes the script and creates a chapter outline.
-6. User reviews and approves the outline. (Approval gate.)
-7. System extracts characters; user reviews and approves character profiles and reference images. (Approval gate.)
+3. System extracts characters; user reviews and approves character profiles and reference images. (Approval gate.)
+4. System asks how many chapters the user wants.
+5. User selects the number of chapters and art style.
+6. System analyzes the script and creates a chapter outline.
+7. User reviews and approves the outline. (Approval gate.)
 8. For each chapter, the system generates panel text (scene descriptions, dialogue, narration). The user edits panel text freely. No approval gate - panel text feeds the draft step.
-9. System generates one rough, stick-style draft image per page. User reviews draft composition and approves or regenerates. (Approval gate - no final image is generated before draft approval.)
-10. System generates final black-and-white line art per page. User reviews and approves line art. (Approval gate.)
-11. System suggests a colour palette (AI-generated). User reviews, edits, or overrides palette colours. User applies colours with the paint-bucket fill tool. Per-panel undo is available. User approves colouring. (Approval gate.)
-12. System assembles the comic book.
-13. User reviews the final comic and downloads or publishes.
+9. System automatically partitions panels into pages (using a configurable maximum panels per page). The user can move panels between pages before draft generation.
+10. System generates one rough, stick-style draft image per page. User reviews draft composition and approves or regenerates. (Approval gate - no final image is generated before draft approval.)
+11. System generates final black-and-white line art per page. User reviews and approves line art. (Approval gate.)
+12. System suggests a colour palette (AI-generated). User reviews, edits, or overrides palette colours. User applies colours with the paint-bucket fill tool. Client-side canvas undo operates on page canvas stroke/fill history. User approves colouring. (Approval gate.)
+13. System assembles the comic book.
+14. User reviews the final comic and downloads or publishes.
 
+The system must not generate draft sketches before character reference images and chapter outline are approved.
 The system must not generate final line art before the user approves the draft.
-The system must not generate any image before the user approves the content (panel text) for that stage.
 
 ---
 
@@ -124,44 +125,9 @@ The system must preserve the original script.
 
 The system must not overwrite the original script during story generation.
 
-### 3.2 Chapter Selection
+### 3.2 Character Design
 
-The system must ask:
-
-"How many chapters do you want for your comic book?"
-
-The user can select the number of chapters.
-
-The system must:
-
-- Divide the script into the selected number of chapters.
-- Preserve the main story.
-- Preserve the main characters.
-- Preserve important events.
-- Avoid unnecessary story changes.
-
-The system must warn the user if the selected chapter count is not suitable for the script length.
-
-### 3.3 Story Outline
-
-The system must generate a story outline.
-
-Each chapter must contain:
-
-- Chapter number
-- Chapter title
-- Chapter summary
-- Important events
-- Characters
-- Ending or cliffhanger
-
-The user must be able to edit the outline.
-
-The system must wait for user approval before proceeding to character design.
-
-### 3.4 Character Design
-
-The system must identify the main characters.
+The system must identify the main characters from the script.
 
 Each character must have a character profile.
 
@@ -183,6 +149,43 @@ The user must be able to approve or regenerate the reference image.
 Approved character references must be reused during all subsequent image generation stages.
 
 The system must attempt to preserve character identity across all chapters (via reference image anchoring as the API supports).
+
+The system must wait for user approval of character profiles and reference images before proceeding to chapter selection and outline generation.
+
+### 3.3 Chapter Selection
+
+The system must ask:
+
+"How many chapters do you want for your comic book?"
+
+The user can select the number of chapters.
+
+The system must:
+
+- Divide the script into the selected number of chapters.
+- Preserve the main story.
+- Preserve the main characters.
+- Preserve important events.
+- Avoid unnecessary story changes.
+
+The system must warn the user if the selected chapter count is not suitable for the script length.
+
+### 3.4 Story Outline
+
+The system must generate a story outline referencing the approved characters.
+
+Each chapter must contain:
+
+- Chapter number
+- Chapter title
+- Chapter summary
+- Important events
+- Characters
+- Ending or cliffhanger
+
+The user must be able to edit the outline.
+
+The system must wait for user approval of the outline before proceeding to panel text generation.
 
 ### 3.5 Panel Text Generation
 
@@ -208,6 +211,18 @@ The user must be able to edit:
 - Image prompts
 
 Panel text is an editable intermediate; it is not an approval gate. Edited panel text feeds the draft image step directly.
+
+### 3.5.1 Pagination and Page Layout
+
+The Go API automatically builds pages from the panel list using a configurable maximum panels per page (a configuration value).
+
+Each page record is populated with an ordered list of `panel_ids` for that page.
+
+Before draft generation, the user can review page allocations and move panels between pages.
+
+The system provides endpoints to inspect and adjust page allocations:
+- The user can retrieve chapter pages and their assigned panels (`GET /api/v1/chapters/:id/pages`).
+- The user can move panels between pages or reorder panels before initiating draft generation (`PATCH /api/v1/pages/:id`).
 
 ### 3.6 Draft Sketch Stage
 
@@ -284,11 +299,11 @@ The fill algorithm must:
 
 The fill is computed entirely in the browser (client-side) using ordinary code. No AI call and no API credit is consumed during fill.
 
-#### 3.8.4 Per-Panel Undo
+#### 3.8.4 Canvas Undo
 
-The colour editor must support per-panel undo for every fill action.
+Client-side canvas undo in the colour editor must operate on page canvas stroke and fill history.
 
-The user must be able to undo the last N fill actions (N is configurable, default 20).
+The user must be able to undo the last N fill actions on the page canvas (N is configurable, default 20).
 
 #### 3.8.5 Colouring Approval
 
@@ -855,7 +870,7 @@ The initial database must contain the following tables.
 - id (UUID)
 - chapter_id (FK)
 - page_number
-- panel_ids (ordered list; which panels appear on this page)
+- panel_ids (ordered list; which panels appear on this page, partitioned from panels by the Go API using a configurable maximum panels per page)
 - draft_image_url
 - draft_image_job_id (FK to generation_jobs)
 - draft_approved_at
@@ -948,14 +963,6 @@ PATCH  /api/v1/projects/:id
 DELETE /api/v1/projects/:id
 ```
 
-### Story Generation
-
-```http
-POST   /api/v1/projects/:id/analyze
-POST   /api/v1/projects/:id/chapters
-POST   /api/v1/chapters/:id/panels
-```
-
 ### Character Management
 
 ```http
@@ -965,11 +972,26 @@ POST   /api/v1/characters/:id/reference-image
 POST   /api/v1/characters/:id/approve
 ```
 
+### Story Generation
+
+```http
+POST   /api/v1/projects/:id/analyze
+POST   /api/v1/projects/:id/chapters
+POST   /api/v1/chapters/:id/panels
+```
+
 ### Panel Management
 
 ```http
 GET    /api/v1/chapters/:id/panels
 PATCH  /api/v1/panels/:id
+```
+
+### Page Management
+
+```http
+GET    /api/v1/chapters/:id/pages
+PATCH  /api/v1/pages/:id
 ```
 
 ### Draft Sketch Stage
@@ -1001,7 +1023,7 @@ POST   /api/v1/pages/:id/colour/approve
 POST   /api/v1/projects/:id/estimate
 GET    /api/v1/generation-jobs/:id
 POST   /api/v1/generation-jobs/:id/cancel
-GET    /api/v1/users/:id/credit-usage
+GET    /api/v1/me/credit-usage
 ```
 
 ### Export
@@ -1014,7 +1036,11 @@ GET    /api/v1/exports/:id/download
 
 The backend must validate every request.
 
-The backend must verify project ownership.
+The backend must enforce strict ownership and authorization checks:
+- Project, chapter, page, and panel endpoints require that the resource belongs to a project owned by the authenticated user.
+- Credit usage (`GET /api/v1/me/credit-usage`) returns credit usage for the authenticated session user only.
+- Generation job endpoints (`GET /api/v1/generation-jobs/:id` and `POST /api/v1/generation-jobs/:id/cancel`) must verify that the requested job belongs to the authenticated user.
+- Export endpoints (`GET /api/v1/exports/:id` and `GET /api/v1/exports/:id/download`) must verify that the export belongs to a project owned by the authenticated user.
 
 ---
 
@@ -1035,7 +1061,7 @@ The system must:
 - Apply rate limits.
 - Log generation failures.
 
-The system must not allow users to access another user's project.
+The system must not allow users to access another user's project, jobs, or credit usage.
 
 ### 11.2 Age Verification and Geo-Blocking
 
@@ -1156,62 +1182,64 @@ The project is complete when:
 
 1. A user can create a project.
 2. A user can submit a script.
-3. A user can select the chapter count.
-4. The system generates a chapter outline.
-5. The user can approve the outline.
-6. The system generates character profiles and reference images.
-7. The user can approve character reference images.
+3. The system generates character profiles and reference images.
+4. The user can approve character reference images.
+5. A user can select the chapter count.
+6. The system generates a chapter outline.
+7. The user can approve the outline.
 8. The system generates panel text for each chapter.
 9. The user can edit panel text.
-10. The system generates one draft sketch image per page.
-11. The user can approve or regenerate draft sketches.
-12. The system displays an estimated cost before each image generation stage.
-13. The user can approve or decline the cost estimate.
-14. The system generates final line art per page after draft approval.
-15. The user can approve or regenerate final line art.
-16. The system suggests a colour palette via AI.
-17. The user can edit the palette and apply colours with the paint-bucket tool.
-18. The user can undo fill actions per panel.
-19. The system records credit usage for every image generation job.
-20. The system enforces per-user quotas and the global kill switch.
-21. The system enforces the 18+ age gate and geo-block for India.
-22. The system exports a PDF with AI-generation disclosure and provenance metadata preserved.
-23. The user can download the PDF.
-24. The system uses Meta models only.
-25. The system does not expose model API keys.
-26. The system does not generate images before user approval of each stage.
-27. The system does not silently charge for unapproved generation.
-28. The product runs end-to-end with fake adapters and no API key in development and test.
-29. The system preserves character consistency using reference image anchoring.
+10. The system partitions panels into pages using a configurable maximum panels per page.
+11. The system generates one draft sketch image per page.
+12. The user can approve or regenerate draft sketches.
+13. The system displays an estimated cost before each image generation stage.
+14. The user can approve or decline the cost estimate.
+15. The system generates final line art per page after draft approval.
+16. The user can approve or regenerate final line art.
+17. The system suggests a colour palette via AI.
+18. The user can edit the palette and apply colours with the paint-bucket tool.
+19. The user can undo fill actions on the page canvas.
+20. The system records credit usage for every image generation job.
+21. The system enforces per-user quotas and the global kill switch.
+22. The system enforces the 18+ age gate and geo-block for India.
+23. The system exports a PDF with AI-generation disclosure and provenance metadata preserved.
+24. The user can download the PDF.
+25. The system uses Meta models only.
+26. The system does not expose model API keys.
+27. The system does not generate images before user approval of each stage.
+28. The system does not silently charge for unapproved generation.
+29. The product runs end-to-end with fake adapters and no API key in development and test.
+30. The system preserves character consistency using reference image anchoring.
 
 ---
 
 ## 15. Development Phases
 
-### Phase 1: Script Pipeline
+### Phase 1: Script and Character Pipeline
 
 Build:
 
 - Script input
-- Chapter selection
-- Script analysis
-- Chapter outline
-
-Success:
-
-The user can submit a script and receive an editable chapter outline.
-
-### Phase 2: Character Pipeline
-
-Build:
-
 - Character profile extraction
 - Character reference image generation (via image adapter)
 - Character approval
 
 Success:
 
-The user can approve a set of character reference images before any panels are generated.
+The user can submit a script, review character profiles, and approve character reference images.
+
+### Phase 2: Chapter and Outline Pipeline
+
+Build:
+
+- Chapter selection
+- Script analysis
+- Chapter outline
+- Outline approval
+
+Success:
+
+The user can select chapters and receive an approved chapter outline referencing approved characters.
 
 ### Phase 3: Panel Text and Draft Sketch Pipeline
 
@@ -1219,6 +1247,7 @@ Build:
 
 - Panel text generation
 - Panel text editing
+- Page partitioning from panels (configurable maximum panels per page)
 - Draft sketch generation (one image per page)
 - Draft approval
 
@@ -1245,7 +1274,7 @@ Build:
 - Manual palette editing
 - Paint-bucket fill tool with gap-closing
 - Manual gap-closer tool
-- Per-panel undo
+- Canvas stroke/fill undo
 - Colour approval
 
 Success:
@@ -1302,7 +1331,7 @@ The user can edit the complete comic book and download a PDF.
 
 The first version is complete when a user can:
 
-Provide a script -> Select chapters -> Approve outline -> Approve character references -> Edit panel text -> Approve draft sketches -> Approve final line art -> Colour panels -> Export a PDF -> Download the comic book.
+Provide a script -> Approve character references -> Select chapters -> Approve outline -> Edit panel text -> Approve draft sketches -> Approve final line art -> Colour pages -> Export a PDF -> Download the comic book.
 
 The system must provide a reliable, cost-controlled, and approval-gated workflow from script to comic book.
 
