@@ -12,9 +12,12 @@ This directory contains the shared, versioned source of truth for inter-service 
 
 Contract validation verifies that all schemas and OpenAPI specifications are valid and syntactically sound.
 
-You can validate the contracts locally using Python or Node tooling:
+You can validate the contracts locally using `make` or `uv`:
 
 ```bash
-# Validate OpenAPI and JSON schemas with python
-python3 -m unittest contracts/validate_test.py
+# Validate OpenAPI and JSON schemas via Makefile
+make test-contracts
+
+# Or directly with uv
+uv run --with pyyaml --with jsonschema python3 contracts/validate_test.py
 ```
