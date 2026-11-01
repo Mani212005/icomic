@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+
+# Build artifacts and caches
+.pytest_cache/
+.ruff_cache/
+.svelte-kit/
+build/
+dist/
+.DS_Store
+
+# Go binaries
+backend/server
+*.exe
+*.test
+*.out
+
+# Environment variables
+.env
+.env.local
+.env.*.local

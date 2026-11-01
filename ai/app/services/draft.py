@@ -1,0 +1,39 @@
+"""Draft sketch generation service (one rough image per page)."""
+
+from typing import Any
+
+from ..adapters.image.port import ImagePort
+from ..adapters.storage.port import StoragePort
+from ..gen.models import PanelTextItem
+
+
+class DraftService:
+    def __init__(self, image_adapter: ImagePort, storage_adapter: StoragePort):
+        self.image_adapter = image_adapter
+        self.storage_adapter = storage_adapter
+
+    def generate_draft_sketch(
+        self,
+        page_id: str,
+        page_number: int,
+        panels: list[PanelTextItem],
+        style: str,
+        hashed_user_id: str,
+        character_reference_image_urls: list[str] | None = None,
+    ) -> tuple[str, str, dict[str, Any]]:
+        panel_count = len(panels)
+        prompt = (
+            f"Rough comic book page layout draft sketch, {panel_count}-panel grid composition, "
+            f"loose stick-figure and rough pencil layout for page {page_number}. Style: {style}"
+        )
+
+        result = self.image_adapter.generate(
+            prompt=prompt,
+            reference_images=[],
+            hashed_user_id=hashed_user_id,
+            style=style,
+        )
+
+        key = f"pages/{page_id}/draft_page_{page_number}.png"
+        url = self.storage_adapter.put(key, result.image_bytes, "image/png")
+        return url, result.model_id, result.provenance_metadata

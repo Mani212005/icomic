@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, "fm/**"]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  contracts:
+    name: Contracts & Schemas Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml jsonschema
+
+      - name: Validate OpenAPI spec and JSON schemas
+        run: python contracts/validate_test.py
+
+  backend:
+    name: Go Backend Checks & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: backend/go.sum
+
+      - name: Verify Go Formatting
+        run: |
+          cd backend
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted Go files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Go Vet
+        run: |
+          cd backend
+          go vet ./...
+
+      - name: Run Hermetic Unit & Contract Tests
+        run: |
+          cd backend
+          go test -v -race ./...
+
+  ai-service:
+    name: Python AI Service Checks & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Lint and Format Check (Ruff)
+        run: |
+          cd ai
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Run Hermetic Unit & Contract Tests
+        run: |
+          cd ai
+          uv run pytest -v
+
+  frontend:
+    name: Svelte Frontend Checks & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Unit Tests
+        run: |
+          cd frontend
+          npm test
+
+      - name: Build Application
+        run: |
+          cd frontend
+          npm run build

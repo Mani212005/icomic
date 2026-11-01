@@ -1,0 +1,31 @@
+services:
+  backend:
+    restart: always
+    environment:
+      PORT: "8080"
+      KILL_SWITCH_ENABLED: "${KILL_SWITCH_ENABLED:-false}"
+      DATABASE_URL: "${DATABASE_URL}"
+      REDIS_URL: "${REDIS_URL}"
+      PYTHON_AI_URL: "http://ai:8000"
+
+  ai:
+    restart: always
+    environment:
+      PORT: "8000"
+      ADAPTER_LANGUAGE: "${ADAPTER_LANGUAGE:-meta}"
+      ADAPTER_VISION: "${ADAPTER_VISION:-meta}"
+      ADAPTER_IMAGE: "${ADAPTER_IMAGE:-meta}"
+      ADAPTER_STORAGE: "s3"
+      ADAPTER_QUEUE: "redis"
+      ADAPTER_CLOCK: "system"
+      META_API_KEY: "${META_API_KEY}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      S3_BUCKET_NAME: "${S3_BUCKET_NAME:-icomic-assets-prod}"
+      REDIS_URL: "${REDIS_URL}"
+
+  frontend:
+    restart: always
+    environment:
+      PORT: "3000"
+      PUBLIC_API_URL: "${PUBLIC_API_URL}"

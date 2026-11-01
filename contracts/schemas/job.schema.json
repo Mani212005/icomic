@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://icomic.local/contracts/schemas/job.schema.json",
+  "title": "GenerationJobEvent",
+  "description": "Schema for generation job lifecycle events and state records in Icomic",
+  "type": "object",
+  "required": [
+    "id",
+    "project_id",
+    "user_id",
+    "job_type",
+    "stage",
+    "status",
+    "idempotency_key",
+    "hashed_user_id",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the generation job"
+    },
+    "project_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Associated project UUID"
+    },
+    "user_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Owning user UUID"
+    },
+    "job_type": {
+      "type": "string",
+      "enum": [
+        "script_analysis",
+        "chapter_outline",
+        "panel_text",
+        "character_reference",
+        "draft_sketch",
+        "final_line_art",
+        "colour_suggestion",
+        "pdf_assembly"
+      ],
+      "description": "Type of AI generation task"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "line_art",
+        "colour",
+        "reference",
+        "text",
+        "export"
+      ],
+      "description": "Pipeline stage"
+    },
+    "model_id": {
+      "type": "string",
+      "description": "Meta model identifier used for this job"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "done",
+        "failed",
+        "cancelled"
+      ],
+      "description": "Execution status"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "description": "Unique idempotency key preventing duplicate execution and charges"
+    },
+    "estimated_cost": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Estimated cost in USD before generation"
+    },
+    "actual_cost": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Actual cost charged in USD upon completion"
+    },
+    "hashed_user_id": {
+      "type": "string",
+      "description": "SHA-256 hash of user ID attached to external model calls"
+    },
+    "error_message": {
+      "type": ["string", "null"],
+      "description": "Error details if status is failed"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the job was created"
+    },
+    "completed_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Timestamp when the job finished or failed"
+    }
+  },
+  "additionalProperties": false
+}

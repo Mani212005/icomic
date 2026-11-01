@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: icomic-postgres
+    environment:
+      POSTGRES_USER: icomic
+      POSTGRES_PASSWORD: icomic
+      POSTGRES_DB: icomic
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U icomic -d icomic"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: icomic-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: icomic-backend
+    environment:
+      PORT: "8080"
+      DATABASE_URL: "postgres://icomic:icomic@postgres:5432/icomic?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      PYTHON_AI_URL: "http://ai:8000"
+      KILL_SWITCH_ENABLED: "false"
+      BLOCKED_COUNTRIES: "IN"
+      MIN_USER_AGE: "18"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai:
+        condition: service_started
+
+  ai:
+    build:
+      context: ../ai
+      dockerfile: Dockerfile
+    container_name: icomic-ai
+    environment:
+      PORT: "8000"
+      ADAPTER_LANGUAGE: "fake"
+      ADAPTER_VISION: "fake"
+      ADAPTER_IMAGE: "fake"
+      ADAPTER_STORAGE: "fake"
+      ADAPTER_QUEUE: "fake"
+      ADAPTER_CLOCK: "system"
+      REDIS_URL: "redis://redis:6379/0"
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: icomic-frontend
+    environment:
+      PORT: "5173"
+      PUBLIC_API_URL: "http://localhost:8080"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:

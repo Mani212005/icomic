@@ -1,0 +1,858 @@
+openapi: 3.1.0
+info:
+  title: Icomic AI Service Internal API
+  description: Internal HTTP contract between Go API backend and Python FastAPI AI service.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local development AI service
+
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      operationId: checkHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /internal/v1/analyze-script:
+    post:
+      summary: Analyze script and generate character profiles and chapter breakdown
+      operationId: analyzeScript
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeScriptRequest'
+      responses:
+        '200':
+          description: Script analysis result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyzeScriptResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /internal/v1/generate-character-reference:
+    post:
+      summary: Generate character reference image
+      operationId: generateCharacterReference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateCharacterReferenceRequest'
+      responses:
+        '200':
+          description: Character reference generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateCharacterReferenceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /internal/v1/generate-chapter-outline:
+    post:
+      summary: Generate chapter outline from script and approved characters
+      operationId: generateChapterOutline
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateChapterOutlineRequest'
+      responses:
+        '200':
+          description: Chapter outline generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateChapterOutlineResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /internal/v1/generate-panel-text:
+    post:
+      summary: Generate panel text for a chapter
+      operationId: generatePanelText
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GeneratePanelTextRequest'
+      responses:
+        '200':
+          description: Panel text generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneratePanelTextResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /internal/v1/generate-draft-sketch:
+    post:
+      summary: Generate one rough draft sketch image per page
+      operationId: generateDraftSketch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateDraftSketchRequest'
+      responses:
+        '200':
+          description: Draft sketch generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateDraftSketchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /internal/v1/generate-line-art:
+    post:
+      summary: Generate final black-and-white line art per page after draft approval
+      operationId: generateLineArt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateLineArtRequest'
+      responses:
+        '200':
+          description: Line art generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateLineArtResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /internal/v1/suggest-colour-palette:
+    post:
+      summary: Suggest colour palette for a page
+      operationId: suggestColourPalette
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuggestColourPaletteRequest'
+      responses:
+        '200':
+          description: Colour palette suggested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestColourPaletteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /internal/v1/moderate-prompt:
+    post:
+      summary: Pre-moderate prompt before dispatching to image generation
+      operationId: moderatePrompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModeratePromptRequest'
+      responses:
+        '200':
+          description: Moderation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModeratePromptResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /internal/v1/assemble-pdf:
+    post:
+      summary: Assemble comic book pages into PDF with disclosure and provenance metadata
+      operationId: assemblePdf
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssemblePdfRequest'
+      responses:
+        '200':
+          description: PDF assembled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssemblePdfResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /internal/v1/job/{id}/status:
+    get:
+      summary: Get background job status
+      operationId: getJobStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Generation job UUID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  responses:
+    BadRequest:
+      description: Invalid request parameters or body
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
+
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          example: INVALID_ARGUMENT
+        message:
+          type: string
+          example: Script input cannot be empty
+        details:
+          type: object
+          additionalProperties: true
+
+    CharacterProfile:
+      type: object
+      required:
+        - name
+        - description
+        - age_range
+        - appearance
+        - hair_style
+        - clothing
+        - personality
+        - visual_attributes
+      properties:
+        name:
+          type: string
+          example: Maya
+        description:
+          type: string
+          example: A young tech-savvy comic artist with a creative streak
+        age_range:
+          type: string
+          example: 20-25
+        appearance:
+          type: string
+          example: Athletic build, hazel eyes, sharp chin
+        hair_style:
+          type: string
+          example: Short teal pixie cut
+        clothing:
+          type: string
+          example: Black hoodie with neon yellow accents and dark denim
+        personality:
+          type: string
+          example: Curious, resourceful, determined
+        visual_attributes:
+          type: object
+          additionalProperties: true
+          example:
+            signature_prop: digital stylus
+            color_tone: vibrant teal
+
+    AnalyzeScriptRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - project_id
+        - script
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        script:
+          type: string
+        target_chapter_count:
+          type: integer
+          minimum: 1
+          nullable: true
+
+    AnalyzeScriptResponse:
+      type: object
+      required:
+        - job_id
+        - character_profiles
+        - suggested_chapter_count
+        - word_count
+        - warnings
+      properties:
+        job_id:
+          type: string
+        character_profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/CharacterProfile'
+        suggested_chapter_count:
+          type: integer
+        word_count:
+          type: integer
+        warnings:
+          type: array
+          items:
+            type: string
+
+    GenerateCharacterReferenceRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - project_id
+        - character_id
+        - character_name
+        - prompt
+        - style
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        character_id:
+          type: string
+          format: uuid
+        character_name:
+          type: string
+        prompt:
+          type: string
+        reference_images:
+          type: array
+          items:
+            type: string
+          default: []
+        style:
+          type: string
+          example: classic-comic
+
+    GenerateCharacterReferenceResponse:
+      type: object
+      required:
+        - job_id
+        - image_url
+        - model_id
+        - provenance_metadata
+      properties:
+        job_id:
+          type: string
+        image_url:
+          type: string
+        model_id:
+          type: string
+        provenance_metadata:
+          type: object
+          additionalProperties: true
+
+    ChapterOutlineItem:
+      type: object
+      required:
+        - chapter_number
+        - title
+        - summary
+        - important_events
+        - character_names
+        - ending
+      properties:
+        chapter_number:
+          type: integer
+        title:
+          type: string
+        summary:
+          type: string
+        important_events:
+          type: array
+          items:
+            type: string
+        character_names:
+          type: array
+          items:
+            type: string
+        ending:
+          type: string
+
+    GenerateChapterOutlineRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - project_id
+        - script
+        - chapter_count
+        - approved_characters
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        script:
+          type: string
+        chapter_count:
+          type: integer
+          minimum: 1
+        approved_characters:
+          type: array
+          items:
+            $ref: '#/components/schemas/CharacterProfile'
+
+    GenerateChapterOutlineResponse:
+      type: object
+      required:
+        - job_id
+        - chapters
+      properties:
+        job_id:
+          type: string
+        chapters:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChapterOutlineItem'
+
+    PanelTextItem:
+      type: object
+      required:
+        - panel_number
+        - scene_description
+        - character_actions
+        - camera_angle
+        - background
+        - dialogue
+        - narration
+        - image_prompt
+      properties:
+        panel_number:
+          type: integer
+        scene_description:
+          type: string
+        character_actions:
+          type: string
+        camera_angle:
+          type: string
+        background:
+          type: string
+        dialogue:
+          type: string
+        narration:
+          type: string
+        image_prompt:
+          type: string
+
+    GeneratePanelTextRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - project_id
+        - chapter_id
+        - chapter_number
+        - chapter_title
+        - chapter_summary
+        - characters
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        chapter_id:
+          type: string
+          format: uuid
+        chapter_number:
+          type: integer
+        chapter_title:
+          type: string
+        chapter_summary:
+          type: string
+        characters:
+          type: array
+          items:
+            type: string
+
+    GeneratePanelTextResponse:
+      type: object
+      required:
+        - job_id
+        - panels
+      properties:
+        job_id:
+          type: string
+        panels:
+          type: array
+          items:
+            $ref: '#/components/schemas/PanelTextItem'
+
+    GenerateDraftSketchRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - project_id
+        - page_id
+        - page_number
+        - panels
+        - style
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        page_id:
+          type: string
+          format: uuid
+        page_number:
+          type: integer
+        panels:
+          type: array
+          items:
+            $ref: '#/components/schemas/PanelTextItem'
+        style:
+          type: string
+        character_reference_image_urls:
+          type: array
+          items:
+            type: string
+          default: []
+
+    GenerateDraftSketchResponse:
+      type: object
+      required:
+        - job_id
+        - image_url
+        - model_id
+        - provenance_metadata
+      properties:
+        job_id:
+          type: string
+        image_url:
+          type: string
+        model_id:
+          type: string
+        provenance_metadata:
+          type: object
+          additionalProperties: true
+
+    GenerateLineArtRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - project_id
+        - page_id
+        - page_number
+        - draft_image_url
+        - panels
+        - style
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        page_id:
+          type: string
+          format: uuid
+        page_number:
+          type: integer
+        draft_image_url:
+          type: string
+        panels:
+          type: array
+          items:
+            $ref: '#/components/schemas/PanelTextItem'
+        style:
+          type: string
+        character_reference_image_urls:
+          type: array
+          items:
+            type: string
+          default: []
+
+    GenerateLineArtResponse:
+      type: object
+      required:
+        - job_id
+        - image_url
+        - model_id
+        - provenance_metadata
+      properties:
+        job_id:
+          type: string
+        image_url:
+          type: string
+        model_id:
+          type: string
+        provenance_metadata:
+          type: object
+          additionalProperties: true
+
+    ColourRegionSuggestion:
+      type: object
+      required:
+        - region_name
+        - hex_color
+        - label
+      properties:
+        region_name:
+          type: string
+          example: background_sky
+        hex_color:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          example: '#4A90E2'
+        label:
+          type: string
+          example: Twilight Blue Sky
+
+    SuggestColourPaletteRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - project_id
+        - page_id
+        - line_art_image_url
+        - panel_context
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        page_id:
+          type: string
+          format: uuid
+        line_art_image_url:
+          type: string
+        panel_context:
+          type: string
+
+    SuggestColourPaletteResponse:
+      type: object
+      required:
+        - job_id
+        - theme
+        - palette
+      properties:
+        job_id:
+          type: string
+        theme:
+          type: string
+        palette:
+          type: array
+          items:
+            $ref: '#/components/schemas/ColourRegionSuggestion'
+
+    ModeratePromptRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - prompt
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        prompt:
+          type: string
+
+    ModeratePromptResponse:
+      type: object
+      required:
+        - job_id
+        - blocked
+      properties:
+        job_id:
+          type: string
+        blocked:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+
+    PageExportItem:
+      type: object
+      required:
+        - page_number
+        - image_url
+      properties:
+        page_number:
+          type: integer
+        image_url:
+          type: string
+        panel_count:
+          type: integer
+        provenance_metadata:
+          type: object
+          additionalProperties: true
+
+    AssemblePdfRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - project_id
+        - title
+        - page_size
+        - include_ai_disclosure
+        - pages
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        page_size:
+          type: string
+          enum: [A4, US_Letter, Custom_Comic]
+          default: A4
+        include_ai_disclosure:
+          type: boolean
+          default: true
+        pages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PageExportItem'
+
+    AssemblePdfResponse:
+      type: object
+      required:
+        - job_id
+        - pdf_url
+        - provenance_metadata_preserved
+        - page_count
+      properties:
+        job_id:
+          type: string
+        pdf_url:
+          type: string
+        provenance_metadata_preserved:
+          type: boolean
+        page_count:
+          type: integer
+
+    JobStatusResponse:
+      type: object
+      required:
+        - job_id
+        - status
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, done, failed, cancelled]
+        actual_cost:
+          type: number
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
