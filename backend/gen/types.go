@@ -216,10 +216,10 @@ type AssemblePdfRequest struct {
 
 // AssemblePdfResponse corresponds to OpenAPI.
 type AssemblePdfResponse struct {
-	JobID                        string `json:"job_id"`
-	PdfURL                       string `json:"pdf_url"`
+	JobID                       string `json:"job_id"`
+	PdfURL                      string `json:"pdf_url"`
 	ProvenanceMetadataPreserved bool   `json:"provenance_metadata_preserved"`
-	PageCount                    int    `json:"page_count"`
+	PageCount                   int    `json:"page_count"`
 }
 
 // JobStatusResponse corresponds to OpenAPI.

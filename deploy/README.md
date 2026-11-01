@@ -1,12 +1,11 @@
 # Icomic Deployment and Infrastructure
 
-This directory contains container definitions and database migrations for Icomic.
+This directory contains container definitions for Icomic.
 
 ## Directory Contents
 
-- `docker-compose.yml`: Local development stack running PostgreSQL, Redis, Go backend, Python AI service, and Svelte frontend with fake adapters and zero network dependencies.
-- `docker-compose.prod.yml`: Production deployment overrides for real Meta adapters and cloud secrets.
-- `migrations/`: Numbered SQL migration files for PostgreSQL.
+- `docker-compose.yml`: Local development stack running PostgreSQL, Redis, Go backend, Python AI service, and Svelte frontend.
+- `docker-compose.prod.yml`: Production deployment overrides.
 
 ## Running the Dev Stack
 

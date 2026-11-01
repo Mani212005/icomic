@@ -8,6 +8,17 @@ Image generation requires explicit prior user approval and estimated cost confir
 The full product specification is in [docs/SPEC.md](docs/SPEC.md).
 The system architecture and ports-and-adapters design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Stage 1 Scope
+
+This first stage provides:
+- The versioned OpenAPI and JSON Schema contract between the Go API and Python AI service (`contracts/`).
+- The monorepo skeleton across all components (`frontend`, `backend`, `ai`, `deploy`, `contracts`).
+- Per-component minimal runnable stubs (Go HTTP server, FastAPI service, and Svelte app shell) with health check endpoints.
+- Hermetic unit and boundary contract tests.
+- CI workflows and local development environment setup.
+
+Later parallel streams (database and migrations, Go API domain and repository, Python service adapters, Svelte editor with bucket-fill tool, export) build on this stage.
+
 ## Monorepo Layout
 
 ```
@@ -18,56 +29,38 @@ icomic/
 │   └── schemas/
 │       ├── job.schema.json     # Generation job event shape
 │       └── credit.schema.json  # Credit ledger event shape
-├── frontend/                   # Svelte single-page application
+├── frontend/                   # Svelte single-page application skeleton
 │   ├── src/
-│   │   ├── routes/             # SvelteKit pages
+│   │   ├── routes/             # SvelteKit app shell
 │   │   ├── lib/
-│   │   │   ├── editor/         # Comic book editor components
-│   │   │   ├── colour/         # Colour editor + paint-bucket fill (client-side)
-│   │   │   └── api/            # API client
+│   │   │   └── api/            # API client (health check)
 │   │   └── app.html
 │   ├── package.json
 │   └── svelte.config.js
-├── backend/                    # Go API server
+├── backend/                    # Go API server skeleton
 │   ├── cmd/server/             # Entry point
 │   ├── internal/
-│   │   ├── api/                # HTTP handlers, middleware, routes
-│   │   ├── domain/             # Domain types, business rules
-│   │   ├── jobs/               # Job creation, queue dispatch
-│   │   ├── credits/            # Credit ledger, quota, kill switch
-│   │   ├── auth/               # Authentication, age gate, geo-block
-│   │   └── db/                 # PostgreSQL queries, repositories
+│   │   └── api/                # Health check handlers and routing
 │   ├── gen/                    # Types and client generated/validated from contracts
 │   └── go.mod
-├── ai/                         # Python FastAPI AI service
+├── ai/                         # Python FastAPI AI service skeleton
 │   ├── app/
-│   │   ├── main.py             # FastAPI entry point
-│   │   ├── adapters/           # Port implementations
-│   │   │   ├── language/       # LanguagePort (fake & meta)
-│   │   │   ├── vision/         # VisionPort (fake & meta)
-│   │   │   ├── image/          # ImagePort (fake & meta)
-│   │   │   ├── storage/        # StoragePort (fake & s3)
-│   │   │   ├── queue/          # QueuePort (fake & redis)
-│   │   │   └── clock/          # ClockPort (fake & system)
-│   │   ├── services/           # Business logic using ports only
+│   │   ├── main.py             # FastAPI entry point (health check stub)
 │   │   └── gen/                # Models generated/validated from contracts
 │   ├── tests/
-│   │   ├── unit/               # Hermetic unit tests with fake adapters
-│   │   ├── contract/           # Boundary contract tests
-│   │   └── live/               # Optional live checks (excluded from CI)
+│   │   └── contract/           # Boundary contract tests
 │   ├── pyproject.toml
 │   └── requirements.txt
 ├── deploy/
-│   ├── docker-compose.yml      # Local dev stack (fake adapters, zero network)
-│   ├── docker-compose.prod.yml # Production overrides
-│   └── migrations/             # PostgreSQL migrations
+│   ├── docker-compose.yml      # Local dev stack (Postgres, Redis, services)
+│   └── docker-compose.prod.yml # Production overrides
 ├── docs/                       # Specifications and architecture docs
 └── .github/workflows/          # CI workflows
 ```
 
 ## Running the Dev Environment
 
-The local development environment uses Docker Compose to run all services with deterministic fake adapters:
+The local development environment uses Docker Compose to run all services:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up --build
@@ -100,7 +93,7 @@ make test-contracts
 # 2. Go Backend unit and contract tests
 make test-backend
 
-# 3. Python AI service unit and contract tests
+# 3. Python AI service contract tests
 make test-ai
 
 # 4. Frontend unit tests

@@ -19,10 +19,6 @@ dependencies = [
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["."]
-addopts = "-m 'not live'"
-markers = [
-    "live: live API tests that require real Meta API keys (excluded in CI)",
-]
 
 [tool.ruff]
 line-length = 100

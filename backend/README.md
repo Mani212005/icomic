@@ -1,9 +1,14 @@
 # Icomic Backend API
 
-Go API service for Icomic.
+Go API service skeleton for Icomic.
 
 ## Responsibilities
 
+In Stage 1 (monorepo skeleton and contracts):
+- Minimal runnable HTTP server with health check endpoints.
+- Go client types and boundary tests conforming to the OpenAPI contract between Go and the Python AI service.
+
+Downstream streams will add:
 - Authentication and session management.
 - 18+ age verification gate policy.
 - Country geo-blocking policy (blocking India per Meta image API terms).
@@ -25,7 +30,7 @@ The server listens on `http://localhost:8080`.
 
 ## Testing
 
-Hermetic unit tests run with standard Go tooling and require no external services:
+Hermetic unit and contract tests run with standard Go tooling and require no external services:
 
 ```bash
 cd backend

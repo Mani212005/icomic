@@ -1,12 +1,16 @@
 # Icomic Frontend
 
-Svelte SPA for Icomic.
+Svelte SPA skeleton for Icomic.
 
 ## Features
 
+In Stage 1 (monorepo skeleton and contracts):
+- Minimal runnable Svelte application shell.
+- API client interfacing with the Go backend API health check.
+
+Downstream streams will add:
 - Multi-stage comic book editor (Script -> Characters -> Chapters -> Draft -> Line Art -> Colour -> Export).
 - Client-side Canvas colour editor with paint-bucket flood-fill tool and undo history.
-- API client interfacing with the Go backend API.
 
 ## Running Locally
 
