@@ -980,6 +980,14 @@ POST   /api/v1/projects/:id/chapters
 POST   /api/v1/chapters/:id/panels
 ```
 
+### Chapter Management
+
+```http
+GET    /api/v1/projects/:id/chapters
+PATCH  /api/v1/chapters/:id
+POST   /api/v1/chapters/:id/approve
+```
+
 ### Panel Management
 
 ```http
@@ -1037,7 +1045,7 @@ GET    /api/v1/exports/:id/download
 The backend must validate every request.
 
 The backend must enforce strict ownership and authorization checks:
-- Project, chapter, page, and panel endpoints require that the resource belongs to a project owned by the authenticated user.
+- Project, chapter, character, page, and panel endpoints require that the resource belongs to a project owned by the authenticated user.
 - Credit usage (`GET /api/v1/me/credit-usage`) returns credit usage for the authenticated session user only.
 - Generation job endpoints (`GET /api/v1/generation-jobs/:id` and `POST /api/v1/generation-jobs/:id/cancel`) must verify that the requested job belongs to the authenticated user.
 - Export endpoints (`GET /api/v1/exports/:id` and `GET /api/v1/exports/:id/download`) must verify that the export belongs to a project owned by the authenticated user.
