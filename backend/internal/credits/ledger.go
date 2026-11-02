@@ -50,9 +50,11 @@ type CreditService interface {
 
 // InMemoryCreditService is a thread-safe in-memory credit ledger for tests and development.
 type InMemoryCreditService struct {
-	mu       sync.Mutex
-	balances map[string]float64
-	entries  []domain.CreditLedger
+	mu                 sync.Mutex
+	balances           map[string]float64
+	entries            []domain.CreditLedger
+	killSwitchProvider domain.KillSwitchProvider
+	totalPlatformSpend float64
 }
 
 func NewInMemoryCreditService(initialBalances map[string]float64) *InMemoryCreditService {
@@ -64,6 +66,27 @@ func NewInMemoryCreditService(initialBalances map[string]float64) *InMemoryCredi
 		balances: b,
 		entries:  make([]domain.CreditLedger, 0),
 	}
+}
+
+// SetKillSwitchProvider connects a KillSwitchProvider to auto-trip when platform-wide spend hits threshold (SPEC 5.5).
+func (s *InMemoryCreditService) SetKillSwitchProvider(provider domain.KillSwitchProvider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.killSwitchProvider = provider
+}
+
+// KillSwitchProvider returns the attached kill switch provider, if any.
+func (s *InMemoryCreditService) KillSwitchProvider() domain.KillSwitchProvider {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.killSwitchProvider
+}
+
+// TotalPlatformSpend returns the cumulative debited platform spend across all users.
+func (s *InMemoryCreditService) TotalPlatformSpend() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.totalPlatformSpend
 }
 
 func generateID() string {
@@ -93,6 +116,12 @@ func (s *InMemoryCreditService) Debit(ctx context.Context, req DebitRequest) (*d
 
 	newBalance := current - req.Amount
 	s.balances[req.UserID] = newBalance
+	s.totalPlatformSpend += req.Amount
+
+	// If kill switch provider is attached with a spend threshold, check if tripped (SPEC 5.5)
+	if s.killSwitchProvider != nil {
+		s.killSwitchProvider.CheckSpend(s.totalPlatformSpend)
+	}
 
 	jobID := req.GenerationJobID
 	entry := domain.CreditLedger{
@@ -120,6 +149,10 @@ func (s *InMemoryCreditService) Refund(ctx context.Context, req RefundRequest) (
 	current := s.balances[req.UserID]
 	newBalance := current + req.Amount
 	s.balances[req.UserID] = newBalance
+	s.totalPlatformSpend -= req.Amount
+	if s.totalPlatformSpend < 0 {
+		s.totalPlatformSpend = 0
+	}
 
 	jobID := req.GenerationJobID
 	entry := domain.CreditLedger{
@@ -147,6 +180,20 @@ func (s *InMemoryCreditService) GetUsageHistory(ctx context.Context, userID stri
 		}
 	}
 	return res, nil
+}
+
+// GetUserDailySpend returns the total credit debited for a user since the specified time.
+func (s *InMemoryCreditService) GetUserDailySpend(ctx context.Context, userID string, since time.Time) (float64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	total := 0.0
+	for _, e := range s.entries {
+		if e.UserID == userID && e.TransactionType == "debit" && e.CreatedAt.After(since) {
+			total += e.Amount
+		}
+	}
+	return total, nil
 }
 
 func (s *InMemoryCreditService) EstimateCost(stage string, count int) domain.CostEstimate {

@@ -320,9 +320,9 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Kill switch check
-	if s.KillSwitchEnabled {
-		writeError(w, http.StatusTooManyRequests, "Kill switch is active")
+	// Kill switch and quota check (SPEC 5.5)
+	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
+		writeError(w, http.StatusTooManyRequests, err.Error())
 		return
 	}
 
@@ -541,6 +541,7 @@ func (s *Server) UpdateChapter(w http.ResponseWriter, r *http.Request) {
 		c.Status = *body.Status
 	}
 
+	c.UpdatedAt = time.Now().UTC()
 	_ = s.Repo.UpdateChapter(r.Context(), c)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"chapter": c})
 }
@@ -693,8 +694,23 @@ func (s *Server) UpdatePanel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.UpdatedAt = time.Now().UTC()
+	now := time.Now().UTC()
+	p.UpdatedAt = now
 	_ = s.Repo.UpdatePanel(r.Context(), p)
+
+	// Cascade: panel edit stales parent page draft approval (SPEC 3.5, 3.6, ARCHITECTURE 5.3)
+	if pages, err := s.Repo.ListPages(r.Context(), p.ChapterID); err == nil {
+		for _, pg := range pages {
+			for _, pid := range pg.PanelIDs {
+				if pid == p.ID {
+					domain.StaleDraftOnPanelEdit(pg, now)
+					_ = s.Repo.UpdatePage(r.Context(), pg)
+					break
+				}
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{"panel": p})
 }
 
@@ -783,6 +799,12 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Kill switch and quota check (SPEC 5.5)
+	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
+		writeError(w, http.StatusTooManyRequests, err.Error())
+		return
+	}
+
 	// Prerequisite approval check: character references & chapter outline (ARCHITECTURE 5.3)
 	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
 	allCharsApproved := len(chars) > 0
@@ -793,7 +815,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	outlineApp, _ := s.Repo.GetLatestApproval(r.Context(), "chapter_outline", c.ID)
-	outlineApproved := outlineApp != nil
+	outlineApproved := outlineApp != nil && !domain.IsApprovalStale(&outlineApp.ApprovedAt, c.UpdatedAt)
 
 	prereqs := domain.ApprovedPrereqs{
 		HasScript:              proj.OriginalScript != "",
@@ -833,7 +855,8 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 
 	pg.DraftImageURL = imgURL
 	pg.DraftImageJobID = &job.ID
-	pg.UpdatedAt = now
+	// Cascade: draft regeneration stales line art approval (SPEC 3.6, 3.7, ARCHITECTURE 5.3)
+	domain.StaleOnDraftRegeneration(pg, now)
 	_ = s.Repo.UpdatePage(r.Context(), pg)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": imgURL})
@@ -902,6 +925,12 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Kill switch and quota check (SPEC 5.5)
+	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
+		writeError(w, http.StatusTooManyRequests, err.Error())
+		return
+	}
+
 	// Draft approval gate (ARCHITECTURE 5.3)
 	draftApproved := pg.DraftApprovedAt != nil && !domain.IsApprovalStale(pg.DraftApprovedAt, pg.UpdatedAt)
 	if !draftApproved {
@@ -937,7 +966,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 
 	pg.LineArtImageURL = imgURL
 	pg.LineArtImageJobID = &job.ID
-	pg.UpdatedAt = now
+	domain.StaleOnLineArtRegeneration(pg, now)
 	_ = s.Repo.UpdatePage(r.Context(), pg)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": imgURL})
@@ -1000,7 +1029,40 @@ func (s *Server) GetColourPalette(w http.ResponseWriter, r *http.Request) {
 
 // SuggestColourPalette handles POST /api/v1/pages/{id}/colour-palette/suggest
 func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
+	userID := s.getUserID(r)
 	pageID := r.PathValue("id")
+
+	pg, err := s.Repo.GetPage(r.Context(), pageID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Page not found")
+		return
+	}
+
+	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Chapter not found")
+		return
+	}
+
+	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
+	if err != nil || proj.UserID != userID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	// Kill switch and quota check (SPEC 5.5)
+	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
+		writeError(w, http.StatusTooManyRequests, err.Error())
+		return
+	}
+
+	// Line art approval gate (SPEC 5.3, ARCHITECTURE 5.3)
+	lineArtApproved := pg.LineArtApprovedAt != nil && !domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt)
+	if !lineArtApproved {
+		writeError(w, http.StatusBadRequest, "Final line art must be approved before colour palette suggestion")
+		return
+	}
+
 	palette := map[string]interface{}{
 		"background": "#1A0B2E",
 		"skin":       "#F5D0C5",
