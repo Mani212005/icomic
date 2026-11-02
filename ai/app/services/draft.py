@@ -29,10 +29,22 @@ class DraftService:
             f"Rough comic book page layout draft sketch, {panel_count}-panel grid composition, "
             f"loose stick-figure and rough pencil layout for page {page_number}. Style: {style}"
         )
+        if character_reference_image_urls:
+            refs = ", ".join(character_reference_image_urls)
+            prompt += f". Character references: {refs}"
+
+        reference_images: list[bytes] = []
+        if character_reference_image_urls:
+            for ref_url in character_reference_image_urls:
+                try:
+                    blob = self.storage_adapter.get(ref_url)
+                    reference_images.append(blob)
+                except (KeyError, ValueError, OSError):
+                    reference_images.append(ref_url.encode("utf-8"))
 
         result = self.image_adapter.generate(
             prompt=prompt,
-            reference_images=[],
+            reference_images=reference_images,
             hashed_user_id=hashed_user_id,
             style=style,
         )

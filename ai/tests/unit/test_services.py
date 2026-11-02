@@ -1,5 +1,9 @@
 """Unit tests for AI services using dependency injection of fake adapters."""
 
+import re
+import zlib
+from typing import Any
+
 import pytest
 
 from app.adapters.image.fake import FakeImageAdapter
@@ -99,7 +103,58 @@ def test_panel_service_panel_text():
         assert p.scene_description != ""
 
 
-def test_draft_service():
+def parse_pdf_structure(pdf_bytes: bytes) -> dict[str, Any]:
+    """Parse raw PDF bytes and extract structural markers, objects, images, and text."""
+    info: dict[str, Any] = {
+        "header": "",
+        "page_count": 0,
+        "objects": {},
+        "images": [],
+        "text_content": "",
+        "has_xref": False,
+        "has_trailer": False,
+        "has_eof": False,
+    }
+    if pdf_bytes.startswith(b"%PDF-"):
+        first_line = pdf_bytes.split(b"\n", 1)[0]
+        info["header"] = first_line.decode("latin1", "replace")
+    if b"%%EOF" in pdf_bytes:
+        info["has_eof"] = True
+    if b"xref" in pdf_bytes:
+        info["has_xref"] = True
+    if b"trailer" in pdf_bytes:
+        info["has_trailer"] = True
+
+    pattern = re.compile(rb"(\d+)\s+0\s+obj(.*?)endobj", re.DOTALL)
+    for m in pattern.finditer(pdf_bytes):
+        obj_num = int(m.group(1))
+        content = m.group(2).strip()
+        info["objects"][obj_num] = content
+        if b"/Type /Pages" in content and b"/Count" in content:
+            count_match = re.search(rb"/Count\s+(\d+)", content)
+            if count_match:
+                info["page_count"] = int(count_match.group(1))
+        if b"/Subtype /Image" in content:
+            w_match = re.search(rb"/Width\s+(\d+)", content)
+            h_match = re.search(rb"/Height\s+(\d+)", content)
+            w = int(w_match.group(1)) if w_match else 0
+            h = int(h_match.group(1)) if h_match else 0
+            info["images"].append({"obj": obj_num, "width": w, "height": h})
+
+    stream_pattern = re.compile(rb"stream\r?\n(.*?)\r?\nendstream", re.DOTALL)
+    text_pieces = []
+    for m in stream_pattern.finditer(pdf_bytes):
+        raw_stream = m.group(1)
+        try:
+            decomp = zlib.decompress(raw_stream)
+            text_pieces.append(decomp.decode("latin1", "replace"))
+        except zlib.error:
+            text_pieces.append(raw_stream.decode("latin1", "replace"))
+    info["text_content"] = "\n".join(text_pieces)
+    return info
+
+
+def test_draft_service_without_character_references():
     img = FakeImageAdapter()
     storage = FakeStorageAdapter()
     svc = DraftService(img, storage)
@@ -126,9 +181,63 @@ def test_draft_service():
     assert url.endswith("pages/page-101/draft_page_1.png")
     assert model_id == "muse-image-1.0-fake"
     assert "c2pa" in prov
+    assert len(img.recorded_calls) == 1
+    assert len(img.recorded_calls[0]["reference_images"]) == 0
 
 
-def test_line_art_service():
+def test_draft_service_character_consistency_anchoring():
+    img = FakeImageAdapter()
+    storage = FakeStorageAdapter()
+    svc = DraftService(img, storage)
+
+    char_bytes_1 = b"\x89PNG\r\n\x1a\nchar-1-bytes"
+    char_bytes_2 = b"\x89PNG\r\n\x1a\nchar-2-bytes"
+    url1 = storage.put("characters/char-1/reference.png", char_bytes_1, "image/png")
+    url2 = storage.put("characters/char-2/reference.png", char_bytes_2, "image/png")
+
+    panels = [
+        PanelTextItem(
+            panel_number=1,
+            scene_description="Rooftop confrontation",
+            character_actions="Maya readies her gear",
+            camera_angle="Close-up",
+            background="Neo-Tokyo Skyline",
+            dialogue="No turning back.",
+            narration="",
+            image_prompt="Maya on rooftop",
+        )
+    ]
+
+    url, model_id, prov = svc.generate_draft_sketch(
+        page_id="page-202",
+        page_number=2,
+        panels=panels,
+        style="cyberpunk",
+        hashed_user_id="hash-user-42",
+        character_reference_image_urls=[url1, url2],
+    )
+    assert url.endswith("pages/page-202/draft_page_2.png")
+    assert model_id == "muse-image-1.0-fake"
+    assert "c2pa" in prov
+    assert len(img.recorded_calls) == 1
+    call = img.recorded_calls[0]
+
+    # Verify approved character reference image bytes passed as reference inputs
+    assert len(call["reference_images"]) == 2
+    assert call["reference_images"][0] == char_bytes_1
+    assert call["reference_images"][1] == char_bytes_2
+
+    # Verify approved character reference URLs included in prompt
+    assert url1 in call["prompt"]
+    assert url2 in call["prompt"]
+    assert "Character references:" in call["prompt"]
+
+    # Verify adapter aliases
+    assert img.calls == img.recorded_calls
+    assert img.recorded_inputs == img.recorded_calls
+
+
+def test_line_art_service_without_character_references():
     img = FakeImageAdapter()
     storage = FakeStorageAdapter()
     svc = LineArtService(img, storage)
@@ -156,6 +265,55 @@ def test_line_art_service():
     assert url.endswith("pages/page-101/line_art_page_1.png")
     assert model_id == "muse-image-1.0-fake"
     assert "c2pa" in prov
+    assert len(img.recorded_calls) == 1
+    assert len(img.recorded_calls[0]["reference_images"]) == 0
+
+
+def test_line_art_service_character_consistency_anchoring():
+    img = FakeImageAdapter()
+    storage = FakeStorageAdapter()
+    svc = LineArtService(img, storage)
+
+    char_bytes = b"\x89PNG\r\n\x1a\nleo-ref-bytes"
+    char_url = storage.put("characters/leo/reference.png", char_bytes, "image/png")
+    draft_url = "http://localhost:8000/storage/fake/pages/page-303/draft_page_1.png"
+
+    panels = [
+        PanelTextItem(
+            panel_number=1,
+            scene_description="Lab interior",
+            character_actions="Leo examines the device",
+            camera_angle="Medium",
+            background="Workbench with monitors",
+            dialogue="The signal is stabilizing.",
+            narration="",
+            image_prompt="Leo working in tech lab",
+        )
+    ]
+
+    url, model_id, prov = svc.generate_line_art(
+        page_id="page-303",
+        page_number=1,
+        draft_image_url=draft_url,
+        panels=panels,
+        style="comic-ink",
+        hashed_user_id="hash-user-leo",
+        character_reference_image_urls=[char_url],
+    )
+    assert url.endswith("pages/page-303/line_art_page_1.png")
+    assert model_id == "muse-image-1.0-fake"
+    assert "c2pa" in prov
+    assert len(img.recorded_calls) == 1
+    call = img.recorded_calls[0]
+
+    # Verify approved character reference image bytes passed as reference inputs
+    assert len(call["reference_images"]) == 1
+    assert call["reference_images"][0] == char_bytes
+
+    # Verify approved character reference URLs and draft URL in prompt
+    assert char_url in call["prompt"]
+    assert draft_url in call["prompt"]
+    assert "Character references:" in call["prompt"]
 
 
 def test_colour_service():
@@ -180,32 +338,154 @@ def test_moderation_service():
     assert "prohibited" in reason_bad
 
 
-def test_pdf_service():
+def test_pdf_service_valid_multipage_and_structural_validation():
+    img_adapter = FakeImageAdapter()
+    storage = FakeStorageAdapter()
+    svc = PdfAssemblyService(storage)
+
+    # Put real PNG images into storage
+    png_page_1 = img_adapter.generate("p1", [], "u1", "noir").image_bytes
+    png_page_2 = img_adapter.generate("p2", [], "u2", "noir").image_bytes
+    url_p1 = storage.put("pages/p1/page_1.png", png_page_1, "image/png")
+    url_p2 = storage.put("pages/p2/page_2.png", png_page_2, "image/png")
+
+    pages = [
+        PageExportItem(
+            page_number=1,
+            image_url=url_p1,
+            panel_count=2,
+            provenance_metadata={
+                "c2pa": {
+                    "claim_generator": "Meta-AI-Provenance/1.0",
+                    "signature": "sig-page-1",
+                    "watermark_present": True,
+                },
+                "model": "muse-image-1.0",
+            },
+            panels=[
+                PanelTextItem(
+                    panel_number=1,
+                    scene_description="Night alley",
+                    character_actions="Maya runs",
+                    camera_angle="Wide",
+                    background="Wet pavement",
+                    dialogue="Keep moving, they are close!",
+                    narration="The pursuit had begun.",
+                    image_prompt="Panel 1 action",
+                ),
+                PanelTextItem(
+                    panel_number=2,
+                    scene_description="Dead end",
+                    character_actions="Turns around",
+                    camera_angle="Close",
+                    background="Brick wall",
+                    dialogue="Nowhere left to hide.",
+                    narration="",
+                    image_prompt="Panel 2 suspense",
+                ),
+            ],
+        ),
+        PageExportItem(
+            page_number=2,
+            image_url=url_p2,
+            panel_count=1,
+            provenance_metadata={
+                "c2pa": {
+                    "claim_generator": "Meta-AI-Provenance/1.0",
+                    "signature": "sig-page-2",
+                    "watermark_present": True,
+                },
+                "model": "muse-image-1.0",
+            },
+            panels=[
+                PanelTextItem(
+                    panel_number=1,
+                    scene_description="Helicopter searchlight",
+                    character_actions="Looks up",
+                    camera_angle="High",
+                    background="Beams of light",
+                    dialogue="Look up!",
+                    narration="Escape arrived from above.",
+                    image_prompt="Panel 3 rescue",
+                )
+            ],
+        ),
+    ]
+
+    url, preserved, count = svc.assemble_pdf(
+        project_id="proj-comic-777",
+        title="Shadows of Neo-Tokyo",
+        page_size="A4",
+        include_ai_disclosure=True,
+        pages=pages,
+    )
+    assert url.endswith("exports/proj-comic-777/comic.pdf")
+    assert preserved is True
+    # 1 cover page + 2 comic pages = 3 pages
+    assert count == 3
+
+    pdf_bytes = storage.get("exports/proj-comic-777/comic.pdf")
+    parsed = parse_pdf_structure(pdf_bytes)
+
+    # 1. Structural validity
+    assert parsed["header"] == "%PDF-1.4"
+    assert parsed["has_eof"] is True
+    assert parsed["has_xref"] is True
+    assert parsed["has_trailer"] is True
+
+    # 2. Page count in /Pages tree
+    assert parsed["page_count"] == 3
+
+    # 3. Embedded image XObjects
+    assert len(parsed["images"]) == 2
+    for img in parsed["images"]:
+        assert img["width"] == 64
+        assert img["height"] == 64
+
+    # 4. Mandatory AI disclosure text present
+    assert "MANDATORY AI-GENERATION DISCLOSURE" in parsed["text_content"]
+    assert "Notice: This comic book was created with Icomic AI" in parsed["text_content"]
+    assert "Meta C2PA provenance metadata" in parsed["text_content"]
+
+    # 5. Title & panel dialogue text present
+    assert "Shadows of Neo-Tokyo" in parsed["text_content"]
+    assert "Keep moving, they are close!" in parsed["text_content"]
+    assert "The pursuit had begun." in parsed["text_content"]
+    assert "Escape arrived from above." in parsed["text_content"]
+
+    # 6. Provenance metadata in XMP packet
+    assert "Meta-AI-Provenance/1.0" in parsed["text_content"]
+    assert "sig-page-1" in parsed["text_content"]
+    assert "sig-page-2" in parsed["text_content"]
+
+
+def test_pdf_service_page_sizes_and_fallback_image():
     storage = FakeStorageAdapter()
     svc = PdfAssemblyService(storage)
 
     pages = [
         PageExportItem(
             page_number=1,
-            image_url="http://storage/page1.png",
-            panel_count=4,
-            provenance_metadata={"watermark": True},
+            image_url="http://storage/non-existent-image.png",
+            dialogue_text="Stand back, hero!\nI will handle this.",
         )
     ]
     url, preserved, count = svc.assemble_pdf(
-        project_id="proj-999",
-        title="Epic Comic",
-        page_size="A4",
-        include_ai_disclosure=True,
+        project_id="proj-sizes",
+        title="Letter Sized Comic",
+        page_size="US_Letter",
+        include_ai_disclosure=False,
         pages=pages,
     )
-    assert url.endswith("exports/proj-999/comic.pdf")
+    assert url.endswith("exports/proj-sizes/comic.pdf")
+    assert count == 2
     assert preserved is True
-    assert count == 1
 
-    pdf_data = storage.get("exports/proj-999/comic.pdf")
-    assert pdf_data.startswith(b"%PDF-1.4")
-    assert b"Generated with Icomic AI" in pdf_data
+    pdf_bytes = storage.get("exports/proj-sizes/comic.pdf")
+    parsed = parse_pdf_structure(pdf_bytes)
+    assert parsed["page_count"] == 2
+    assert len(parsed["images"]) == 1
+    assert "Stand back, hero!" in parsed["text_content"]
 
 
 def test_pdf_service_empty_pages():
