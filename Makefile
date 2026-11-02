@@ -1,9 +1,13 @@
-.PHONY: all test lint test-contracts test-migrations test-backend test-ai test-frontend lint-frontend dev clean migrate-up migrate-down migrate-seed
+.PHONY: all test lint build check guard-hermetic test-contracts test-migrations test-backend test-ai test-frontend fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
 
-all: lint test
+all: check
+
+guard-hermetic:
+	python3 scripts/check_hermetic_test.py
+	python3 scripts/check_hermetic.py
 
 test-contracts:
-	uv run --with pyyaml --with jsonschema python3 contracts/validate_test.py
+	uv run --with-requirements contracts/requirements.txt python3 contracts/validate_test.py
 
 test-migrations:
 	python3 deploy/validate_migrations_test.py
@@ -12,23 +16,36 @@ test-backend:
 	( cd backend && go test -v -race ./... )
 
 test-ai:
-	( cd ai && uv run pytest -v )
+	( cd ai && uv run --frozen pytest -v )
 
 test-frontend:
-	( cd frontend && npm test && npm run build )
+	( cd frontend && npm test )
 
-test: test-contracts test-migrations test-backend test-ai test-frontend
+test: guard-hermetic test-contracts test-migrations test-backend test-ai test-frontend
 
-lint-backend:
+fmt-backend:
+	( cd backend && test -z "$$(gofmt -l .)" )
+
+lint-backend: fmt-backend
 	( cd backend && go vet ./... )
 
 lint-ai:
-	( cd ai && uv run ruff check . && uv run ruff format --check . )
+	( cd ai && uv run --frozen ruff check . && uv run --frozen ruff format --check . )
 
 lint-frontend:
 	( cd frontend && npm run check )
 
 lint: lint-backend lint-ai lint-frontend test-contracts test-migrations
+
+build-backend:
+	( cd backend && go build -v ./... )
+
+build-frontend:
+	( cd frontend && npm run build )
+
+build: build-backend build-frontend
+
+check: lint test build
 
 dev:
 	docker compose -f deploy/docker-compose.yml up --build
