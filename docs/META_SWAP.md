@@ -3,11 +3,12 @@
 This guide provides the exact step-by-step procedure for swapping inert fake adapters with real Meta AI adapters once Meta API credentials and credits are provisioned.
 It documents the required environment variables, secret handling, adapter implementation requirements, manual verification procedures, rollback steps, and pending captain decisions.
 
-## 1. Current State: Inert Stubs and Hermetic Fakes
+## 1. Current State: Implemented Meta Adapters and Hermetic Fakes
 
-No live Meta API integration code exists in the repository today.
-The Meta adapter classes (`MetaLanguageAdapter`, `MetaVisionAdapter`, and `MetaImageAdapter` located in `ai/app/adapters/`) are inert stubs that raise a not-configured `RuntimeError` upon initialization.
-They perform zero network calls and never read API keys.
+The real Meta adapter classes (`MetaLanguageAdapter`, `MetaVisionAdapter`, and `MetaImageAdapter` located in `ai/app/adapters/`) are implemented behind existing port contracts.
+They are selected exclusively via configuration (`ADAPTER_LANGUAGE=meta`, `ADAPTER_VISION=meta`, `ADAPTER_IMAGE=meta`), while the default configuration remains deterministic fake adapters.
+No API keys are read at import time, and `META_API_KEY` is read lazily only when an adapter is constructed with meta selected.
+Live verification remains manual and strictly isolated from CI pipelines.
 
 The Icomic service stack runs entirely hermetically on deterministic fake adapters by default:
 - `FakeLanguageAdapter`: Generates deterministic text responses derived from the SHA-256 hash of the input prompt.
@@ -77,9 +78,9 @@ Follow these steps when swapping the system from fake adapters to live Meta adap
 - Note your team's assigned rate limits (the standard ceiling is 150 requests per minute for image generation).
 
 ### Step 2: Implement Real Adapter Classes
-- Replace the inert stub implementations in `ai/app/adapters/` with live client implementations satisfying all requirements detailed in Section 4.
-- Verify that unit tests continue to use dependency injection with fake adapters.
-- Confirm that the hermetic guard continues to pass across all test suites.
+- Real adapter classes are now implemented (`MetaLanguageAdapter`, `MetaVisionAdapter`, and `MetaImageAdapter`) satisfying all requirements in Section 4.
+- Automated tests run completely hermetically using injected transports and fakes.
+- Live verification remains manual using the isolated script `scripts/manual/meta_live_check.py`.
 
 ### Step 3: Populate Local Secrets
 - Create a `.env.local` file in the repository root.
@@ -163,6 +164,10 @@ The adapters must map external HTTP error responses into structured domain excep
 - The `MetaImageAdapter` must extract and preserve the raw `provenance_metadata` dictionary returned in API responses.
 - Downstream processing (canvas manipulation, thumbnailing, PDF compilation) must never strip, alter, or obscure provenance metadata or watermarks.
 - The PDF export pipeline must verify that provenance metadata is preserved and record `exports.provenance_metadata_preserved = true` in the database.
+
+### 4.8 Contributor Tier Protection
+
+Contributor tier models (such as `muse-spark-1.3-contributor`) train Meta models on user prompts and completions, so every Meta adapter strictly rejects them by default unless `META_ALLOW_CONTRIBUTOR_TIER=1` is explicitly set.
 
 ## 5. Verification Checklist
 

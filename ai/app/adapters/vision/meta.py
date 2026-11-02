@@ -1,25 +1,121 @@
-"""Meta vision adapter inert stub (deferred until API credits are available)."""
+"""Meta vision adapter for multimodal line art review and colour palette suggestion."""
 
+from __future__ import annotations
+
+import base64
+import os
+from typing import Any
+
+import httpx
+
+from ..meta_http import (
+    DEFAULT_META_USER_FIELD,
+    DEFAULT_META_VISION_MODEL,
+    MetaConfigurationError,
+    MetaHttpClient,
+    build_chat_completion_request,
+    parse_chat_completion_response,
+    parse_palette_json,
+    validate_model_id_tier,
+)
 from .port import PaletteSuggestion, VisionPort
 
 
 class MetaVisionAdapter(VisionPort):
-    """Inert stub for Meta vision models.
+    """Real Meta multimodal vision model adapter using image content parts."""
 
-    Raises a clear not-configured error upon initialization.
-    No live API calls or API keys are read.
-    """
-
-    def __init__(self, *args, **kwargs):
-        raise RuntimeError(
-            "MetaVisionAdapter is not configured: live Meta API integration is deferred "
-            "until API credits are provisioned. Use FakeVisionAdapter (default) via ADAPTER_VISION=fake."
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        default_model: str | None = None,
+        http_client: MetaHttpClient | None = None,
+        transport: httpx.BaseTransport | None = None,
+        **client_kwargs: Any,
+    ) -> None:
+        self.default_model = (
+            default_model or os.getenv("META_VISION_MODEL") or DEFAULT_META_VISION_MODEL
         )
+        validate_model_id_tier(self.default_model)
+        self.user_field = os.getenv("META_USER_FIELD", DEFAULT_META_USER_FIELD)
+
+        if http_client is not None:
+            self._client = http_client
+        else:
+            try:
+                self._client = MetaHttpClient(
+                    api_key=api_key,
+                    base_url=base_url,
+                    transport=transport,
+                    **client_kwargs,
+                )
+            except MetaConfigurationError as exc:
+                raise RuntimeError(f"MetaVisionAdapter is not configured: {exc.message}") from exc
+
+        self.last_request_id: str = ""
+        self.last_usage = None
 
     def review(self, model: str, image_bytes: bytes, prompt: str) -> str:
-        raise NotImplementedError("MetaVisionAdapter is inert and does not perform live calls.")
+        """Submit image bytes and review prompt to Meta multimodal vision endpoint."""
+        target_model = model or self.default_model
+        validate_model_id_tier(target_model)
+        b64_image = base64.b64encode(image_bytes).decode("ascii")
+
+        content_parts = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+            },
+        ]
+        messages = [{"role": "user", "content": content_parts}]
+
+        payload = build_chat_completion_request(
+            model=target_model,
+            messages=messages,
+        )
+
+        data, headers = self._client.post("/chat/completions", payload)
+        content, token_usage, request_id, _ = parse_chat_completion_response(data, headers)
+
+        self.last_request_id = request_id
+        self.last_usage = token_usage
+        return content
 
     def suggest_palette(
         self, model: str, image_bytes: bytes, panel_context: str
     ) -> PaletteSuggestion:
-        raise NotImplementedError("MetaVisionAdapter is inert and does not perform live calls.")
+        """Analyze line art and context to suggest structured colour palette."""
+        target_model = model or self.default_model
+        validate_model_id_tier(target_model)
+        b64_image = base64.b64encode(image_bytes).decode("ascii")
+
+        instruction = (
+            "Analyze this comic panel line art and context. Suggest a cohesive, harmonious "
+            "color palette for the key visual regions. Respond strictly in valid JSON with this format:\n"
+            '{\n  "theme": "Descriptive Theme Name",\n  "palette": [\n'
+            '    {"region_name": "character_clothing", "hex_color": "#RRGGBB", "label": "Region Label"}\n'
+            "  ]\n}\n"
+            f"Panel context: {panel_context}"
+        )
+
+        content_parts = [
+            {"type": "text", "text": instruction},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+            },
+        ]
+        messages = [{"role": "user", "content": content_parts}]
+
+        payload = build_chat_completion_request(
+            model=target_model,
+            messages=messages,
+        )
+
+        data, headers = self._client.post("/chat/completions", payload)
+        content, token_usage, request_id, _ = parse_chat_completion_response(data, headers)
+
+        self.last_request_id = request_id
+        self.last_usage = token_usage
+        return parse_palette_json(content)

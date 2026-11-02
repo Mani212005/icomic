@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl-mock-lang-001",
+  "object": "chat.completion",
+  "created": 1700000000,
+  "model": "muse-spark-1.3",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Detective: The rain hasn't stopped since midnight. We need to move."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 16,
+    "completion_tokens": 14,
+    "total_tokens": 30
+  }
+}

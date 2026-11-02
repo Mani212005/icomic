@@ -1,0 +1,27 @@
+{
+  "id": "resp-mock-img-001",
+  "object": "response",
+  "created": 1700000000,
+  "model": "muse-image-1.0",
+  "output": [
+    {
+      "type": "image_generation_call",
+      "image_generation_call": {
+        "status": "completed",
+        "result": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAI2NhQlhDMlBBIG1hbmlmZXN0IHRlc3QgY29udGVudCBlbWJlZGRlZNjYD+8AAAAMSURBVHicY/jPwAAAAwEBAMn+ku8AAAAASUVORK5CYII="
+      }
+    }
+  ],
+  "provenance": {
+    "c2pa": {
+      "watermark_present": true,
+      "manifest_marker_detected": true,
+      "claim_generator": "Meta-AI-Provenance/1.0"
+    }
+  },
+  "usage": {
+    "prompt_tokens": 120,
+    "completion_tokens": 0,
+    "total_tokens": 120
+  }
+}

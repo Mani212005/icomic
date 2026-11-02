@@ -21,7 +21,8 @@ backend/server
 *.test
 *.out
 
-# Environment variables
+# Environment variables and spend ledger
 .env
 .env.local
 .env.*.local
+.live-spend.jsonl
