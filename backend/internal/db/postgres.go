@@ -1,0 +1,988 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	_ "github.com/lib/pq"
+	"icomic/backend/internal/domain"
+)
+
+// PostgresRepository implements Repository backed by PostgreSQL.
+type PostgresRepository struct {
+	db *sql.DB
+}
+
+func NewPostgresRepository(connStr string) (*PostgresRepository, error) {
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("open postgres connection: %w", err)
+	}
+
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("ping postgres: %w", err)
+	}
+
+	return &PostgresRepository{db: db}, nil
+}
+
+func (p *PostgresRepository) Close() error {
+	return p.db.Close()
+}
+
+// ApplyMigrations executes the initial schema migration script.
+func (p *PostgresRepository) ApplyMigrations(ctx context.Context, migrationSQL string) error {
+	_, err := p.db.ExecContext(ctx, migrationSQL)
+	return err
+}
+
+// User methods
+func (p *PostgresRepository) CreateUser(ctx context.Context, u *domain.User) error {
+	if u.ID == "" {
+		u.ID = uuid.NewString()
+	}
+	now := time.Now()
+	if u.CreatedAt.IsZero() {
+		u.CreatedAt = now
+	}
+	u.UpdatedAt = now
+	if u.PlanID == "" {
+		u.PlanID = "free"
+	}
+
+	query := `
+		INSERT INTO users (id, email, password_hash, plan_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`
+	_, err := p.db.ExecContext(ctx, query, u.ID, u.Email, u.PasswordHash, u.PlanID, u.CreatedAt, u.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("insert user: %w", err)
+	}
+
+	// Seed initial balance entry in credit_ledger if user has no entries
+	initQuery := `
+		INSERT INTO credit_ledger (id, user_id, project_id, transaction_type, amount, balance_after, created_at)
+		SELECT $1, $2, $2, 'adjustment', 100.0, 100.0, $3
+		WHERE NOT EXISTS (SELECT 1 FROM credit_ledger WHERE user_id = $2)
+	`
+	_, _ = p.db.ExecContext(ctx, initQuery, uuid.NewString(), u.ID, now)
+	return nil
+}
+
+func (p *PostgresRepository) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
+	query := `SELECT id, email, password_hash, plan_id, created_at, updated_at FROM users WHERE id = $1`
+	var u domain.User
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&u.ID, &u.Email, &u.PasswordHash, &u.PlanID, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get user by id: %w", err)
+	}
+	return &u, nil
+}
+
+func (p *PostgresRepository) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
+	query := `SELECT id, email, password_hash, plan_id, created_at, updated_at FROM users WHERE email = $1`
+	var u domain.User
+	err := p.db.QueryRowContext(ctx, query, email).Scan(
+		&u.ID, &u.Email, &u.PasswordHash, &u.PlanID, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get user by email: %w", err)
+	}
+	return &u, nil
+}
+
+func (p *PostgresRepository) GetPlan(ctx context.Context, id string) (*domain.Plan, error) {
+	query := `SELECT id, name, entitlements, created_at FROM plans WHERE id = $1`
+	var plan domain.Plan
+	var entBytes []byte
+	err := p.db.QueryRowContext(ctx, query, id).Scan(&plan.ID, &plan.Name, &entBytes, &plan.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get plan: %w", err)
+	}
+	if len(entBytes) > 0 {
+		_ = json.Unmarshal(entBytes, &plan.Entitlements)
+	}
+	return &plan, nil
+}
+
+// Projects
+func (p *PostgresRepository) CreateProject(ctx context.Context, proj *domain.Project) error {
+	if proj.ID == "" {
+		proj.ID = uuid.NewString()
+	}
+	now := time.Now()
+	if proj.CreatedAt.IsZero() {
+		proj.CreatedAt = now
+	}
+	proj.UpdatedAt = now
+
+	query := `
+		INSERT INTO projects (id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`
+	_, err := p.db.ExecContext(ctx, query, proj.ID, proj.UserID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.CreatedAt, proj.UpdatedAt)
+	return err
+}
+
+func (p *PostgresRepository) GetProject(ctx context.Context, id string) (*domain.Project, error) {
+	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at FROM projects WHERE id = $1`
+	var proj domain.Project
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &proj, nil
+}
+
+func (p *PostgresRepository) ListProjects(ctx context.Context, userID string) ([]*domain.Project, error) {
+	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at FROM projects WHERE user_id = $1 ORDER BY created_at DESC`
+	rows, err := p.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*domain.Project
+	for rows.Next() {
+		var proj domain.Project
+		if err := rows.Scan(&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt); err != nil {
+			return nil, err
+		}
+		res = append(res, &proj)
+	}
+	return res, rows.Err()
+}
+
+func (p *PostgresRepository) UpdateProject(ctx context.Context, proj *domain.Project) error {
+	proj.UpdatedAt = time.Now()
+	query := `
+		UPDATE projects SET title = $2, original_script = $3, chapter_count = $4, art_style = $5, status = $6, updated_at = $7
+		WHERE id = $1
+	`
+	res, err := p.db.ExecContext(ctx, query, proj.ID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *PostgresRepository) DeleteProject(ctx context.Context, id string) error {
+	query := `DELETE FROM projects WHERE id = $1`
+	res, err := p.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Chapters
+func (p *PostgresRepository) CreateChapter(ctx context.Context, c *domain.Chapter) error {
+	if c.ID == "" {
+		c.ID = uuid.NewString()
+	}
+	query := `INSERT INTO chapters (id, project_id, chapter_number, title, summary, status) VALUES ($1, $2, $3, $4, $5, $6)`
+	_, err := p.db.ExecContext(ctx, query, c.ID, c.ProjectID, c.ChapterNumber, c.Title, c.Summary, c.Status)
+	return err
+}
+
+func (p *PostgresRepository) GetChapter(ctx context.Context, id string) (*domain.Chapter, error) {
+	query := `SELECT id, project_id, chapter_number, title, summary, status FROM chapters WHERE id = $1`
+	var c domain.Chapter
+	err := p.db.QueryRowContext(ctx, query, id).Scan(&c.ID, &c.ProjectID, &c.ChapterNumber, &c.Title, &c.Summary, &c.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &c, err
+}
+
+func (p *PostgresRepository) ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error) {
+	query := `SELECT id, project_id, chapter_number, title, summary, status FROM chapters WHERE project_id = $1 ORDER BY chapter_number ASC`
+	rows, err := p.db.QueryContext(ctx, query, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*domain.Chapter
+	for rows.Next() {
+		var c domain.Chapter
+		if err := rows.Scan(&c.ID, &c.ProjectID, &c.ChapterNumber, &c.Title, &c.Summary, &c.Status); err != nil {
+			return nil, err
+		}
+		res = append(res, &c)
+	}
+	return res, rows.Err()
+}
+
+func (p *PostgresRepository) UpdateChapter(ctx context.Context, c *domain.Chapter) error {
+	query := `UPDATE chapters SET chapter_number = $2, title = $3, summary = $4, status = $5 WHERE id = $1`
+	res, err := p.db.ExecContext(ctx, query, c.ID, c.ChapterNumber, c.Title, c.Summary, c.Status)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Characters
+func (p *PostgresRepository) CreateCharacter(ctx context.Context, ch *domain.Character) error {
+	if ch.ID == "" {
+		ch.ID = uuid.NewString()
+	}
+	if ch.UpdatedAt.IsZero() {
+		ch.UpdatedAt = time.Now()
+	}
+	vaBytes, _ := json.Marshal(ch.VisualAttributes)
+	query := `
+		INSERT INTO characters (id, project_id, name, description, reference_image_url, reference_image_job_id, visual_attributes, approved_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`
+	_, err := p.db.ExecContext(ctx, query, ch.ID, ch.ProjectID, ch.Name, ch.Description, ch.ReferenceImageURL, ch.ReferenceImageJobID, vaBytes, ch.ApprovedAt)
+	return err
+}
+
+func (p *PostgresRepository) GetCharacter(ctx context.Context, id string) (*domain.Character, error) {
+	query := `SELECT id, project_id, name, description, reference_image_url, reference_image_job_id, visual_attributes, approved_at FROM characters WHERE id = $1`
+	var ch domain.Character
+	var vaBytes []byte
+	var refURL sql.NullString
+	var refJobID sql.NullString
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&ch.ID, &ch.ProjectID, &ch.Name, &ch.Description, &refURL, &refJobID, &vaBytes, &ch.ApprovedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if refURL.Valid {
+		ch.ReferenceImageURL = refURL.String
+	}
+	if refJobID.Valid {
+		str := refJobID.String
+		ch.ReferenceImageJobID = &str
+	}
+	if len(vaBytes) > 0 {
+		_ = json.Unmarshal(vaBytes, &ch.VisualAttributes)
+	}
+	return &ch, nil
+}
+
+func (p *PostgresRepository) ListCharacters(ctx context.Context, projectID string) ([]*domain.Character, error) {
+	query := `SELECT id, project_id, name, description, reference_image_url, reference_image_job_id, visual_attributes, approved_at FROM characters WHERE project_id = $1`
+	rows, err := p.db.QueryContext(ctx, query, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*domain.Character
+	for rows.Next() {
+		var ch domain.Character
+		var vaBytes []byte
+		var refURL sql.NullString
+		var refJobID sql.NullString
+		if err := rows.Scan(&ch.ID, &ch.ProjectID, &ch.Name, &ch.Description, &refURL, &refJobID, &vaBytes, &ch.ApprovedAt); err != nil {
+			return nil, err
+		}
+		if refURL.Valid {
+			ch.ReferenceImageURL = refURL.String
+		}
+		if refJobID.Valid {
+			str := refJobID.String
+			ch.ReferenceImageJobID = &str
+		}
+		if len(vaBytes) > 0 {
+			_ = json.Unmarshal(vaBytes, &ch.VisualAttributes)
+		}
+		res = append(res, &ch)
+	}
+	return res, rows.Err()
+}
+
+func (p *PostgresRepository) UpdateCharacter(ctx context.Context, ch *domain.Character) error {
+	vaBytes, _ := json.Marshal(ch.VisualAttributes)
+	query := `
+		UPDATE characters SET name = $2, description = $3, reference_image_url = $4, reference_image_job_id = $5, visual_attributes = $6, approved_at = $7
+		WHERE id = $1
+	`
+	res, err := p.db.ExecContext(ctx, query, ch.ID, ch.Name, ch.Description, ch.ReferenceImageURL, ch.ReferenceImageJobID, vaBytes, ch.ApprovedAt)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Panels
+func (p *PostgresRepository) CreatePanel(ctx context.Context, pan *domain.Panel) error {
+	if pan.ID == "" {
+		pan.ID = uuid.NewString()
+	}
+	query := `
+		INSERT INTO panels (id, chapter_id, panel_number, scene_description, character_actions, camera_angle, background, dialogue, narration, image_prompt, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`
+	_, err := p.db.ExecContext(ctx, query, pan.ID, pan.ChapterID, pan.PanelNumber, pan.SceneDescription, pan.CharacterActions, pan.CameraAngle, pan.Background, pan.Dialogue, pan.Narration, pan.ImagePrompt, pan.Status)
+	return err
+}
+
+func (p *PostgresRepository) GetPanel(ctx context.Context, id string) (*domain.Panel, error) {
+	query := `SELECT id, chapter_id, panel_number, scene_description, character_actions, camera_angle, background, dialogue, narration, image_prompt, status FROM panels WHERE id = $1`
+	var pan domain.Panel
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&pan.ID, &pan.ChapterID, &pan.PanelNumber, &pan.SceneDescription, &pan.CharacterActions, &pan.CameraAngle, &pan.Background, &pan.Dialogue, &pan.Narration, &pan.ImagePrompt, &pan.Status,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &pan, err
+}
+
+func (p *PostgresRepository) ListPanels(ctx context.Context, chapterID string) ([]*domain.Panel, error) {
+	query := `SELECT id, chapter_id, panel_number, scene_description, character_actions, camera_angle, background, dialogue, narration, image_prompt, status FROM panels WHERE chapter_id = $1 ORDER BY panel_number ASC`
+	rows, err := p.db.QueryContext(ctx, query, chapterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*domain.Panel
+	for rows.Next() {
+		var pan domain.Panel
+		if err := rows.Scan(&pan.ID, &pan.ChapterID, &pan.PanelNumber, &pan.SceneDescription, &pan.CharacterActions, &pan.CameraAngle, &pan.Background, &pan.Dialogue, &pan.Narration, &pan.ImagePrompt, &pan.Status); err != nil {
+			return nil, err
+		}
+		res = append(res, &pan)
+	}
+	return res, rows.Err()
+}
+
+func (p *PostgresRepository) UpdatePanel(ctx context.Context, pan *domain.Panel) error {
+	query := `
+		UPDATE panels SET panel_number = $2, scene_description = $3, character_actions = $4, camera_angle = $5, background = $6, dialogue = $7, narration = $8, image_prompt = $9, status = $10
+		WHERE id = $1
+	`
+	res, err := p.db.ExecContext(ctx, query, pan.ID, pan.PanelNumber, pan.SceneDescription, pan.CharacterActions, pan.CameraAngle, pan.Background, pan.Dialogue, pan.Narration, pan.ImagePrompt, pan.Status)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Pages
+func (p *PostgresRepository) CreatePage(ctx context.Context, pg *domain.Page) error {
+	if pg.ID == "" {
+		pg.ID = uuid.NewString()
+	}
+	pidsBytes, _ := json.Marshal(pg.PanelIDs)
+	query := `
+		INSERT INTO pages (id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`
+	_, err := p.db.ExecContext(ctx, query, pg.ID, pg.ChapterID, pg.PageNumber, pidsBytes, pg.DraftImageURL, pg.DraftImageJobID, pg.DraftApprovedAt, pg.LineArtImageURL, pg.LineArtImageJobID, pg.LineArtApprovedAt)
+	return err
+}
+
+func (p *PostgresRepository) GetPage(ctx context.Context, id string) (*domain.Page, error) {
+	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at FROM pages WHERE id = $1`
+	var pg domain.Page
+	var pidsBytes []byte
+	var draftURL sql.NullString
+	var draftJobID sql.NullString
+	var lineURL sql.NullString
+	var lineJobID sql.NullString
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if draftURL.Valid {
+		pg.DraftImageURL = draftURL.String
+	}
+	if draftJobID.Valid {
+		str := draftJobID.String
+		pg.DraftImageJobID = &str
+	}
+	if lineURL.Valid {
+		pg.LineArtImageURL = lineURL.String
+	}
+	if lineJobID.Valid {
+		str := lineJobID.String
+		pg.LineArtImageJobID = &str
+	}
+	if len(pidsBytes) > 0 {
+		_ = json.Unmarshal(pidsBytes, &pg.PanelIDs)
+	}
+	return &pg, nil
+}
+
+func (p *PostgresRepository) ListPages(ctx context.Context, chapterID string) ([]*domain.Page, error) {
+	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at FROM pages WHERE chapter_id = $1 ORDER BY page_number ASC`
+	rows, err := p.db.QueryContext(ctx, query, chapterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*domain.Page
+	for rows.Next() {
+		var pg domain.Page
+		var pidsBytes []byte
+		var draftURL sql.NullString
+		var draftJobID sql.NullString
+		var lineURL sql.NullString
+		var lineJobID sql.NullString
+		if err := rows.Scan(&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt); err != nil {
+			return nil, err
+		}
+		if draftURL.Valid {
+			pg.DraftImageURL = draftURL.String
+		}
+		if draftJobID.Valid {
+			str := draftJobID.String
+			pg.DraftImageJobID = &str
+		}
+		if lineURL.Valid {
+			pg.LineArtImageURL = lineURL.String
+		}
+		if lineJobID.Valid {
+			str := lineJobID.String
+			pg.LineArtImageJobID = &str
+		}
+		if len(pidsBytes) > 0 {
+			_ = json.Unmarshal(pidsBytes, &pg.PanelIDs)
+		}
+		res = append(res, &pg)
+	}
+	return res, rows.Err()
+}
+
+func (p *PostgresRepository) UpdatePage(ctx context.Context, pg *domain.Page) error {
+	pidsBytes, _ := json.Marshal(pg.PanelIDs)
+	query := `
+		UPDATE pages SET page_number = $2, panel_ids = $3, draft_image_url = $4, draft_image_job_id = $5, draft_approved_at = $6, line_art_image_url = $7, line_art_image_job_id = $8, line_art_approved_at = $9
+		WHERE id = $1
+	`
+	res, err := p.db.ExecContext(ctx, query, pg.ID, pg.PageNumber, pidsBytes, pg.DraftImageURL, pg.DraftImageJobID, pg.DraftApprovedAt, pg.LineArtImageURL, pg.LineArtImageJobID, pg.LineArtApprovedAt)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Colour Palettes and Regions
+func (p *PostgresRepository) GetColourPalette(ctx context.Context, pageID string) (*domain.ColourPalette, error) {
+	query := `SELECT id, page_id, suggestion_job_id, palette, user_modified_at FROM colour_palettes WHERE page_id = $1`
+	var cp domain.ColourPalette
+	var sugID sql.NullString
+	var palBytes []byte
+	err := p.db.QueryRowContext(ctx, query, pageID).Scan(&cp.ID, &cp.PageID, &sugID, &palBytes, &cp.UserModifiedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if sugID.Valid {
+		str := sugID.String
+		cp.SuggestionJobID = &str
+	}
+	if len(palBytes) > 0 {
+		_ = json.Unmarshal(palBytes, &cp.Palette)
+	}
+	return &cp, nil
+}
+
+func (p *PostgresRepository) SaveColourPalette(ctx context.Context, cp *domain.ColourPalette) error {
+	if cp.ID == "" {
+		cp.ID = uuid.NewString()
+	}
+	now := time.Now()
+	cp.UserModifiedAt = &now
+	palBytes, _ := json.Marshal(cp.Palette)
+	query := `
+		INSERT INTO colour_palettes (id, page_id, suggestion_job_id, palette, user_modified_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (id) DO UPDATE SET suggestion_job_id = EXCLUDED.suggestion_job_id, palette = EXCLUDED.palette, user_modified_at = EXCLUDED.user_modified_at
+	`
+	_, err := p.db.ExecContext(ctx, query, cp.ID, cp.PageID, cp.SuggestionJobID, palBytes, cp.UserModifiedAt)
+	return err
+}
+
+func (p *PostgresRepository) ListColourRegions(ctx context.Context, pageID string) ([]*domain.ColourRegion, error) {
+	query := `SELECT id, page_id, region_label, fill_colour_hex, fill_applied_at, fill_applied_by FROM colour_regions WHERE page_id = $1`
+	rows, err := p.db.QueryContext(ctx, query, pageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*domain.ColourRegion
+	for rows.Next() {
+		var cr domain.ColourRegion
+		if err := rows.Scan(&cr.ID, &cr.PageID, &cr.RegionLabel, &cr.FillColourHex, &cr.FillAppliedAt, &cr.FillAppliedBy); err != nil {
+			return nil, err
+		}
+		res = append(res, &cr)
+	}
+	return res, rows.Err()
+}
+
+func (p *PostgresRepository) CreateColourRegion(ctx context.Context, cr *domain.ColourRegion) error {
+	if cr.ID == "" {
+		cr.ID = uuid.NewString()
+	}
+	if cr.FillAppliedAt.IsZero() {
+		cr.FillAppliedAt = time.Now()
+	}
+	query := `INSERT INTO colour_regions (id, page_id, region_label, fill_colour_hex, fill_applied_at, fill_applied_by) VALUES ($1, $2, $3, $4, $5, $6)`
+	_, err := p.db.ExecContext(ctx, query, cr.ID, cr.PageID, cr.RegionLabel, cr.FillColourHex, cr.FillAppliedAt, cr.FillAppliedBy)
+	return err
+}
+
+// Stage Approvals
+func (p *PostgresRepository) CreateApproval(ctx context.Context, a *domain.StageApproval) error {
+	return p.RecordApproval(ctx, a)
+}
+
+func (p *PostgresRepository) RecordApproval(ctx context.Context, a *domain.StageApproval) error {
+	if a.ID == "" {
+		a.ID = uuid.NewString()
+	}
+	if a.ApprovedAt.IsZero() {
+		a.ApprovedAt = time.Now()
+	}
+	query := `
+		INSERT INTO stage_approvals (id, project_id, entity_type, entity_id, approved_by_user_id, approved_at, credit_estimate_at_approval)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+	_, err := p.db.ExecContext(ctx, query, a.ID, a.ProjectID, a.EntityType, a.EntityID, a.ApprovedByUserID, a.ApprovedAt, a.CreditEstimateAtApproval)
+	return err
+}
+
+func (p *PostgresRepository) GetLatestApproval(ctx context.Context, entityType string, entityID string) (*domain.StageApproval, error) {
+	query := `
+		SELECT id, project_id, entity_type, entity_id, approved_by_user_id, approved_at, credit_estimate_at_approval
+		FROM stage_approvals
+		WHERE entity_type = $1 AND entity_id = $2
+		ORDER BY approved_at DESC
+		LIMIT 1
+	`
+	var a domain.StageApproval
+	err := p.db.QueryRowContext(ctx, query, entityType, entityID).Scan(
+		&a.ID, &a.ProjectID, &a.EntityType, &a.EntityID, &a.ApprovedByUserID, &a.ApprovedAt, &a.CreditEstimateAtApproval,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &a, err
+}
+
+func (p *PostgresRepository) ListApprovals(ctx context.Context, projectID string) ([]*domain.StageApproval, error) {
+	query := `
+		SELECT id, project_id, entity_type, entity_id, approved_by_user_id, approved_at, credit_estimate_at_approval
+		FROM stage_approvals
+		WHERE project_id = $1
+		ORDER BY approved_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*domain.StageApproval
+	for rows.Next() {
+		var a domain.StageApproval
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.EntityType, &a.EntityID, &a.ApprovedByUserID, &a.ApprovedAt, &a.CreditEstimateAtApproval); err != nil {
+			return nil, err
+		}
+		res = append(res, &a)
+	}
+	return res, rows.Err()
+}
+
+// Generation Jobs & Credit Ledger (Transactional)
+func (p *PostgresRepository) CreateJobWithDebit(ctx context.Context, job *domain.GenerationJob, debitAmount float64) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Lock the latest ledger entry to get current balance
+	balQuery := `SELECT balance_after FROM credit_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`
+	var currentBal float64
+	err = tx.QueryRowContext(ctx, balQuery, job.UserID).Scan(&currentBal)
+	if errors.Is(err, sql.ErrNoRows) {
+		currentBal = 100.0 // Default initial balance if not yet seeded
+	} else if err != nil {
+		return fmt.Errorf("read balance: %w", err)
+	}
+
+	if debitAmount > 0 && currentBal < debitAmount {
+		return ErrInsufficientCredit
+	}
+
+	if job.ID == "" {
+		job.ID = uuid.NewString()
+	}
+	now := time.Now()
+	if job.CreatedAt.IsZero() {
+		job.CreatedAt = now
+	}
+
+	newBal := currentBal - debitAmount
+
+	insertJob := `
+		INSERT INTO generation_jobs (id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`
+	_, err = tx.ExecContext(ctx, insertJob, job.ID, job.ProjectID, job.UserID, job.JobType, job.Stage, job.ModelID, job.Status, job.IdempotencyKey, job.EstimatedCost, job.ActualCost, job.HashedUserID, job.ErrorMessage, job.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("insert generation job: %w", err)
+	}
+
+	if debitAmount > 0 {
+		insertLedger := `
+			INSERT INTO credit_ledger (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after, created_at)
+			VALUES ($1, $2, $3, $4, 'debit', $5, $6, $7)
+		`
+		ledgerID := uuid.NewString()
+		_, err = tx.ExecContext(ctx, insertLedger, ledgerID, job.UserID, job.ProjectID, job.ID, debitAmount, newBal, now)
+		if err != nil {
+			return fmt.Errorf("insert ledger debit: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (p *PostgresRepository) GetJob(ctx context.Context, id string) (*domain.GenerationJob, error) {
+	query := `
+		SELECT id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at
+		FROM generation_jobs
+		WHERE id = $1
+	`
+	var j domain.GenerationJob
+	var errMsg sql.NullString
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&j.ID, &j.ProjectID, &j.UserID, &j.JobType, &j.Stage, &j.ModelID, &j.Status, &j.IdempotencyKey, &j.EstimatedCost, &j.ActualCost, &j.HashedUserID, &errMsg, &j.CreatedAt, &j.CompletedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if errMsg.Valid {
+		j.ErrorMessage = &errMsg.String
+	}
+	return &j, nil
+}
+
+func (p *PostgresRepository) GetJobByIdempotencyKey(ctx context.Context, key string) (*domain.GenerationJob, error) {
+	query := `
+		SELECT id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at
+		FROM generation_jobs
+		WHERE idempotency_key = $1
+	`
+	var j domain.GenerationJob
+	var errMsg sql.NullString
+	err := p.db.QueryRowContext(ctx, query, key).Scan(
+		&j.ID, &j.ProjectID, &j.UserID, &j.JobType, &j.Stage, &j.ModelID, &j.Status, &j.IdempotencyKey, &j.EstimatedCost, &j.ActualCost, &j.HashedUserID, &errMsg, &j.CreatedAt, &j.CompletedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if errMsg.Valid {
+		j.ErrorMessage = &errMsg.String
+	}
+	return &j, nil
+}
+
+func (p *PostgresRepository) GetActiveJobForEntity(ctx context.Context, projectID string, jobType string) (*domain.GenerationJob, error) {
+	query := `
+		SELECT id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at
+		FROM generation_jobs
+		WHERE project_id = $1 AND job_type = $2 AND status IN ('pending', 'running')
+		LIMIT 1
+	`
+	var j domain.GenerationJob
+	var errMsg sql.NullString
+	err := p.db.QueryRowContext(ctx, query, projectID, jobType).Scan(
+		&j.ID, &j.ProjectID, &j.UserID, &j.JobType, &j.Stage, &j.ModelID, &j.Status, &j.IdempotencyKey, &j.EstimatedCost, &j.ActualCost, &j.HashedUserID, &errMsg, &j.CreatedAt, &j.CompletedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if errMsg.Valid {
+		j.ErrorMessage = &errMsg.String
+	}
+	return &j, nil
+}
+
+func (p *PostgresRepository) UpdateJob(ctx context.Context, job *domain.GenerationJob) error {
+	query := `
+		UPDATE generation_jobs
+		SET status = $2, actual_cost = $3, error_message = $4, completed_at = $5
+		WHERE id = $1
+	`
+	res, err := p.db.ExecContext(ctx, query, job.ID, job.Status, job.ActualCost, job.ErrorMessage, job.CompletedAt)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *PostgresRepository) RecordRefund(ctx context.Context, jobID string, amount float64) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var userID, projectID string
+	err = tx.QueryRowContext(ctx, `SELECT user_id, project_id FROM generation_jobs WHERE id = $1`, jobID).Scan(&userID, &projectID)
+	if err != nil {
+		return err
+	}
+
+	var currentBal float64
+	err = tx.QueryRowContext(ctx, `SELECT balance_after FROM credit_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, userID).Scan(&currentBal)
+	if err != nil {
+		return err
+	}
+
+	newBal := currentBal + amount
+	now := time.Now()
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO credit_ledger (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after, created_at)
+		VALUES ($1, $2, $3, $4, 'refund', $5, $6, $7)
+	`, uuid.NewString(), userID, projectID, jobID, amount, newBal, now)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (p *PostgresRepository) RecordAdjustment(ctx context.Context, userID, projectID string, amount float64) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var currentBal float64
+	err = tx.QueryRowContext(ctx, `SELECT balance_after FROM credit_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, userID).Scan(&currentBal)
+	if errors.Is(err, sql.ErrNoRows) {
+		currentBal = 0.0
+	} else if err != nil {
+		return err
+	}
+
+	newBal := currentBal + amount
+	now := time.Now()
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO credit_ledger (id, user_id, project_id, transaction_type, amount, balance_after, created_at)
+		VALUES ($1, $2, $3, 'adjustment', $4, $5, $6)
+	`, uuid.NewString(), userID, projectID, amount, newBal, now)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (p *PostgresRepository) GetCreditBalance(ctx context.Context, userID string) (float64, error) {
+	query := `SELECT balance_after FROM credit_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`
+	var bal float64
+	err := p.db.QueryRowContext(ctx, query, userID).Scan(&bal)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 100.0, nil
+	}
+	return bal, err
+}
+
+func (p *PostgresRepository) ListCreditLedger(ctx context.Context, userID string) ([]*domain.CreditLedger, error) {
+	query := `
+		SELECT id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after, created_at
+		FROM credit_ledger
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*domain.CreditLedger
+	for rows.Next() {
+		var l domain.CreditLedger
+		var jobID sql.NullString
+		if err := rows.Scan(&l.ID, &l.UserID, &l.ProjectID, &jobID, &l.TransactionType, &l.Amount, &l.BalanceAfter, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		if jobID.Valid {
+			str := jobID.String
+			l.GenerationJobID = &str
+		}
+		res = append(res, &l)
+	}
+	return res, rows.Err()
+}
+
+func (p *PostgresRepository) GetUserDailyImageCount(ctx context.Context, userID string, since time.Time) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM generation_jobs
+		WHERE user_id = $1 AND job_type IN ('character_reference', 'draft_sketch', 'final_line_art') AND created_at >= $2
+	`
+	var count int
+	err := p.db.QueryRowContext(ctx, query, userID, since).Scan(&count)
+	return count, err
+}
+
+func (p *PostgresRepository) GetUserMonthlyImageCount(ctx context.Context, userID string, since time.Time) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM generation_jobs
+		WHERE user_id = $1 AND job_type IN ('character_reference', 'draft_sketch', 'final_line_art') AND created_at >= $2
+	`
+	var count int
+	err := p.db.QueryRowContext(ctx, query, userID, since).Scan(&count)
+	return count, err
+}
+
+// Exports
+func (p *PostgresRepository) CreateExport(ctx context.Context, exp *domain.Export) error {
+	if exp.ID == "" {
+		exp.ID = uuid.NewString()
+	}
+	if exp.CreatedAt.IsZero() {
+		exp.CreatedAt = time.Now()
+	}
+	query := `
+		INSERT INTO exports (id, project_id, file_url, format, status, provenance_metadata_preserved, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+	_, err := p.db.ExecContext(ctx, query, exp.ID, exp.ProjectID, exp.FileURL, exp.Format, exp.Status, exp.ProvenanceMetadataPreserved, exp.CreatedAt)
+	return err
+}
+
+func (p *PostgresRepository) GetExport(ctx context.Context, id string) (*domain.Export, error) {
+	query := `SELECT id, project_id, file_url, format, status, provenance_metadata_preserved, created_at FROM exports WHERE id = $1`
+	var exp domain.Export
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&exp.ID, &exp.ProjectID, &exp.FileURL, &exp.Format, &exp.Status, &exp.ProvenanceMetadataPreserved, &exp.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &exp, err
+}
+
+func (p *PostgresRepository) UpdateExport(ctx context.Context, exp *domain.Export) error {
+	query := `
+		UPDATE exports SET file_url = $2, format = $3, status = $4, provenance_metadata_preserved = $5
+		WHERE id = $1
+	`
+	res, err := p.db.ExecContext(ctx, query, exp.ID, exp.FileURL, exp.Format, exp.Status, exp.ProvenanceMetadataPreserved)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
