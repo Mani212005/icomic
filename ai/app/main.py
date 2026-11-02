@@ -1,8 +1,10 @@
 """FastAPI entry point for Icomic Python AI service."""
 
+import mimetypes
+import posixpath
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -290,6 +292,39 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             actual_cost=data.get("actual_cost"),
             error_message=data.get("error_message"),
         )
+
+    @app.api_route(
+        "/storage/fake/{key:path}",
+        methods=["GET", "HEAD"],
+        summary="Retrieve stored asset from fake object storage",
+    )
+    def get_fake_storage_object(key: str):
+        clean = key.lstrip("/")
+        norm = posixpath.normpath(clean)
+        if norm == ".." or norm.startswith("../") or any(part == ".." for part in norm.split("/")):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid storage key: path traversal detected in '{key}'.",
+            )
+
+        storage = app.state.storage_adapter
+        try:
+            blob = storage.get(norm)
+        except KeyError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Storage object '{key}' not found.",
+            )
+
+        content_type = None
+        if hasattr(storage, "get_content_type"):
+            content_type = storage.get_content_type(norm)
+        if not content_type:
+            content_type, _ = mimetypes.guess_type(norm)
+        if not content_type:
+            content_type = "application/octet-stream"
+
+        return Response(content=blob, media_type=content_type)
 
     return app
 
