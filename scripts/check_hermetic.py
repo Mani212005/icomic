@@ -44,6 +44,8 @@ EXCLUDE_DIRS = {
 EXCLUDE_FILES = {
     "package-lock.json",
     "uv.lock",
+    ".live-spend.jsonl",
+    ".env.local",
 }
 
 # Permitted narrow exceptions
