@@ -53,7 +53,9 @@ icomic/
 │   └── requirements.txt
 ├── deploy/
 │   ├── docker-compose.yml      # Local dev stack (Postgres, Redis, services)
-│   └── docker-compose.prod.yml # Production overrides
+│   ├── docker-compose.prod.yml # Production overrides
+│   ├── migrations/             # PostgreSQL migration files (up and down)
+│   └── seeds.sql               # Database seed data for plans
 ├── docs/                       # Specifications and architecture docs
 └── .github/workflows/          # CI workflows
 ```
@@ -90,13 +92,16 @@ Or test each service individually:
 # 1. Contract and JSON Schema validation
 make test-contracts
 
-# 2. Go Backend unit and contract tests
+# 2. Database migrations and schema structural validation
+make test-migrations
+
+# 3. Go Backend unit and contract tests
 make test-backend
 
-# 3. Python AI service contract tests
+# 4. Python AI service contract tests
 make test-ai
 
-# 4. Frontend unit tests
+# 5. Frontend unit tests
 make test-frontend
 ```
 
@@ -104,5 +109,5 @@ make test-frontend
 
 GitHub Actions workflows run on every push and pull request:
 
-- `.github/workflows/ci.yml`: Runs contract validation, Go lint and tests, Python Ruff checks and pytest, and Svelte frontend tests and build.
+- `.github/workflows/ci.yml`: Runs contract validation, database migration structural validation, Go lint and tests, Python Ruff checks and pytest, and Svelte frontend tests and build.
 - `.github/workflows/lint-openapi.yml`: Validates OpenAPI specifications and JSON schemas whenever `contracts/**` changes.
