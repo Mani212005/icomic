@@ -7,6 +7,7 @@ Image generation requires explicit prior user approval and estimated cost confir
 
 The full product specification is in [docs/SPEC.md](docs/SPEC.md).
 The system architecture and ports-and-adapters design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The Meta adapter configuration and live swap guide is in [docs/META_SWAP.md](docs/META_SWAP.md).
 
 ## Stage 1 Scope
 

@@ -423,6 +423,7 @@ META_API_KEY=<key>
 ```
 
 Only the adapter implementations change; the service code does not change.
+For the complete step-by-step procedure, configuration variables, adapter requirements, verification checklist, and rollback steps, see [docs/META_SWAP.md](META_SWAP.md).
 
 ### 8.3 Concurrency Setting
 
