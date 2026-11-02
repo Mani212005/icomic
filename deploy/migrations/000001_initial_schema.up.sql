@@ -221,8 +221,8 @@ CREATE INDEX IF NOT EXISTS idx_stage_approvals_approved_by ON stage_approvals(ap
 CREATE TABLE IF NOT EXISTS credit_ledger (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    generation_job_id UUID NOT NULL REFERENCES generation_jobs(id) ON DELETE CASCADE,
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+    generation_job_id UUID REFERENCES generation_jobs(id) ON DELETE CASCADE,
     transaction_type VARCHAR(32) NOT NULL CHECK (transaction_type IN ('debit', 'refund', 'adjustment')),
     amount NUMERIC(10, 4) NOT NULL CHECK (amount >= 0),
     balance_after NUMERIC(10, 4) NOT NULL,

@@ -7,8 +7,6 @@
   "required": [
     "id",
     "user_id",
-    "project_id",
-    "generation_job_id",
     "transaction_type",
     "amount",
     "balance_after",
@@ -26,12 +24,18 @@
       "description": "Owning user UUID"
     },
     "project_id": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "uuid",
       "description": "Associated project UUID"
     },
     "generation_job_id": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "uuid",
       "description": "Associated generation job UUID"
     },

@@ -89,7 +89,7 @@ class TestContracts(unittest.TestCase):
         validator = jsonschema.Draft202012Validator(schema)
         validator.check_schema(schema)
 
-        # Valid instance
+        # Valid instance: debit with generation_job_id
         valid_credit = {
             "id": "44444444-4444-4444-4444-444444444444",
             "user_id": "33333333-3333-3333-3333-333333333333",
@@ -102,11 +102,41 @@ class TestContracts(unittest.TestCase):
         }
         validator.validate(valid_credit)
 
+        # Valid instance: adjustment / signup credit with null generation_job_id and null project_id
+        valid_adjustment = {
+            "id": "55555555-5555-5555-5555-555555555555",
+            "user_id": "33333333-3333-3333-3333-333333333333",
+            "project_id": None,
+            "generation_job_id": None,
+            "transaction_type": "adjustment",
+            "amount": 100.0,
+            "balance_after": 100.0,
+            "created_at": "2026-11-01T12:00:00Z",
+        }
+        validator.validate(valid_adjustment)
+
+        # Valid instance: omitted nullable fields
+        valid_omitted = {
+            "id": "66666666-6666-6666-6666-666666666666",
+            "user_id": "33333333-3333-3333-3333-333333333333",
+            "transaction_type": "adjustment",
+            "amount": 50.0,
+            "balance_after": 150.0,
+            "created_at": "2026-11-01T12:00:00Z",
+        }
+        validator.validate(valid_omitted)
+
         # Invalid transaction type
         invalid_credit = dict(valid_credit)
         invalid_credit["transaction_type"] = "invalid_type"
         with self.assertRaises(jsonschema.ValidationError):
             validator.validate(invalid_credit)
+
+        # Invalid generation_job_id type (numeric instead of uuid/null)
+        invalid_job_id_credit = dict(valid_credit)
+        invalid_job_id_credit["generation_job_id"] = 12345
+        with self.assertRaises(jsonschema.ValidationError):
+            validator.validate(invalid_job_id_credit)
 
 
 if __name__ == "__main__":

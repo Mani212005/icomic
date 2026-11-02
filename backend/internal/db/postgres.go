@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	pq "github.com/lib/pq"
 	"icomic/backend/internal/domain"
 )
 
@@ -45,12 +45,18 @@ func (p *PostgresRepository) ApplyMigrations(ctx context.Context, migrationSQL s
 	return err
 }
 
+// RunMigrations executes all unapplied up migrations from migrationsDir idempotently.
+func (p *PostgresRepository) RunMigrations(ctx context.Context, migrationsDir string) ([]string, error) {
+	runner := NewMigrationRunner(p.db, migrationsDir)
+	return runner.ApplyAll(ctx)
+}
+
 // User methods
 func (p *PostgresRepository) CreateUser(ctx context.Context, u *domain.User) error {
 	if u.ID == "" {
 		u.ID = uuid.NewString()
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = now
 	}
@@ -59,23 +65,34 @@ func (p *PostgresRepository) CreateUser(ctx context.Context, u *domain.User) err
 		u.PlanID = "free"
 	}
 
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	query := `
 		INSERT INTO users (id, email, password_hash, plan_id, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`
-	_, err := p.db.ExecContext(ctx, query, u.ID, u.Email, u.PasswordHash, u.PlanID, u.CreatedAt, u.UpdatedAt)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, query, u.ID, u.Email, u.PasswordHash, u.PlanID, u.CreatedAt, u.UpdatedAt); err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			return ErrDuplicateKey
+		}
 		return fmt.Errorf("insert user: %w", err)
 	}
 
 	// Seed initial balance entry in credit_ledger if user has no entries
 	initQuery := `
-		INSERT INTO credit_ledger (id, user_id, project_id, transaction_type, amount, balance_after, created_at)
-		SELECT $1, $2, $2, 'adjustment', 100.0, 100.0, $3
+		INSERT INTO credit_ledger (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after, created_at)
+		SELECT $1, $2, NULL, NULL, 'adjustment', 100.0, 100.0, $3
 		WHERE NOT EXISTS (SELECT 1 FROM credit_ledger WHERE user_id = $2)
 	`
-	_, _ = p.db.ExecContext(ctx, initQuery, uuid.NewString(), u.ID, now)
-	return nil
+	if _, err := tx.ExecContext(ctx, initQuery, uuid.NewString(), u.ID, now); err != nil {
+		return fmt.Errorf("seed initial credits: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 func (p *PostgresRepository) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
@@ -219,15 +236,19 @@ func (p *PostgresRepository) CreateChapter(ctx context.Context, c *domain.Chapte
 	if c.ID == "" {
 		c.ID = uuid.NewString()
 	}
-	query := `INSERT INTO chapters (id, project_id, chapter_number, title, summary, status) VALUES ($1, $2, $3, $4, $5, $6)`
-	_, err := p.db.ExecContext(ctx, query, c.ID, c.ProjectID, c.ChapterNumber, c.Title, c.Summary, c.Status)
+	now := time.Now().UTC()
+	if c.UpdatedAt.IsZero() {
+		c.UpdatedAt = now
+	}
+	query := `INSERT INTO chapters (id, project_id, chapter_number, title, summary, status, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	_, err := p.db.ExecContext(ctx, query, c.ID, c.ProjectID, c.ChapterNumber, c.Title, c.Summary, c.Status, c.UpdatedAt)
 	return err
 }
 
 func (p *PostgresRepository) GetChapter(ctx context.Context, id string) (*domain.Chapter, error) {
-	query := `SELECT id, project_id, chapter_number, title, summary, status FROM chapters WHERE id = $1`
+	query := `SELECT id, project_id, chapter_number, title, summary, status, updated_at FROM chapters WHERE id = $1`
 	var c domain.Chapter
-	err := p.db.QueryRowContext(ctx, query, id).Scan(&c.ID, &c.ProjectID, &c.ChapterNumber, &c.Title, &c.Summary, &c.Status)
+	err := p.db.QueryRowContext(ctx, query, id).Scan(&c.ID, &c.ProjectID, &c.ChapterNumber, &c.Title, &c.Summary, &c.Status, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -235,7 +256,7 @@ func (p *PostgresRepository) GetChapter(ctx context.Context, id string) (*domain
 }
 
 func (p *PostgresRepository) ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error) {
-	query := `SELECT id, project_id, chapter_number, title, summary, status FROM chapters WHERE project_id = $1 ORDER BY chapter_number ASC`
+	query := `SELECT id, project_id, chapter_number, title, summary, status, updated_at FROM chapters WHERE project_id = $1 ORDER BY chapter_number ASC`
 	rows, err := p.db.QueryContext(ctx, query, projectID)
 	if err != nil {
 		return nil, err
@@ -245,7 +266,7 @@ func (p *PostgresRepository) ListChapters(ctx context.Context, projectID string)
 	var res []*domain.Chapter
 	for rows.Next() {
 		var c domain.Chapter
-		if err := rows.Scan(&c.ID, &c.ProjectID, &c.ChapterNumber, &c.Title, &c.Summary, &c.Status); err != nil {
+		if err := rows.Scan(&c.ID, &c.ProjectID, &c.ChapterNumber, &c.Title, &c.Summary, &c.Status, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		res = append(res, &c)
@@ -254,8 +275,10 @@ func (p *PostgresRepository) ListChapters(ctx context.Context, projectID string)
 }
 
 func (p *PostgresRepository) UpdateChapter(ctx context.Context, c *domain.Chapter) error {
-	query := `UPDATE chapters SET chapter_number = $2, title = $3, summary = $4, status = $5 WHERE id = $1`
-	res, err := p.db.ExecContext(ctx, query, c.ID, c.ChapterNumber, c.Title, c.Summary, c.Status)
+	now := time.Now().UTC()
+	c.UpdatedAt = now
+	query := `UPDATE chapters SET chapter_number = $2, title = $3, summary = $4, status = $5, updated_at = $6 WHERE id = $1`
+	res, err := p.db.ExecContext(ctx, query, c.ID, c.ChapterNumber, c.Title, c.Summary, c.Status, c.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -826,7 +849,8 @@ func (p *PostgresRepository) RecordRefund(ctx context.Context, jobID string, amo
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var userID, projectID string
+	var userID string
+	var projectID sql.NullString
 	err = tx.QueryRowContext(ctx, `SELECT user_id, project_id FROM generation_jobs WHERE id = $1`, jobID).Scan(&userID, &projectID)
 	if err != nil {
 		return err
@@ -839,11 +863,15 @@ func (p *PostgresRepository) RecordRefund(ctx context.Context, jobID string, amo
 	}
 
 	newBal := currentBal + amount
-	now := time.Now()
+	now := time.Now().UTC()
+	var projVal any = nil
+	if projectID.Valid {
+		projVal = projectID.String
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO credit_ledger (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after, created_at)
 		VALUES ($1, $2, $3, $4, 'refund', $5, $6, $7)
-	`, uuid.NewString(), userID, projectID, jobID, amount, newBal, now)
+	`, uuid.NewString(), userID, projVal, jobID, amount, newBal, now)
 	if err != nil {
 		return err
 	}
@@ -861,17 +889,21 @@ func (p *PostgresRepository) RecordAdjustment(ctx context.Context, userID, proje
 	var currentBal float64
 	err = tx.QueryRowContext(ctx, `SELECT balance_after FROM credit_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, userID).Scan(&currentBal)
 	if errors.Is(err, sql.ErrNoRows) {
-		currentBal = 0.0
+		currentBal = 100.0
 	} else if err != nil {
 		return err
 	}
 
 	newBal := currentBal + amount
-	now := time.Now()
+	now := time.Now().UTC()
+	var projVal any = nil
+	if projectID != "" {
+		projVal = projectID
+	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO credit_ledger (id, user_id, project_id, transaction_type, amount, balance_after, created_at)
-		VALUES ($1, $2, $3, 'adjustment', $4, $5, $6)
-	`, uuid.NewString(), userID, projectID, amount, newBal, now)
+		INSERT INTO credit_ledger (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after, created_at)
+		VALUES ($1, $2, $3, NULL, 'adjustment', $4, $5, $6)
+	`, uuid.NewString(), userID, projVal, amount, newBal, now)
 	if err != nil {
 		return err
 	}
@@ -905,9 +937,13 @@ func (p *PostgresRepository) ListCreditLedger(ctx context.Context, userID string
 	var res []*domain.CreditLedger
 	for rows.Next() {
 		var l domain.CreditLedger
+		var projID sql.NullString
 		var jobID sql.NullString
-		if err := rows.Scan(&l.ID, &l.UserID, &l.ProjectID, &jobID, &l.TransactionType, &l.Amount, &l.BalanceAfter, &l.CreatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.UserID, &projID, &jobID, &l.TransactionType, &l.Amount, &l.BalanceAfter, &l.CreatedAt); err != nil {
 			return nil, err
+		}
+		if projID.Valid {
+			l.ProjectID = projID.String
 		}
 		if jobID.Valid {
 			str := jobID.String
