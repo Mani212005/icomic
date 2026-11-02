@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MockApiClient } from '../src/lib/api/mockClient.js';
-import { JOB_STATUS } from '../src/lib/api/types.js';
+import { JOB_STATUS, isApprovalStale, hasValidApproval } from '../src/lib/api/types.js';
 
 test('MockApiClient initializes with initial seed data', async () => {
 	const client = new MockApiClient();
@@ -47,14 +47,18 @@ test('MockApiClient manages characters and approval cycle', async () => {
 	const char = characters[0];
 	assert.equal(char.name, 'Jack Vance');
 
-	// Generating a reference image stales approval
+	// Generating a reference image stales approval (updated_at > approved_at, matching Go backend)
 	const { job, character } = await client.generateCharacterReference(char.id);
 	assert.ok(job.id);
-	assert.equal(character.approved_at, null);
+	assert.ok(character.approved_at, 'approved_at timestamp is preserved per backend semantics');
+	assert.ok(isApprovalStale(character.approved_at, character.updated_at), 'approval is stale');
+	assert.equal(hasValidApproval(character.approved_at, character.updated_at), false);
 
 	// User approves character
 	const approved = await client.approveCharacter(char.id);
 	assert.ok(approved.approved_at);
+	assert.equal(isApprovalStale(approved.approved_at, approved.updated_at), false);
+	assert.equal(hasValidApproval(approved.approved_at, approved.updated_at), true);
 });
 
 test('MockApiClient manages chapters, panels, and pages', async () => {

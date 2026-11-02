@@ -1,24 +1,156 @@
 <script>
 	import ComicEditor from '$lib/editor/ComicEditor.svelte';
-	import { MockApiClient } from '$lib/api/mockClient.js';
+	import { createDefaultClient, formatApiError } from '$lib/api/index.js';
 	import { AGE_TERMS_ADVISORY } from '$lib/config/policies.js';
+	import { onMount } from 'svelte';
 
-	// Client instance
-	const apiClient = new MockApiClient();
+	// Client instance: real ApiClient pointing to PUBLIC_API_URL by default;
+	// MockApiClient selectable only when explicit PUBLIC_USE_MOCK_API=true is set.
+	let apiClient = createDefaultClient();
 
-	// Demo project
-	let project = {
-		id: 'proj-demo-1',
-		title: 'The Quantum Detective',
+	// Auth and Identity states
+	let isAuthenticated = apiClient.isAuthenticated();
+	let authMode = apiClient.getAuthMode();
+
+	// Project states
+	let projects = [];
+	let activeProjectId = '';
+	let activeProject = null;
+	let isLoadingProjects = true;
+	let projectError = null;
+
+	// Project Create Modal
+	let showCreateModal = false;
+	let isCreatingProject = false;
+	let createError = null;
+	let newProjectForm = {
+		title: 'Untitled Comic',
 		art_style: 'cyberpunk-noir',
 		chapter_count: 3,
-		script: 'In the neon-drenched alleys of Sector 4, Detective Jack Vance pursued the enigmatic cipher that had consumed his partner.'
+		script: 'In a rain-slicked metropolis bathed in neon, two investigators uncover a conspiracy.'
 	};
 
 	let activeStage = 'script';
+
+	async function loadProjects() {
+		isLoadingProjects = true;
+		projectError = null;
+		isAuthenticated = apiClient.isAuthenticated();
+		authMode = apiClient.getAuthMode();
+
+		try {
+			const res = await apiClient.listProjects();
+			const list = Array.isArray(res) ? res : (res && res.projects ? res.projects : []);
+			projects = list;
+
+			if (projects.length > 0) {
+				const existing = projects.find((p) => p.id === activeProjectId);
+				if (existing) {
+					activeProject = existing;
+				} else {
+					activeProjectId = projects[0].id;
+					activeProject = projects[0];
+				}
+			} else {
+				activeProjectId = '';
+				activeProject = null;
+			}
+		} catch (err) {
+			console.error('Failed to load projects:', err);
+			projectError = formatApiError(err);
+		} finally {
+			isLoadingProjects = false;
+		}
+	}
+
+	function switchProject(id) {
+		const target = projects.find((p) => p.id === id);
+		if (target) {
+			activeProjectId = target.id;
+			activeProject = target;
+			activeStage = 'script';
+		}
+	}
+
+	function openCreateModal() {
+		newProjectForm = {
+			title: '',
+			art_style: 'cyberpunk-noir',
+			chapter_count: 3,
+			script: ''
+		};
+		createError = null;
+		showCreateModal = true;
+	}
+
+	function closeCreateModal() {
+		showCreateModal = false;
+		createError = null;
+	}
+
+	async function handleCreateProject() {
+		const title = newProjectForm.title.trim();
+		const script = newProjectForm.script.trim();
+
+		if (!title) {
+			createError = 'Project title is required.';
+			return;
+		}
+		if (!script) {
+			createError = 'Script text is required to initialize project.';
+			return;
+		}
+
+		isCreatingProject = true;
+		createError = null;
+
+		try {
+			const created = await apiClient.createProject({
+				title,
+				art_style: newProjectForm.art_style,
+				chapter_count: Number(newProjectForm.chapter_count) || 1,
+				original_script: script,
+				script
+			});
+
+			showCreateModal = false;
+			await loadProjects();
+			if (created && created.id) {
+				switchProject(created.id);
+			}
+		} catch (err) {
+			createError = (err && err.message) || 'Failed to create project.';
+		} finally {
+			isCreatingProject = false;
+		}
+	}
+
+	async function handleDeleteCurrentProject() {
+		if (!activeProject || !activeProject.id) return;
+		if (!confirm(`Are you sure you want to delete project "${activeProject.title}"?`)) return;
+
+		try {
+			await apiClient.deleteProject(activeProject.id);
+			await loadProjects();
+		} catch (err) {
+			projectError = formatApiError(err);
+		}
+	}
+
+	function enableDevIdentity() {
+		apiClient.setDevMode(true, '00000000-0000-0000-0000-000000000001');
+		isAuthenticated = apiClient.isAuthenticated();
+		authMode = apiClient.getAuthMode();
+		loadProjects();
+	}
+
+	onMount(() => {
+		loadProjects();
+	});
 </script>
 
 <div class="app-layout">
+	<!-- Navbar -->
 	<header class="navbar">
 		<div class="brand">
 			<span class="logo">🎨</span>
@@ -38,15 +170,230 @@
 				<span class="advisory-text">18+ Advisory</span>
 			</div>
 
-			<div class="status-pill mock-pill" title="Running against hermetic typed mock API">
-				<span class="badge">Mock API</span>
-			</div>
+			{#if authMode === 'mock'}
+				<div class="status-pill mock-pill" title="Running against hermetic typed mock API (PUBLIC_USE_MOCK_API=true)">
+					<span class="badge blue">Mock API</span>
+				</div>
+			{:else if authMode === 'dev'}
+				<div class="status-pill dev-pill" title="Authenticated via dev identity header (X-User-ID)">
+					<span class="indicator green"></span>
+					<span class="dev-label">Dev Mode: 0000...0001</span>
+				</div>
+			{:else if authMode === 'bearer'}
+				<div class="status-pill bearer-pill" title="Authenticated via Bearer Token">
+					<span class="indicator green"></span>
+					<span>Bearer Token</span>
+				</div>
+			{:else}
+				<div class="status-pill unauth-pill" title="Unauthenticated: No credentials configured">
+					<span class="indicator amber"></span>
+					<span class="unauth-label">Unauthenticated</span>
+				</div>
+			{/if}
 		</div>
 	</header>
 
+	<!-- Unauthenticated Banner (shown when dev identity is not configured in real API mode) -->
+	{#if !isAuthenticated && authMode !== 'mock'}
+		<div class="unauth-banner" role="alert">
+			<div class="unauth-content">
+				<span class="unauth-icon">🔒</span>
+				<div class="unauth-text">
+					<strong>Unauthenticated State:</strong> The Go backend requires authentication.
+					In local development, start the backend with <code>DEV_AUTH_ENABLED=true</code> and set <code>PUBLIC_DEV_MODE=true</code> (or <code>PUBLIC_DEV_USER_ID</code>) in frontend environment.
+				</div>
+			</div>
+			<button class="enable-dev-btn" on:click={enableDevIdentity}>
+				⚡ Enable Local Dev Identity
+			</button>
+		</div>
+	{/if}
+
+	<!-- Project Management Bar -->
+	<section class="project-bar" aria-label="Project Selection & Actions">
+		<div class="project-selector-group">
+			<label for="project-select" class="selector-label">Project:</label>
+			{#if isLoadingProjects}
+				<span class="loading-label">Loading projects...</span>
+			{:else if projects.length > 0}
+				<select
+					id="project-select"
+					class="project-select"
+					bind:value={activeProjectId}
+					on:change={() => switchProject(activeProjectId)}
+				>
+					{#each projects as p}
+						<option value={p.id}>
+							{p.title || 'Untitled'} ({p.art_style || 'standard'})
+						</option>
+					{/each}
+				</select>
+			{:else}
+				<span class="no-projects-label">No projects found</span>
+			{/if}
+		</div>
+
+		{#if activeProject}
+			<div class="project-meta-pill">
+				<span class="meta-item"><strong>Style:</strong> {activeProject.art_style || 'classic'}</span>
+				<span class="meta-divider">•</span>
+				<span class="meta-item"><strong>Chapters:</strong> {activeProject.chapter_count || 1}</span>
+			</div>
+		{/if}
+
+		<div class="project-actions">
+			<button class="action-btn create-btn" on:click={openCreateModal}>
+				➕ New Project
+			</button>
+
+			{#if activeProject}
+				<button
+					class="action-btn delete-btn"
+					on:click={handleDeleteCurrentProject}
+					title="Delete current project"
+				>
+					🗑️ Delete
+				</button>
+			{/if}
+
+			<button
+				class="action-btn refresh-btn"
+				on:click={loadProjects}
+				title="Reload projects from API"
+			>
+				🔄 Refresh
+			</button>
+		</div>
+	</section>
+
+	<!-- Global Project Error Alert -->
+	{#if projectError}
+		<div class="project-error-banner">
+			<strong>⚠️ {projectError.title}:</strong> {projectError.message}
+			{#if projectError.action}
+				<span class="error-action-hint">({projectError.action})</span>
+			{/if}
+		</div>
+	{/if}
+
+	<!-- Main Comic Studio Area -->
 	<main class="main-container">
-		<ComicEditor {project} {apiClient} bind:activeStage />
+		{#if isLoadingProjects}
+			<div class="loading-container">
+				<div class="spinner-large"></div>
+				<p>Connecting to Icomic API and loading projects...</p>
+			</div>
+		{:else if activeProject}
+			<ComicEditor
+				project={activeProject}
+				{apiClient}
+				bind:activeStage
+			/>
+		{:else}
+			<div class="empty-state-card">
+				<div class="empty-icon">📖</div>
+				<h2>No Comic Projects Found</h2>
+				<p>Create your first project to start generating scripts, character designs, stick drafts, line art, and full PDF comics.</p>
+				<button class="primary-btn large" on:click={openCreateModal}>
+					🚀 Create Your First Comic Project
+				</button>
+			</div>
+		{/if}
 	</main>
+
+	<!-- Create Project Modal Dialog -->
+	{#if showCreateModal}
+		<div
+			class="modal-backdrop"
+			on:click={(e) => e.target === e.currentTarget && closeCreateModal()}
+			on:keydown={(e) => e.key === 'Escape' && closeCreateModal()}
+			role="presentation"
+		>
+			<div
+				class="modal-dialog"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="modal-title"
+				tabindex="-1"
+			>
+				<header class="modal-header">
+					<h3 id="modal-title">Create New Comic Project</h3>
+					<button class="close-btn" on:click={closeCreateModal} aria-label="Close dialog">✕</button>
+				</header>
+
+				{#if createError}
+					<div class="modal-error">
+						⚠️ {createError}
+					</div>
+				{/if}
+
+				<form class="modal-form" on:submit|preventDefault={handleCreateProject}>
+					<div class="form-group">
+						<label for="new-proj-title">Project Title *</label>
+						<input
+							id="new-proj-title"
+							type="text"
+							placeholder="e.g. Neon Horizon"
+							bind:value={newProjectForm.title}
+							required
+						/>
+					</div>
+
+					<div class="form-row">
+						<div class="form-group">
+							<label for="new-proj-style">Art Style</label>
+							<select id="new-proj-style" bind:value={newProjectForm.art_style}>
+								<option value="cyberpunk-noir">Cyberpunk Noir</option>
+								<option value="classic-superhero">Classic Superhero</option>
+								<option value="manga-ink">Manga Shonen Ink</option>
+								<option value="indie-graphic-novel">Indie Graphic Novel</option>
+							</select>
+						</div>
+
+						<div class="form-group">
+							<label for="new-proj-chapters">Chapters</label>
+							<input
+								id="new-proj-chapters"
+								type="number"
+								min="1"
+								max="10"
+								bind:value={newProjectForm.chapter_count}
+							/>
+						</div>
+					</div>
+
+					<div class="form-group">
+						<label for="new-proj-script">Initial Script / Outline *</label>
+						<textarea
+							id="new-proj-script"
+							rows="5"
+							placeholder="Enter initial story description, character dialogue, or plot summary..."
+							bind:value={newProjectForm.script}
+							required
+						></textarea>
+					</div>
+
+					<footer class="modal-footer">
+						<button
+							type="button"
+							class="secondary-btn"
+							on:click={closeCreateModal}
+							disabled={isCreatingProject}
+						>
+							Cancel
+						</button>
+						<button
+							type="submit"
+							class="primary-btn"
+							disabled={isCreatingProject}
+						>
+							{isCreatingProject ? 'Creating...' : 'Create Project'}
+						</button>
+					</footer>
+				</form>
+			</div>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -115,10 +462,13 @@
 	.indicator.green {
 		background: #16a34a;
 	}
+	.indicator.amber {
+		background: #d97706;
+	}
 	.advisory-text {
 		color: #64748b;
 	}
-	.badge {
+	.badge.blue {
 		background: #0284c7;
 		color: #ffffff;
 		padding: 0.1rem 0.4rem;
@@ -126,6 +476,156 @@
 		font-size: 0.7rem;
 		font-weight: 600;
 	}
+	.unauth-pill {
+		background: #fffbeb;
+		border-color: #fde68a;
+		color: #92400e;
+	}
+	.dev-pill {
+		background: #f0fdf4;
+		border-color: #bbf7d0;
+		color: #166534;
+	}
+
+	/* Unauthenticated Notice Banner */
+	.unauth-banner {
+		background: #fffbeb;
+		border-bottom: 1px solid #fde68a;
+		padding: 0.6rem 2rem;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		font-size: 0.8125rem;
+		color: #92400e;
+	}
+	.unauth-content {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.unauth-icon {
+		font-size: 1.1rem;
+	}
+	.unauth-text code {
+		background: rgba(0, 0, 0, 0.06);
+		padding: 0.1rem 0.3rem;
+		border-radius: 3px;
+		font-size: 0.75rem;
+	}
+	.enable-dev-btn {
+		background: #0284c7;
+		color: white;
+		border: none;
+		padding: 0.35rem 0.75rem;
+		border-radius: 6px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.enable-dev-btn:hover {
+		background: #0369a1;
+	}
+
+	/* Project Switcher Bar */
+	.project-bar {
+		background: #ffffff;
+		border-bottom: 1px solid #e2e8f0;
+		padding: 0.6rem 2rem;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+	.project-selector-group {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.selector-label {
+		font-size: 0.8125rem;
+		font-weight: 700;
+		color: #475569;
+	}
+	.project-select {
+		padding: 0.4rem 0.75rem;
+		border: 1px solid #cbd5e1;
+		border-radius: 6px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: #0f172a;
+		background: #ffffff;
+		cursor: pointer;
+	}
+	.loading-label,
+	.no-projects-label {
+		font-size: 0.8125rem;
+		color: #64748b;
+		font-style: italic;
+	}
+	.project-meta-pill {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.75rem;
+		color: #64748b;
+		background: #f8fafc;
+		border: 1px solid #e2e8f0;
+		padding: 0.25rem 0.6rem;
+		border-radius: 6px;
+	}
+	.meta-divider {
+		color: #cbd5e1;
+	}
+	.project-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.action-btn {
+		font-size: 0.75rem;
+		font-weight: 600;
+		padding: 0.35rem 0.7rem;
+		border-radius: 6px;
+		cursor: pointer;
+		border: 1px solid #cbd5e1;
+		background: #ffffff;
+		color: #334155;
+		transition: all 0.15s ease;
+	}
+	.action-btn:hover {
+		background: #f1f5f9;
+	}
+	.create-btn {
+		background: #0284c7;
+		color: #ffffff;
+		border-color: #0284c7;
+	}
+	.create-btn:hover {
+		background: #0369a1;
+	}
+	.delete-btn {
+		color: #b91c1c;
+		border-color: #fca5a5;
+	}
+	.delete-btn:hover {
+		background: #fee2e2;
+	}
+
+	.project-error-banner {
+		background: #fef2f2;
+		color: #991b1b;
+		border-bottom: 1px solid #fecaca;
+		padding: 0.6rem 2rem;
+		font-size: 0.8125rem;
+	}
+	.error-action-hint {
+		margin-left: 0.3rem;
+		color: #7f1d1d;
+	}
+
 	.main-container {
 		flex: 1;
 		max-width: 1100px;
@@ -133,5 +633,176 @@
 		margin: 1.5rem auto;
 		padding: 0 1rem;
 		box-sizing: border-box;
+	}
+
+	.loading-container {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 4rem 2rem;
+		color: #64748b;
+		gap: 1rem;
+	}
+	.spinner-large {
+		width: 32px;
+		height: 32px;
+		border: 3px solid #0284c7;
+		border-radius: 50%;
+		border-top-color: transparent;
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.empty-state-card {
+		background: #ffffff;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
+		padding: 3rem 2rem;
+		text-align: center;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+		max-width: 500px;
+		margin: 2rem auto;
+	}
+	.empty-icon {
+		font-size: 3rem;
+	}
+	.empty-state-card h2 {
+		margin: 0;
+		font-size: 1.25rem;
+		color: #0f172a;
+	}
+	.empty-state-card p {
+		margin: 0;
+		color: #64748b;
+		font-size: 0.875rem;
+		line-height: 1.5;
+	}
+	.primary-btn {
+		background: #0284c7;
+		color: white;
+		border: none;
+		padding: 0.5rem 1rem;
+		border-radius: 6px;
+		font-weight: 600;
+		font-size: 0.875rem;
+		cursor: pointer;
+	}
+	.primary-btn.large {
+		padding: 0.75rem 1.5rem;
+		font-size: 0.9375rem;
+	}
+	.primary-btn:hover:not(:disabled) {
+		background: #0369a1;
+	}
+	.primary-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.secondary-btn {
+		background: #ffffff;
+		border: 1px solid #cbd5e1;
+		color: #334155;
+		padding: 0.5rem 1rem;
+		border-radius: 6px;
+		font-size: 0.875rem;
+		font-weight: 500;
+		cursor: pointer;
+	}
+
+	/* Modal Dialog Styles */
+	.modal-backdrop {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(15, 23, 42, 0.45);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1000;
+		padding: 1rem;
+	}
+	.modal-dialog {
+		background: #ffffff;
+		border-radius: 8px;
+		box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+		width: 100%;
+		max-width: 520px;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+	.modal-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 1rem 1.25rem;
+		border-bottom: 1px solid #e2e8f0;
+	}
+	.modal-header h3 {
+		margin: 0;
+		font-size: 1.1rem;
+		color: #0f172a;
+	}
+	.close-btn {
+		background: transparent;
+		border: none;
+		font-size: 1rem;
+		color: #64748b;
+		cursor: pointer;
+		padding: 0.2rem 0.4rem;
+	}
+	.modal-error {
+		background: #fef2f2;
+		color: #991b1b;
+		border-bottom: 1px solid #fecaca;
+		padding: 0.5rem 1.25rem;
+		font-size: 0.8125rem;
+	}
+	.modal-form {
+		padding: 1.25rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+	.form-row {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1rem;
+	}
+	.form-group {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+	.form-group label {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: #1e293b;
+	}
+	.form-group input,
+	.form-group select,
+	.form-group textarea {
+		padding: 0.5rem;
+		border: 1px solid #cbd5e1;
+		border-radius: 6px;
+		font-size: 0.875rem;
+		font-family: inherit;
+	}
+	.modal-footer {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.5rem;
+		padding-top: 0.5rem;
+		border-top: 1px solid #f1f5f9;
 	}
 </style>
