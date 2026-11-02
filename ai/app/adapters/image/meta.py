@@ -16,6 +16,7 @@ from ..meta_http import (
     TokenBucket,
     build_responses_image_request,
     parse_responses_image_response,
+    validate_model_id_tier,
 )
 from .port import ImagePort, ImageResult
 
@@ -35,6 +36,7 @@ class MetaImageAdapter(ImagePort):
         **client_kwargs: Any,
     ) -> None:
         self.model_id = model_id or os.getenv("META_IMAGE_MODEL") or DEFAULT_META_IMAGE_MODEL
+        validate_model_id_tier(self.model_id)
         self.user_field = os.getenv("META_USER_FIELD", DEFAULT_META_USER_FIELD)
 
         # Rate limiting: 150 RPM ceiling adjusted for worker concurrency if needed

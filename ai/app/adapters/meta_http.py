@@ -230,6 +230,18 @@ def extract_provenance(
 # ---------------------------------------------------------------------------
 
 
+def validate_model_id_tier(model_id: str) -> None:
+    """Validate that model does not use the contributor tier unless explicitly permitted.
+
+    Contributor tier trains upstream Meta models on user prompts and completions.
+    """
+    if "contributor" in model_id.lower() and os.getenv("META_ALLOW_CONTRIBUTOR_TIER") != "1":
+        raise ValueError(
+            f"Model {model_id!r} is rejected: contributor tier trains Meta models on user prompts and completions. "
+            "To permit data collection for upstream training, set META_ALLOW_CONTRIBUTOR_TIER=1."
+        )
+
+
 def build_chat_completion_request(
     model: str,
     messages: list[Message] | list[dict[str, Any]],

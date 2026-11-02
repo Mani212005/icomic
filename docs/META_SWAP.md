@@ -165,6 +165,10 @@ The adapters must map external HTTP error responses into structured domain excep
 - Downstream processing (canvas manipulation, thumbnailing, PDF compilation) must never strip, alter, or obscure provenance metadata or watermarks.
 - The PDF export pipeline must verify that provenance metadata is preserved and record `exports.provenance_metadata_preserved = true` in the database.
 
+### 4.8 Contributor Tier Protection
+
+Contributor tier models (such as `muse-spark-1.3-contributor`) train Meta models on user prompts and completions, so every Meta adapter strictly rejects them by default unless `META_ALLOW_CONTRIBUTOR_TIER=1` is explicitly set.
+
 ## 5. Verification Checklist
 
 Live verification must be performed manually and isolated from automated pipelines.

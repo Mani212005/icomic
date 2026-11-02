@@ -380,3 +380,124 @@ def test_direct_meta_adapter_instantiation_without_key_raises(monkeypatch):
         MetaImageAdapter()
     assert "not configured" in str(exc.value)
     assert API_KEY_ENV_NAME in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Contributor Tier Refusal Tests
+# ---------------------------------------------------------------------------
+
+
+def test_language_adapter_refuses_contributor_tier_unless_permitted(monkeypatch):
+    monkeypatch.delenv("META_ALLOW_CONTRIBUTOR_TIER", raising=False)
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, json=load_fixture("chat_completion.json"))
+    )
+
+    # Refuse on complete call
+    adapter = MetaLanguageAdapter(api_key="mock-key", transport=transport)
+    with pytest.raises(ValueError) as exc:
+        adapter.complete(
+            model="muse-spark-1.3-contributor",
+            messages=[Message(role="user", content="Hello")],
+        )
+    assert "contributor tier trains Meta models on user prompts and completions" in str(exc.value)
+    assert "META_ALLOW_CONTRIBUTOR_TIER=1" in str(exc.value)
+
+    # Refuse on initialization with default model
+    with pytest.raises(ValueError) as exc:
+        MetaLanguageAdapter(
+            api_key="mock-key",
+            default_model="muse-spark-1.3-contributor",
+            transport=transport,
+        )
+    assert "contributor tier trains Meta models" in str(exc.value)
+
+    # Permitted when env var is set
+    monkeypatch.setenv("META_ALLOW_CONTRIBUTOR_TIER", "1")
+    allowed_adapter = MetaLanguageAdapter(
+        api_key="mock-key",
+        default_model="muse-spark-1.3-contributor",
+        transport=transport,
+    )
+    result = allowed_adapter.complete(
+        model="muse-spark-1.3-contributor",
+        messages=[Message(role="user", content="Hello")],
+    )
+    assert len(result) > 0
+
+
+def test_vision_adapter_refuses_contributor_tier_unless_permitted(monkeypatch):
+    monkeypatch.delenv("META_ALLOW_CONTRIBUTOR_TIER", raising=False)
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, json=load_fixture("vision_review.json"))
+    )
+
+    adapter = MetaVisionAdapter(api_key="mock-key", transport=transport)
+    with pytest.raises(ValueError) as exc:
+        adapter.review(
+            model="muse-spark-1.3-contributor",
+            image_bytes=b"fake-bytes",
+            prompt="Review this",
+        )
+    assert "contributor tier trains Meta models on user prompts and completions" in str(exc.value)
+
+    with pytest.raises(ValueError) as exc:
+        adapter.suggest_palette(
+            model="muse-spark-1.3-contributor",
+            image_bytes=b"fake-bytes",
+            panel_context="dark alley scene",
+        )
+    assert "contributor tier trains Meta models on user prompts and completions" in str(exc.value)
+
+    # Refuse on init with default model
+    with pytest.raises(ValueError) as exc:
+        MetaVisionAdapter(
+            api_key="mock-key",
+            default_model="muse-spark-1.3-contributor",
+            transport=transport,
+        )
+    assert "contributor tier trains Meta models" in str(exc.value)
+
+    # Permitted when env var is set
+    monkeypatch.setenv("META_ALLOW_CONTRIBUTOR_TIER", "1")
+    allowed_adapter = MetaVisionAdapter(
+        api_key="mock-key",
+        default_model="muse-spark-1.3-contributor",
+        transport=transport,
+    )
+    rev = allowed_adapter.review(
+        model="muse-spark-1.3-contributor",
+        image_bytes=b"fake-bytes",
+        prompt="Review this",
+    )
+    assert len(rev) > 0
+
+
+def test_image_adapter_refuses_contributor_tier_unless_permitted(monkeypatch):
+    monkeypatch.delenv("META_ALLOW_CONTRIBUTOR_TIER", raising=False)
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, json=load_fixture("responses_image.json"))
+    )
+
+    with pytest.raises(ValueError) as exc:
+        MetaImageAdapter(
+            api_key="mock-key",
+            model_id="muse-image-1.0-contributor",
+            transport=transport,
+        )
+    assert "contributor tier trains Meta models on user prompts and completions" in str(exc.value)
+
+    # Permitted when env var is set
+    monkeypatch.setenv("META_ALLOW_CONTRIBUTOR_TIER", "1")
+    allowed_adapter = MetaImageAdapter(
+        api_key="mock-key",
+        model_id="muse-image-1.0-contributor",
+        transport=transport,
+    )
+    res = allowed_adapter.generate(
+        prompt="A cute cat",
+        reference_images=[],
+        hashed_user_id="user-hash",
+        style="anime",
+    )
+    assert isinstance(res, ImageResult)

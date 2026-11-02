@@ -22,22 +22,10 @@ Budget and Pricing Rules (Owner Decisions 2026-11-02):
 
 from __future__ import annotations
 
-import os
-import sys
-
-# Immediate safety gate: Refuse before any external imports
-if os.getenv("META_LIVE_CHECK") != "1" and not os.getenv("META_LIVE_CHECK_TEST_MODE"):
-    print(
-        "\n[ABORTED] Safety gate active: META_LIVE_CHECK is not set to '1'.\n"
-        "This script makes live outbound network requests and spends real API credits.\n"
-        "To execute manual verification, run:\n\n"
-        "  META_LIVE_CHECK=1 META_API_KEY=<your-key> uv run --project ai python3 scripts/manual/meta_live_check.py\n",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
 import json
+import os
 import struct
+import sys
 import time
 import zlib
 from collections.abc import Callable
@@ -165,6 +153,7 @@ class SpendLedger:
         input_tokens: int = 0,
         output_tokens: int = 0,
         image_count: int = 0,
+        failed: bool = False,
         timestamp_fn: Callable[[], str] | None = None,
     ) -> dict[str, Any]:
         """Append a call record to the ledger."""
@@ -182,6 +171,7 @@ class SpendLedger:
             "output_tokens": output_tokens,
             "image_count": image_count,
             "estimated_cost_usd": round(cost_usd, 8),
+            "failed": failed,
         }
         with open(self.ledger_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
@@ -189,8 +179,37 @@ class SpendLedger:
 
 
 # ---------------------------------------------------------------------------
-# Key Resolution (.env.local Support)
+# Key Resolution (.env.local Support) & Budget Validation
 # ---------------------------------------------------------------------------
+
+
+def validate_budget(budget_env: str | None) -> float:
+    """Validate META_LIVE_BUDGET_USD value.
+
+    Refuses non-numeric or non-positive values.
+    Refuses values above $5.00 unless META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT=1 is set.
+    """
+    if budget_env is None or budget_env.strip() == "":
+        return DEFAULT_BUDGET_USD
+
+    try:
+        val = float(budget_env.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid META_LIVE_BUDGET_USD {budget_env!r}: must be a positive number."
+        ) from exc
+
+    if val <= 0.0:
+        raise ValueError(f"Invalid META_LIVE_BUDGET_USD {val}: must be positive.")
+
+    if val > 5.0 and os.getenv("META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT") != "1":
+        raise PermissionError(
+            f"META_LIVE_BUDGET_USD of ${val:.2f} exceeds default $5.00 limit. "
+            "Increasing the live check budget above $5.00 requires the owner's word: "
+            "set META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT=1."
+        )
+
+    return val
 
 
 def resolve_api_key() -> str:
@@ -205,7 +224,6 @@ def resolve_api_key() -> str:
     candidate_paths = [
         REPO_ROOT / ".env.local",
         REPO_ROOT / "projects" / "icomic" / ".env.local",
-        REPO_ROOT.parent / "icomic" / ".env.local",
     ]
 
     for path in candidate_paths:
@@ -306,8 +324,18 @@ class LiveCheckRunner:
         print(f"  Prior Cumulative Spend:             ${cumulative_spend:.6f} USD ({len(prior_records)} prior calls)")
         print(f"  Checklist Worst-Case Spend:         ${checklist_worst_case:.6f} USD")
         print(f"  Base URL:                           {self.base_url}")
-        print(f"  API Key:                            [PRESENT, length: {len(self.api_key)} chars, hidden]")
+        print("  API Key:                            [FOUND]")
         print("=" * 65)
+
+        # Safety gate for live network calls
+        if self.transport is None and os.getenv("META_LIVE_CHECK") != "1":
+            print(
+                "\n[ABORTED] Safety gate active: META_LIVE_CHECK must be '1' for live calls.\n",
+                file=sys.stderr,
+            )
+            summary = "STATUS: FAIL reason=\"safety_gate_active\" calls=0/3"
+            print(summary)
+            return False, summary
 
         # ---------------------------------------------------------------------
         # Stage 1: Text Call (MetaLanguageAdapter) - Cheapest ($~0.0001)
@@ -367,6 +395,16 @@ class LiveCheckRunner:
             print(f"  - Step Cost:       ${call_cost:.6f} USD")
             print(f"  - Running Total:   ${(cumulative_spend + session_spend):.6f} USD")
         except Exception as exc:
+            fail_cost = stage_worst_case
+            session_spend += fail_cost
+            self.ledger.record_call(
+                model=self.lang_model,
+                adapter="language",
+                cost_usd=fail_cost,
+                input_tokens=WORST_CASE_TEXT_INPUT_TOKENS,
+                output_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
+                failed=True,
+            )
             print(f"  - Status: FAILED ({type(exc).__name__}: {exc})", file=sys.stderr)
             summary = f"STATUS: FAIL stage=language reason={json.dumps(str(exc))} spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
@@ -430,6 +468,16 @@ class LiveCheckRunner:
             print(f"  - Step Cost:       ${call_cost:.6f} USD")
             print(f"  - Running Total:   ${(cumulative_spend + session_spend):.6f} USD")
         except Exception as exc:
+            fail_cost = stage_worst_case
+            session_spend += fail_cost
+            self.ledger.record_call(
+                model=self.vis_model,
+                adapter="vision",
+                cost_usd=fail_cost,
+                input_tokens=WORST_CASE_VISION_INPUT_TOKENS,
+                output_tokens=WORST_CASE_VISION_OUTPUT_TOKENS,
+                failed=True,
+            )
             print(f"  - Status: FAILED ({type(exc).__name__}: {exc})", file=sys.stderr)
             summary = f"STATUS: FAIL stage=vision reason={json.dumps(str(exc))} spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
@@ -494,6 +542,15 @@ class LiveCheckRunner:
             print(f"  - Step Cost:       ${call_cost:.6f} USD")
             print(f"  - Running Total:   ${(cumulative_spend + session_spend):.6f} USD")
         except Exception as exc:
+            fail_cost = stage_worst_case
+            session_spend += fail_cost
+            self.ledger.record_call(
+                model=self.img_model,
+                adapter="image",
+                cost_usd=fail_cost,
+                image_count=1,
+                failed=True,
+            )
             print(f"  - Status: FAILED ({type(exc).__name__}: {exc})", file=sys.stderr)
             summary = f"STATUS: FAIL stage=image reason={json.dumps(str(exc))} spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
@@ -514,6 +571,22 @@ class LiveCheckRunner:
 
 
 def main() -> int:
+    if os.getenv("META_LIVE_CHECK") != "1":
+        print(
+            "\n[ABORTED] Safety gate active: META_LIVE_CHECK is not set to '1'.\n"
+            "This script makes live outbound network requests and spends real API credits.\n"
+            "To execute manual verification, run:\n\n"
+            "  META_LIVE_CHECK=1 META_API_KEY=<your-key> uv run --project ai python3 scripts/manual/meta_live_check.py\n",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        budget_usd = validate_budget(os.getenv("META_LIVE_BUDGET_USD"))
+    except (ValueError, PermissionError) as exc:
+        print(f"\n[ABORTED] {exc}\n", file=sys.stderr)
+        return 1
+
     # Resolve key from env or .env.local
     api_key = resolve_api_key()
     if not api_key:
@@ -523,12 +596,6 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-
-    budget_env = os.getenv("META_LIVE_BUDGET_USD", str(DEFAULT_BUDGET_USD))
-    try:
-        budget_usd = float(budget_env)
-    except ValueError:
-        budget_usd = DEFAULT_BUDGET_USD
 
     base_url = os.getenv("META_API_BASE_URL", "https://api.meta.ai/v1")
 

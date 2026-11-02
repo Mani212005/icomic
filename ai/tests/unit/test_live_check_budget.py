@@ -17,15 +17,12 @@ SCRIPTS_PATH = REPO_ROOT / "scripts"
 if str(SCRIPTS_PATH) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_PATH))
 
-# Enable test mode import without enabling real live mode
-import os
-
-os.environ["META_LIVE_CHECK_TEST_MODE"] = "1"
-
 from manual.meta_live_check import (
     LiveCheckRunner,
     SpendLedger,
     calculate_token_cost,
+    main,
+    validate_budget,
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "meta"
@@ -254,3 +251,106 @@ def test_successful_run_order_and_summary_line(tmp_path: Path):
     assert summary.startswith("STATUS: PASS ")
     assert "calls=3/3" in summary
     assert "budget_usd=5.00" in summary
+
+
+def test_safety_gate_main_refuses_without_live_check_env(monkeypatch):
+    """main() must immediately refuse without META_LIVE_CHECK=1 and build zero clients."""
+    monkeypatch.delenv("META_LIVE_CHECK", raising=False)
+    stderr_capture = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stderr_capture)
+
+    exit_code = main()
+    assert exit_code == 1
+    err = stderr_capture.getvalue()
+    assert "Safety gate active" in err
+    assert "META_LIVE_CHECK is not set to '1'" in err
+
+
+def test_budget_validation_refuses_above_5_without_permission(monkeypatch):
+    """Budget above $5.00 must refuse unless owner explicitly allows it."""
+    monkeypatch.delenv("META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT", raising=False)
+
+    with pytest.raises(PermissionError) as exc_info:
+        validate_budget("5.01")
+    assert "exceeds default $5.00 limit" in str(exc_info.value)
+    assert "owner's word" in str(exc_info.value)
+
+    # With permission flag set, it should succeed
+    monkeypatch.setenv("META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT", "1")
+    assert validate_budget("10.00") == 10.00
+
+
+def test_budget_validation_refuses_invalid_or_non_positive():
+    """Budget must be a positive number."""
+    with pytest.raises(ValueError) as exc_info:
+        validate_budget("not-a-number")
+    assert "must be a positive number" in str(exc_info.value)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_budget("-1.5")
+    assert "must be positive" in str(exc_info.value)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_budget("0")
+    assert "must be positive" in str(exc_info.value)
+
+    # Empty or None uses default
+    assert validate_budget(None) == 5.00
+    assert validate_budget("") == 5.00
+
+
+def test_failed_call_records_worst_case_cost_in_ledger_with_failed_flag(tmp_path: Path):
+    """When a call fails after request transmission, record worst-case cost flagged failed=True."""
+    ledger_file = tmp_path / "spend_failed_call.jsonl"
+    ledger = SpendLedger(ledger_path=ledger_file)
+
+    def failing_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        budget_usd=5.00,
+        ledger=ledger,
+        transport=httpx.MockTransport(failing_handler),
+    )
+
+    success, summary = runner.run()
+    assert success is False
+    assert "stage=language" in summary
+
+    # Verify that ledger has recorded the failed call with worst-case cost and failed=True
+    cumulative, records = ledger.read_cumulative_spend()
+    assert len(records) == 1
+    record = records[0]
+    assert record["adapter"] == "language"
+    assert record["failed"] is True
+    assert record["estimated_cost_usd"] > 0
+    assert cumulative == record["estimated_cost_usd"]
+    assert "spend_usd=" in summary
+    assert "0.000000" not in summary.split("spend_usd=")[1][:8]  # Recorded positive spend
+
+
+def test_key_found_printed_without_length(tmp_path: Path, monkeypatch):
+    """Script prints [FOUND] without printing key length."""
+    ledger_file = tmp_path / "spend_key_display.jsonl"
+    ledger = SpendLedger(ledger_path=ledger_file)
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        budget_usd=5.00,
+        ledger=ledger,
+        transport=create_success_transport(),
+    )
+
+    stdout_capture = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stdout_capture)
+
+    success, _ = runner.run()
+    assert success is True
+
+    out = stdout_capture.getvalue()
+    assert "[FOUND]" in out
+    assert "length:" not in out
+    assert str(len(TEST_SECRET_KEY)) not in out

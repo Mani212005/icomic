@@ -14,6 +14,7 @@ from ..meta_http import (
     MetaHttpClient,
     build_chat_completion_request,
     parse_chat_completion_response,
+    validate_model_id_tier,
 )
 from .port import LanguagePort, Message, TokenUsage
 
@@ -33,6 +34,7 @@ class MetaLanguageAdapter(LanguagePort):
         self.default_model = (
             default_model or os.getenv("META_LANGUAGE_MODEL") or DEFAULT_META_LANGUAGE_MODEL
         )
+        validate_model_id_tier(self.default_model)
         self.user_field = os.getenv("META_USER_FIELD", DEFAULT_META_USER_FIELD)
 
         if http_client is not None:
@@ -55,6 +57,7 @@ class MetaLanguageAdapter(LanguagePort):
     def complete(self, model: str, messages: list[Message], **kwargs: Any) -> str:
         """Execute text completion via Meta chat completions endpoint."""
         target_model = model or self.default_model
+        validate_model_id_tier(target_model)
 
         # Forward hashed_user_id under the configured user field
         user = kwargs.pop("hashed_user_id", None) or kwargs.pop("user", None)

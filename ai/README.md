@@ -50,6 +50,7 @@ When `meta` is selected, adapters read credentials lazily at construction time.
 If credentials are not configured, adapters raise a descriptive `RuntimeError`.
 All outbound HTTP interactions support injectable transports for hermetic unit testing.
 A dedicated smoke verification script is provided in `scripts/manual/meta_live_check.py` for manual validation.
+Contributor tier models (`*-contributor`) train Meta models on submitted prompts and completions, so all Meta adapters reject them by default unless `META_ALLOW_CONTRIBUTOR_TIER=1` is set.
 
 ## AI Services (`app/services/`)
 

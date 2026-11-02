@@ -16,6 +16,7 @@ from ..meta_http import (
     build_chat_completion_request,
     parse_chat_completion_response,
     parse_palette_json,
+    validate_model_id_tier,
 )
 from .port import PaletteSuggestion, VisionPort
 
@@ -35,6 +36,7 @@ class MetaVisionAdapter(VisionPort):
         self.default_model = (
             default_model or os.getenv("META_VISION_MODEL") or DEFAULT_META_VISION_MODEL
         )
+        validate_model_id_tier(self.default_model)
         self.user_field = os.getenv("META_USER_FIELD", DEFAULT_META_USER_FIELD)
 
         if http_client is not None:
@@ -56,6 +58,7 @@ class MetaVisionAdapter(VisionPort):
     def review(self, model: str, image_bytes: bytes, prompt: str) -> str:
         """Submit image bytes and review prompt to Meta multimodal vision endpoint."""
         target_model = model or self.default_model
+        validate_model_id_tier(target_model)
         b64_image = base64.b64encode(image_bytes).decode("ascii")
 
         content_parts = [
@@ -84,6 +87,7 @@ class MetaVisionAdapter(VisionPort):
     ) -> PaletteSuggestion:
         """Analyze line art and context to suggest structured colour palette."""
         target_model = model or self.default_model
+        validate_model_id_tier(target_model)
         b64_image = base64.b64encode(image_bytes).decode("ascii")
 
         instruction = (
