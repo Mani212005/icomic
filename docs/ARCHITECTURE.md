@@ -27,7 +27,7 @@ icomic/
 │   │   ├── domain/             # Domain types, business rules
 │   │   ├── jobs/               # Job creation, queue dispatch
 │   │   ├── credits/            # Credit ledger, quota, kill switch
-│   │   ├── auth/               # Authentication, age gate, geo-block
+│   │   ├── auth/               # Authentication and sessions
 │   │   └── db/                 # PostgreSQL queries, migrations
 │   ├── gen/                    # Types generated or validated from contracts/openapi/
 │   └── go.mod
@@ -96,7 +96,7 @@ icomic/
 | Service | Technology | Owns |
 |---|---|---|
 | **Frontend** | Svelte | UI rendering, colour editor, paint-bucket fill tool (client-side), job polling, user flows |
-| **Go API** | Go + net/http | Auth, session, project/chapter/character/page/panel CRUD, credit ledger, quota enforcement, kill switch, job creation, age gate, geo-block, hashed user ID, approval gates, presigned download URLs |
+| **Go API** | Go + net/http | Auth, session, project/chapter/character/page/panel CRUD, credit ledger, quota enforcement, kill switch, job creation, hashed user ID, approval gates, presigned download URLs |
 | **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, line art, colour suggestion, PDF assembly |
 | **PostgreSQL** | Postgres | Durable project state, credit ledger, job records, stage approvals, colour palettes |
 | **Redis** | Redis | Job queue; pending, running, retried, and cancelled job envelopes |
@@ -107,7 +107,7 @@ icomic/
 - Svelte talks only to the Go API over HTTPS.
 - Go talks to PostgreSQL (direct), Redis (direct), and the Python AI service (HTTP, internal network).
 - Python talks to AI adapter ports only (language, vision, image, storage, queue, clock).
-- No service talks directly to a Meta API endpoint except the Python `meta.py` adapter implementations (deferred until credits).
+- No service talks directly to a Meta API endpoint except the Python `meta.py` adapter implementations (which remain inert behind the ports until the whole project is built on fakes and Meta API keys are provided).
 - The Svelte frontend never holds or sees API keys.
 
 ---
@@ -188,6 +188,8 @@ Each port has a deterministic fake adapter that runs with no network and no key.
 Fake adapters must be importable without any network dependency, credential, or external process.
 
 ### 3.3 Real Meta Adapters (Deferred)
+
+Meta API keys come only after the whole project is built on fakes, with the Meta adapters remaining inert behind the ports until then.
 
 The `meta.py` adapters implement the same ports using the real `api.meta.ai` endpoints. They are selected by setting `ADAPTER_IMAGE=meta`, `ADAPTER_LANGUAGE=meta`, etc. in environment config.
 
@@ -345,6 +347,10 @@ These tests:
 - Are never referenced in CI workflows.
 - Document which endpoint and model they exercise, and what response shape they assert.
 
+### 6.6 Delivery Process and CI
+
+The delivery process is direct-PR with GitHub Actions CI (`.github/workflows/ci.yml`) and no external validation pipeline.
+
 ---
 
 ## 7. Build Order and Work Streams
@@ -390,7 +396,7 @@ The following streams can begin in parallel after the contracts are finalised.
 2. In parallel: database migrations + Go API skeleton; Python fakes + service stubs; CI workflow scaffold; Svelte scaffold.
 3. Wire Go API to Python test server via contract tests.
 4. Build each pipeline stage (script, character, draft, line art, colour, export) incrementally, adding the corresponding DB tables, Go handler, Python service, and Svelte page as a unit.
-5. Real Meta adapters drop in when credits are available - no other change needed.
+5. Meta API keys come only after the whole project is built on fakes, activating the inert Meta adapters behind the ports - no other change needed.
 
 ---
 
@@ -413,7 +419,7 @@ The entire pipeline runs end-to-end with fake adapters. Generated images are fix
 
 ### 8.2 Switching to Real Adapters
 
-Set in `.env.local` (never committed):
+Meta API keys come only after the whole project is built on fakes, with the Meta adapters remaining inert behind the ports until then. Once keys are available, set in `.env.local` (never committed):
 
 ```
 ADAPTER_LANGUAGE=meta
@@ -432,15 +438,15 @@ The image job queue concurrency is set via `IMAGE_WORKER_CONCURRENCY` (default: 
 
 ## 9. Assumptions
 
-The following assumptions were made in drafting this document and may need captain confirmation:
+The following assumptions were made in drafting this document:
 
 1. **Draft = one image per page (not per panel).** The spec and the task brief both say "one rough page image per attempt". This is the design. Panels on a page share one draft thumbnail.
 2. **`muse-image-1.0` pricing is $0.01 per image.** Verified by two independent reports (both cite `dev.meta.ai/docs/pricing-rate-limits`). No other Meta image pricing exists.
 3. **Paint-bucket fill is entirely client-side.** The colour editor runs in the browser using Canvas API flood-fill. No AI call is made during fill. Only the palette suggestion step costs a language/vision model call.
 4. **Gap-closing is a client-side algorithm.** Morphological dilation/erosion and the manual gap-closer stroke tool run in the browser; no server round-trip.
 5. **The Python service is an internal service only.** It is not exposed to the internet. Only the Go API is public. This is enforced by Docker network configuration.
-6. **Self-hosted language and vision models are in scope; self-hosted image models are not.** Meta has released open-weights language and vision models (Llama 3.x, Llama 3.2 Vision). No open-weights image model from Meta exists. The image adapter port keeps this swappable.
+6. **Self-hosted language and vision models are in scope; self-hosted image models are not.** Meta has released open-weights language and vision models (Llama 3.x, Llama 3.2 Vision). No open-weights image model from Meta exists. The image adapter port keeps this swappable, while the image hosting decision remains an open owner decision and must not be decided.
 7. **Colour suggestion uses the vision model (image + panel context -> palette).** This is consistent with the spec requirement to suggest per-region colours based on the actual line art.
 8. **`idempotency_key` on generation jobs is a UUID set by Go at job creation.** It is stored in `generation_jobs` with a unique constraint. Postgres enforces uniqueness; the application does not need a separate lock.
-9. **Age verification at sign-up collects date of birth.** The specific mechanism (self-declaration, ID check, payment method inference) is a pending captain decision. The DB schema stores `date_of_birth` for the minimum viable check.
-10. **Country is collected at sign-up and used for geo-blocking.** IP-based geo-detection as a secondary check is a pending captain decision.
+9. **Age gate is deferred.** The enforced age gate and date-of-birth collection are removed from the build scope; a warning that users must be 18+ (the threshold may be 21, to be confirmed with the owner) will be added in a later release.
+10. **Geo-blocking and region restrictions are deferred.** No country-gating or geo-blocking is enforced; users can be global since the owner is in India.
