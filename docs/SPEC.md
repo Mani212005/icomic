@@ -44,15 +44,15 @@ The product must be ready to introduce paid plans and access entitlements withou
 - Content creators
 - Students
 
-All users must be 18 years of age or older (Meta API terms requirement; see section 11).
+User age warning (18+ or 21+, to be confirmed with owner) is deferred to a later release; no age gate is enforced in the initial build (see section 11.2).
 
 ### 1.4 AI Model Policy
 
 All AI features use Meta models only (Meta Model API at `api.meta.ai`).
 
-Image generation uses `muse-image-1.0`, which is currently available only as a hosted API; no open-weights image model from Meta exists. The image generation adapter port must remain independent so a future self-hosted or alternative image model can be substituted without rewriting the product. The hosting decision for image generation is a pending captain decision.
+Image generation uses `muse-image-1.0`, which is currently available only as a hosted API; no open-weights image model from Meta exists. The image generation adapter port must remain independent so a future self-hosted or alternative image model can be substituted without rewriting the product. The hosting decision for image generation remains an open owner decision and must not be decided.
 
-Real Meta API integration is deferred until API credits are available. The product must run end-to-end with no network access and no API key in development and test, using deterministic fake adapters (see section 8 and ARCHITECTURE.md).
+Meta API keys come only after the whole project is built on fakes, with the Meta adapters inert behind the ports until then. The product must run end-to-end with no network access and no API key in development and test, using deterministic fake adapters (see section 8 and ARCHITECTURE.md).
 
 ---
 
@@ -427,7 +427,7 @@ The system must support two model access methods:
 1. Meta-hosted API (`api.meta.ai`)
 2. Self-hosted Meta models (open-weights, where available)
 
-**Image generation note:** No open-weights image model from Meta exists. `muse-image-1.0` is hosted-only. The image adapter port must stay independent; the hosting decision is a pending captain decision.
+**Image generation note:** No open-weights image model from Meta exists. `muse-image-1.0` is hosted-only. The image adapter port must stay independent; the hosting decision remains an open owner decision and must not be decided.
 
 The system must verify that the selected model supports the required task.
 
@@ -747,8 +747,6 @@ See ARCHITECTURE.md for the full ports-and-adapters design and fake adapter stra
 The Go backend must handle:
 
 - User authentication and session management
-- 18+ age verification at sign-up (see section 11.2)
-- Geo-blocking check on sign-up and on image generation requests (see section 11.2)
 - Project management
 - Script uploads
 - Chapter management
@@ -819,8 +817,6 @@ The initial database must contain the following tables.
 - id (UUID)
 - email
 - password_hash
-- date_of_birth (required; used for 18+ verification)
-- country_code (required; used for geo-blocking check)
 - plan_id (FK to plans; extension point for paywall)
 - created_at
 - updated_at
@@ -1081,14 +1077,10 @@ The system must:
 
 The system must not allow users to access another user's project, jobs, or credit usage.
 
-### 11.2 Age Verification and Geo-Blocking
+### 11.2 Age Verification and Geo-Blocking (Deferred)
 
-Meta's terms of service require:
-
-- All end users must be 18 years of age or older. The system must collect date of birth at sign-up and must not allow users under 18 to create an account or use any AI generation feature.
-- `muse-image-1.0` may not be used from India or offered to users located in India. The system must block image generation for users whose registered country is India and must not present the image generation feature to such users.
-
-The specific hosting and identity verification approaches are pending captain decisions. The requirement is that both blocks are enforced at the backend before any image generation job is created.
+- **Age gate (deferred):** Enforced age gating and date-of-birth blocking are removed from the build scope; a warning that users must be 18+ (the threshold may be 21, to be confirmed with the owner when added) will be introduced in a future release.
+- **Geo-blocking (deferred):** No India geo-block and no region restrictions are enforced, as the owner is in India and users can be global.
 
 ### 11.3 Hashed User ID
 
@@ -1175,7 +1167,6 @@ The first release must include:
 - Credit estimation per stage
 - User approval gates before each image generation stage
 - Per-user quotas and global kill switch
-- 18+ age gate and geo-blocking (India)
 - Comic book editor
 - PDF export with AI-generation disclosure and preserved provenance metadata
 - Download
@@ -1191,6 +1182,7 @@ The first release must not include:
 - Advanced animation
 - Mobile applications
 - Payment processor integration
+- Enforced age gate and geo-blocking (deferred)
 
 ---
 
@@ -1219,7 +1211,7 @@ The project is complete when:
 19. The user can undo fill actions on the page canvas.
 20. The system records credit usage for every image generation job.
 21. The system enforces per-user quotas and the global kill switch.
-22. The system enforces the 18+ age gate and geo-block for India.
+22. Age warning (18+/21+) and geo-blocking are deferred; no regional restriction or date-of-birth gate is enforced.
 23. The system exports a PDF with AI-generation disclosure and provenance metadata preserved.
 24. The user can download the PDF.
 25. The system uses Meta models only.
@@ -1342,7 +1334,8 @@ The user can edit the complete comic book and download a PDF.
 - Pre-moderate all prompts before dispatching to AI.
 - Preserve Meta provenance metadata through export.
 - Include the hashed user ID on every image API call.
-- Enforce the 18+ age gate and India geo-block at the backend.
+- Meta API keys come only after the whole project is built on fakes, with the Meta adapters inert behind the ports.
+- Delivery uses direct-PR with GitHub Actions CI and no external validation pipeline.
 - The paint-bucket fill tool must work without any API call.
 
 ## 17. Definition of Done
