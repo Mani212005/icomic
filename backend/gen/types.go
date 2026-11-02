@@ -7,8 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
+
+// AIService defines the interface for communicating with the AI service (SPEC 8, ARCHITECTURE 4.4).
+type AIService interface {
+	AnalyzeScript(ctx context.Context, req AnalyzeScriptRequest) (*AnalyzeScriptResponse, error)
+	ModeratePrompt(ctx context.Context, req ModeratePromptRequest) (*ModeratePromptResponse, error)
+	GenerateCharacterReference(ctx context.Context, req GenerateCharacterReferenceRequest) (*GenerateCharacterReferenceResponse, error)
+	GenerateChapterOutline(ctx context.Context, req GenerateChapterOutlineRequest) (*GenerateChapterOutlineResponse, error)
+	GeneratePanelText(ctx context.Context, req GeneratePanelTextRequest) (*GeneratePanelTextResponse, error)
+	GenerateDraftSketch(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error)
+	GenerateLineArt(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error)
+	SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
+	AssemblePdf(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
+	GetJobStatus(ctx context.Context, jobID string) (*JobStatusResponse, error)
+}
 
 // CharacterProfile corresponds to CharacterProfile in OpenAPI.
 type CharacterProfile struct {
@@ -371,4 +386,228 @@ func (c *AIServiceClient) GetJobStatus(ctx context.Context, jobID string) (*JobS
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	return &statusResp, nil
+}
+
+// Ensure *AIServiceClient implements AIService
+var _ AIService = (*AIServiceClient)(nil)
+
+// FakeAIServiceClient provides deterministic fake responses for hermetic unit tests.
+type FakeAIServiceClient struct {
+	AnalyzeScriptFunc              func(ctx context.Context, req AnalyzeScriptRequest) (*AnalyzeScriptResponse, error)
+	ModeratePromptFunc             func(ctx context.Context, req ModeratePromptRequest) (*ModeratePromptResponse, error)
+	GenerateCharacterReferenceFunc func(ctx context.Context, req GenerateCharacterReferenceRequest) (*GenerateCharacterReferenceResponse, error)
+	GenerateChapterOutlineFunc     func(ctx context.Context, req GenerateChapterOutlineRequest) (*GenerateChapterOutlineResponse, error)
+	GeneratePanelTextFunc          func(ctx context.Context, req GeneratePanelTextRequest) (*GeneratePanelTextResponse, error)
+	GenerateDraftSketchFunc        func(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error)
+	GenerateLineArtFunc            func(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error)
+	SuggestColourPaletteFunc       func(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
+	AssemblePdfFunc                func(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
+	GetJobStatusFunc               func(ctx context.Context, jobID string) (*JobStatusResponse, error)
+}
+
+// Ensure *FakeAIServiceClient implements AIService
+var _ AIService = (*FakeAIServiceClient)(nil)
+
+func NewFakeAIServiceClient() *FakeAIServiceClient {
+	return &FakeAIServiceClient{}
+}
+
+func (f *FakeAIServiceClient) AnalyzeScript(ctx context.Context, req AnalyzeScriptRequest) (*AnalyzeScriptResponse, error) {
+	if f.AnalyzeScriptFunc != nil {
+		return f.AnalyzeScriptFunc(ctx, req)
+	}
+	chapterCount := 3
+	if req.TargetChapterCount != nil && *req.TargetChapterCount > 0 {
+		chapterCount = *req.TargetChapterCount
+	}
+	wordCount := len(strings.Fields(req.Script))
+	if wordCount == 0 {
+		wordCount = 100
+	}
+	return &AnalyzeScriptResponse{
+		JobID: req.JobID,
+		CharacterProfiles: []CharacterProfile{
+			{
+				Name:             "Maya",
+				Description:      "A daring young comic artist exploring uncharted space",
+				AgeRange:         "20-25",
+				Appearance:       "Athletic build, short teal pixie cut",
+				HairStyle:        "Short teal pixie",
+				Clothing:         "Leather jacket and utility trousers",
+				Personality:      "Curious, brave, resourceful",
+				VisualAttributes: map[string]interface{}{"jacket": "leather", "hair": "teal"},
+			},
+			{
+				Name:             "Leo",
+				Description:      "A loyal robot navigator",
+				AgeRange:         "Ageless",
+				Appearance:       "Compact metallic frame with expressive amber optics",
+				HairStyle:        "None",
+				Clothing:         "Chassis with carbon plating",
+				Personality:      "Analytical, protective, dry wit",
+				VisualAttributes: map[string]interface{}{"optics": "amber"},
+			},
+		},
+		SuggestedChapterCount: chapterCount,
+		WordCount:             wordCount,
+		Warnings:              []string{},
+	}, nil
+}
+
+func (f *FakeAIServiceClient) ModeratePrompt(ctx context.Context, req ModeratePromptRequest) (*ModeratePromptResponse, error) {
+	if f.ModeratePromptFunc != nil {
+		return f.ModeratePromptFunc(ctx, req)
+	}
+	lower := strings.ToLower(req.Prompt)
+	blockedKeywords := []string{"illegal", "extreme violence", "banned", "hate"}
+	for _, kw := range blockedKeywords {
+		if strings.Contains(lower, kw) {
+			reason := fmt.Sprintf("content policy violation: prompt contains %q", kw)
+			return &ModeratePromptResponse{
+				JobID:   req.JobID,
+				Blocked: true,
+				Reason:  &reason,
+			}, nil
+		}
+	}
+	return &ModeratePromptResponse{
+		JobID:   req.JobID,
+		Blocked: false,
+	}, nil
+}
+
+func (f *FakeAIServiceClient) GenerateCharacterReference(ctx context.Context, req GenerateCharacterReferenceRequest) (*GenerateCharacterReferenceResponse, error) {
+	if f.GenerateCharacterReferenceFunc != nil {
+		return f.GenerateCharacterReferenceFunc(ctx, req)
+	}
+	return &GenerateCharacterReferenceResponse{
+		JobID:    req.JobID,
+		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/characters/%s.png", req.CharacterID),
+		ModelID:  "muse-image-1.0-fake",
+		ProvenanceMetadata: map[string]interface{}{
+			"c2pa": map[string]interface{}{
+				"watermark_present": true,
+			},
+		},
+	}, nil
+}
+
+func (f *FakeAIServiceClient) GenerateChapterOutline(ctx context.Context, req GenerateChapterOutlineRequest) (*GenerateChapterOutlineResponse, error) {
+	if f.GenerateChapterOutlineFunc != nil {
+		return f.GenerateChapterOutlineFunc(ctx, req)
+	}
+	count := req.ChapterCount
+	if count <= 0 {
+		count = 2
+	}
+	var chapters []ChapterOutlineItem
+	for i := 1; i <= count; i++ {
+		chapters = append(chapters, ChapterOutlineItem{
+			ChapterNumber:   i,
+			Title:           fmt.Sprintf("Chapter %d: The Journey Begins", i),
+			Summary:         fmt.Sprintf("Summary of events for chapter %d.", i),
+			ImportantEvents: []string{fmt.Sprintf("Event A in chapter %d", i), fmt.Sprintf("Event B in chapter %d", i)},
+			CharacterNames:  []string{"Maya", "Leo"},
+			Ending:          fmt.Sprintf("Cliffhanger at the end of chapter %d", i),
+		})
+	}
+	return &GenerateChapterOutlineResponse{
+		JobID:    req.JobID,
+		Chapters: chapters,
+	}, nil
+}
+
+func (f *FakeAIServiceClient) GeneratePanelText(ctx context.Context, req GeneratePanelTextRequest) (*GeneratePanelTextResponse, error) {
+	if f.GeneratePanelTextFunc != nil {
+		return f.GeneratePanelTextFunc(ctx, req)
+	}
+	var panels []PanelTextItem
+	for i := 1; i <= 4; i++ {
+		panels = append(panels, PanelTextItem{
+			PanelNumber:      i,
+			SceneDescription: fmt.Sprintf("Panel %d: Scene description for chapter %d", i, req.ChapterNumber),
+			CharacterActions: fmt.Sprintf("Maya inspects the control panel in panel %d", i),
+			CameraAngle:      "Medium shot",
+			Background:       "Sci-fi spaceship interior",
+			Dialogue:         fmt.Sprintf("Dialogue line for panel %d", i),
+			Narration:        fmt.Sprintf("Narration caption for panel %d", i),
+			ImagePrompt:      fmt.Sprintf("Comic illustration of sci-fi scene panel %d", i),
+		})
+	}
+	return &GeneratePanelTextResponse{
+		JobID:  req.JobID,
+		Panels: panels,
+	}, nil
+}
+
+func (f *FakeAIServiceClient) GenerateDraftSketch(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error) {
+	if f.GenerateDraftSketchFunc != nil {
+		return f.GenerateDraftSketchFunc(ctx, req)
+	}
+	return &GenerateDraftSketchResponse{
+		JobID:    req.JobID,
+		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/drafts/page_%s.png", req.PageID),
+		ModelID:  "muse-image-1.0-fake",
+		ProvenanceMetadata: map[string]interface{}{
+			"c2pa": map[string]interface{}{
+				"watermark_present": true,
+			},
+		},
+	}, nil
+}
+
+func (f *FakeAIServiceClient) GenerateLineArt(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error) {
+	if f.GenerateLineArtFunc != nil {
+		return f.GenerateLineArtFunc(ctx, req)
+	}
+	return &GenerateLineArtResponse{
+		JobID:    req.JobID,
+		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/lineart/page_%s.png", req.PageID),
+		ModelID:  "muse-image-1.0-fake",
+		ProvenanceMetadata: map[string]interface{}{
+			"c2pa": map[string]interface{}{
+				"watermark_present": true,
+			},
+		},
+	}, nil
+}
+
+func (f *FakeAIServiceClient) SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error) {
+	if f.SuggestColourPaletteFunc != nil {
+		return f.SuggestColourPaletteFunc(ctx, req)
+	}
+	return &SuggestColourPaletteResponse{
+		JobID: req.JobID,
+		Theme: "Cyberpunk Neon",
+		Palette: []ColourRegionSuggestion{
+			{RegionName: "background", HexColor: "#1A0B2E", Label: "Deep Space Violet"},
+			{RegionName: "skin", HexColor: "#F5D0C5", Label: "Warm Fair Skin"},
+			{RegionName: "hair", HexColor: "#00CED1", Label: "Vibrant Cyan"},
+		},
+	}, nil
+}
+
+func (f *FakeAIServiceClient) AssemblePdf(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error) {
+	if f.AssemblePdfFunc != nil {
+		return f.AssemblePdfFunc(ctx, req)
+	}
+	pageCount := len(req.Pages) + 1 // 1 cover page + N comic pages
+	return &AssemblePdfResponse{
+		JobID:                       req.JobID,
+		PdfURL:                      fmt.Sprintf("http://localhost:8000/storage/fake/exports/%s/comic.pdf", req.ProjectID),
+		ProvenanceMetadataPreserved: true,
+		PageCount:                   pageCount,
+	}, nil
+}
+
+func (f *FakeAIServiceClient) GetJobStatus(ctx context.Context, jobID string) (*JobStatusResponse, error) {
+	if f.GetJobStatusFunc != nil {
+		return f.GetJobStatusFunc(ctx, jobID)
+	}
+	cost := 0.01
+	return &JobStatusResponse{
+		JobID:      jobID,
+		Status:     "done",
+		ActualCost: &cost,
+	}, nil
 }

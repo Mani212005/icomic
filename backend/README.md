@@ -18,14 +18,19 @@ Go API service for Icomic (docs/ARCHITECTURE.md section 7).
   - Concurrency guard preventing duplicate in-flight jobs.
   - Hashed user IDs (SHA-256) attached to external model calls per Meta API terms.
 - **Authentication & Security**:
-  - User registration (`POST /api/v1/auth/signup`) and session login (`POST /api/v1/auth/login`).
-  - Bearer token authentication middleware with strict ownership verification. Client-supplied headers (e.g. `X-User-ID`) are never trusted unless dev mode is explicitly enabled.
+  - Pluggable `auth.Authenticator` architecture with `BearerTokenAuthenticator` (bearer token authentication middleware with strict ownership verification) and `DevAuthenticator` (development mode header-based authentication, enabled only when `DEV_AUTH_ENABLED=true`).
+  - Strict resource ownership checks across all project, chapter, character, panel, page, and export endpoints.
 - **Pluggable Policy Seams for Captain Decisions**:
-  - Image Hosting (`auth.ImageHostingSeam`): Configurable media resolver (`/media` default). Documented `TODO(captain)`.
-- **AI Service Integration via Port**:
-  - `ai.AIServicePort` interface conforming to `contracts/openapi/ai-service.yaml`.
-  - `ai.FakeAIServiceClient` provides deterministic, hermetic fake responses for unit testing with no network access and no API key.
-  - `ai.NewHTTPClient` connects to the internal Python FastAPI service in production.
+  - Image Hosting (`auth.ImageHostingSeam`): Pluggable media resolver with `/media` serving or proxying route (`DefaultImageHosting`). Documented `TODO(captain)`.
+- **CORS Middleware**:
+  - Configurable allowed origin (`CORS_ALLOWED_ORIGIN`, defaulting to Svelte development server `http://localhost:5173`), handling preflight `OPTIONS` and credential headers.
+- **Prompt Pre-Moderation**:
+  - All user-derived prompts (scripts, character descriptions, panel text) pre-screened via `ModeratePrompt` before model dispatch.
+  - Optional moderation endpoint: `POST /api/v1/prompts/moderate`.
+- **AI Service Integration via Typed Client**:
+  - `gen.AIService` interface conforming to all 10 endpoints of `contracts/openapi/ai-service.yaml`.
+  - `gen.AIServiceClient` connects to the internal Python FastAPI service via `PYTHON_AI_URL`.
+  - `gen.FakeAIServiceClient` provides deterministic, hermetic fake responses for unit testing with no network access and no API key.
 
 ## Running Locally
 

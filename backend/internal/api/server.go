@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"os"
 	"time"
 
 	"icomic/backend/gen"
@@ -17,20 +18,21 @@ type Server struct {
 	Repo              db.Repository
 	CreditService     credits.CreditService
 	JobService        jobs.JobService
-	AIClient          *gen.AIServiceClient
+	AIClient          gen.AIService
 	Authenticator     auth.Authenticator
 	ImageHosting      auth.ImageHostingSeam
 	KillSwitchEnabled bool
 	KillSwitch        domain.KillSwitchProvider
 	MaxPanelsPerPage  int
 	DefaultUserQuota  float64
+	AllowedOrigin     string
 }
 
 func NewServer(
 	repo db.Repository,
 	creditService credits.CreditService,
 	jobService jobs.JobService,
-	aiClient *gen.AIServiceClient,
+	aiClient gen.AIService,
 	authenticator auth.Authenticator,
 	imageHosting auth.ImageHostingSeam,
 	maxPanelsPerPage int,
@@ -44,6 +46,14 @@ func NewServer(
 	if imageHosting == nil {
 		imageHosting = auth.NewDefaultImageHosting("/media")
 	}
+	if aiClient == nil {
+		aiClient = gen.NewFakeAIServiceClient()
+	}
+
+	allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")
+	if allowedOrigin == "" {
+		allowedOrigin = "http://localhost:5173"
+	}
 
 	return &Server{
 		Repo:              repo,
@@ -56,6 +66,7 @@ func NewServer(
 		KillSwitch:        domain.NewInMemoryKillSwitchProvider(false, 0),
 		MaxPanelsPerPage:  maxPanelsPerPage,
 		DefaultUserQuota:  25.0,
+		AllowedOrigin:     allowedOrigin,
 	}
 }
 

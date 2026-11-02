@@ -2,9 +2,56 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"icomic/backend/internal/auth"
 )
+
+// corsMiddleware adds CORS headers with configurable allowed origin (SPEC 12, ARCHITECTURE 2).
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allowedOrigin := s.AllowedOrigin
+		if allowedOrigin == "" {
+			allowedOrigin = "http://localhost:5173"
+		}
+
+		origin := r.Header.Get("Origin")
+		var allowHeader string
+		if allowedOrigin == "*" {
+			allowHeader = "*"
+		} else if origin != "" {
+			origins := strings.Split(allowedOrigin, ",")
+			for _, o := range origins {
+				if strings.TrimSpace(o) == origin {
+					allowHeader = origin
+					break
+				}
+			}
+			if allowHeader == "" && len(origins) == 1 && origins[0] == allowedOrigin {
+				allowHeader = allowedOrigin
+			}
+		} else {
+			allowHeader = allowedOrigin
+		}
+
+		if allowHeader != "" {
+			w.Header().Set("Access-Control-Allow-Origin", allowHeader)
+			if allowHeader != "*" {
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-User-ID, Idempotency-Key")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
 
 // authMiddleware enforces authentication using the configured Authenticator.
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -26,6 +73,10 @@ func (s *Server) NewRouter() http.Handler {
 	// Health
 	mux.HandleFunc("GET /healthz", s.HealthCheck)
 	mux.HandleFunc("GET /internal/health", s.HealthCheck)
+
+	// Media (serves or proxies stored media per ImageHostingSeam)
+	mux.HandleFunc("GET /media/{path...}", s.ServeMedia)
+	mux.HandleFunc("GET /media", s.ServeMedia)
 
 	// Projects
 	mux.HandleFunc("POST /api/v1/projects", s.authMiddleware(s.CreateProject))
@@ -79,5 +130,8 @@ func (s *Server) NewRouter() http.Handler {
 	mux.HandleFunc("GET /api/v1/exports/{id}", s.authMiddleware(s.GetExport))
 	mux.HandleFunc("GET /api/v1/exports/{id}/download", s.authMiddleware(s.DownloadExport))
 
-	return mux
+	// Prompt Moderation
+	mux.HandleFunc("POST /api/v1/prompts/moderate", s.authMiddleware(s.ModeratePromptHandler))
+
+	return s.corsMiddleware(mux)
 }

@@ -94,6 +94,22 @@ jobs:
           cd backend
           go vet ./...
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "ai/uv.lock"
+
+      - name: Set up Python for Boundary Contract Tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install AI Service Dependencies for Boundary Contract Tests
+        run: |
+          cd ai
+          uv sync --locked
+
       - name: Run Hermetic Unit & Contract Tests
         run: |
           cd backend
