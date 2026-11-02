@@ -3,11 +3,15 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"icomic/backend/gen"
 	"icomic/backend/internal/auth"
 	"icomic/backend/internal/credits"
 	"icomic/backend/internal/domain"
@@ -33,6 +37,122 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 func (s *Server) getUserID(r *http.Request) string {
 	return auth.UserIDFromContext(r.Context())
+}
+
+// checkPromptModeration screens a prompt with the AI service before dispatch (SPEC 4.5).
+func (s *Server) checkPromptModeration(r *http.Request, prompt string, hashedUID string) (bool, string, error) {
+	if s.AIClient == nil || strings.TrimSpace(prompt) == "" {
+		return false, "", nil
+	}
+	resp, err := s.AIClient.ModeratePrompt(r.Context(), gen.ModeratePromptRequest{
+		JobID:        uuid.NewString(),
+		HashedUserID: hashedUID,
+		Prompt:       prompt,
+	})
+	if err != nil {
+		return false, "", err
+	}
+	if resp.Blocked {
+		reason := "Prompt blocked by content moderation policy"
+		if resp.Reason != nil && *resp.Reason != "" {
+			reason = fmt.Sprintf("Prompt blocked by content moderation: %s", *resp.Reason)
+		}
+		return true, reason, nil
+	}
+	return false, "", nil
+}
+
+// ModeratePromptHandler handles POST /api/v1/prompts/moderate
+func (s *Server) ModeratePromptHandler(w http.ResponseWriter, r *http.Request) {
+	userID := s.getUserID(r)
+	var body struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	hashedUID := domain.HashUserID(userID)
+	blocked, reason, err := s.checkPromptModeration(r, body.Prompt, hashedUID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Moderation check failed: %v", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"blocked": blocked,
+		"reason":  reason,
+	})
+}
+
+// ServeMedia handles GET /media/{path...} serving or proxying media per ImageHostingSeam (SPEC 1.4, ARCHITECTURE 9).
+func (s *Server) ServeMedia(w http.ResponseWriter, r *http.Request) {
+	subPath := r.PathValue("path")
+	if subPath == "" {
+		subPath = strings.TrimPrefix(r.URL.Path, "/media/")
+		subPath = strings.TrimPrefix(subPath, "/media")
+	}
+	subPath = strings.TrimPrefix(subPath, "/")
+	if subPath == "" {
+		writeError(w, http.StatusBadRequest, "Media path required")
+		return
+	}
+
+	resolved := s.ImageHosting.ResolveURL(subPath)
+
+	// Proxy if resolved URL is HTTP/HTTPS
+	if strings.HasPrefix(resolved, "http://") || strings.HasPrefix(resolved, "https://") {
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, resolved, nil)
+		if err == nil {
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				for k, v := range resp.Header {
+					for _, val := range v {
+						w.Header().Add(k, val)
+					}
+				}
+				w.WriteHeader(resp.StatusCode)
+				_, _ = io.Copy(w, resp.Body)
+				return
+			}
+		}
+	}
+
+	// Check local filesystem
+	mediaDir := os.Getenv("MEDIA_DIR")
+	if mediaDir == "" {
+		mediaDir = "./media"
+	}
+	cleanRel := filepath.Clean("/" + subPath)
+	localPath := filepath.Join(mediaDir, cleanRel)
+	if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
+		http.ServeFile(w, r, localPath)
+		return
+	}
+
+	// Proxy to Python fake storage if AI client has BaseURL
+	if s.AIClient != nil {
+		if client, ok := s.AIClient.(*gen.AIServiceClient); ok && client.BaseURL != "" {
+			targetURL := strings.TrimRight(client.BaseURL, "/") + "/storage/fake/" + subPath
+			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
+			if err == nil {
+				resp, err := http.DefaultClient.Do(req)
+				if err == nil && resp.StatusCode == http.StatusOK {
+					defer resp.Body.Close()
+					for k, v := range resp.Header {
+						for _, val := range v {
+							w.Header().Add(k, val)
+						}
+					}
+					w.WriteHeader(resp.StatusCode)
+					_, _ = io.Copy(w, resp.Body)
+					return
+				}
+			}
+		}
+	}
+
+	writeError(w, http.StatusNotFound, "Media not found")
 }
 
 // HealthCheck handles GET /healthz and GET /internal/health
@@ -326,9 +446,41 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	idempKey := uuid.NewString()
+	var body struct {
+		Prompt string `json:"prompt"`
+		Style  string `json:"style"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	prompt := body.Prompt
+	if prompt == "" {
+		prompt = ch.Description
+	}
+	if prompt == "" {
+		prompt = ch.Name
+	}
+	style := body.Style
+	if style == "" {
+		style = proj.ArtStyle
+	}
+	if style == "" {
+		style = "classic-comic"
+	}
+
 	hashedUID := domain.HashUserID(userID)
 
+	// Pre-moderation
+	blocked, reason, err := s.checkPromptModeration(r, prompt, hashedUID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		return
+	}
+	if blocked {
+		writeError(w, http.StatusBadRequest, reason)
+		return
+	}
+
+	idempKey := uuid.NewString()
 	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		ProjectID:      proj.ID,
 		UserID:         userID,
@@ -345,15 +497,54 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Debit credit ledger
-	_, _ = s.CreditService.Debit(r.Context(), credits.DebitRequest{
+	_, err = s.CreditService.Debit(r.Context(), credits.DebitRequest{
 		UserID:          userID,
 		ProjectID:       proj.ID,
 		GenerationJobID: job.ID,
 		Amount:          credits.ImageUnitPrice,
 	})
+	if err != nil {
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusPaymentRequired, fmt.Sprintf("Debit failed: %v", err))
+		return
+	}
 
-	// Dispatch to AI service if client available
-	imgURL := s.ImageHosting.ResolveURL(fmt.Sprintf("characters/%s.png", ch.ID))
+	if s.AIClient == nil {
+		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
+			UserID:          userID,
+			ProjectID:       proj.ID,
+			GenerationJobID: job.ID,
+			Amount:          credits.ImageUnitPrice,
+		})
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
+	}
+
+	refResp, err := s.AIClient.GenerateCharacterReference(r.Context(), gen.GenerateCharacterReferenceRequest{
+		JobID:           job.ID,
+		HashedUserID:    hashedUID,
+		ProjectID:       proj.ID,
+		CharacterID:     ch.ID,
+		CharacterName:   ch.Name,
+		Prompt:          prompt,
+		ReferenceImages: nil,
+		Style:           style,
+	})
+	if err != nil {
+		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
+			UserID:          userID,
+			ProjectID:       proj.ID,
+			GenerationJobID: job.ID,
+			Amount:          credits.ImageUnitPrice,
+		})
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Character reference generation failed: %v", err))
+		return
+	}
+
+	imgURL := s.ImageHosting.ResolveURL(refResp.ImageURL)
 	now := time.Now().UTC()
 	actualCost := credits.ImageUnitPrice
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
@@ -418,31 +609,100 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Seed or generate character profiles
-	chars := []*domain.Character{
-		{
-			ID:               uuid.NewString(),
-			ProjectID:        proj.ID,
-			Name:             "Maya",
-			Description:      "A daring young comic artist exploring uncharted space",
-			VisualAttributes: map[string]interface{}{"jacket": "leather"},
-			UpdatedAt:        time.Now().UTC(),
-		},
-		{
-			ID:               uuid.NewString(),
-			ProjectID:        proj.ID,
-			Name:             "Leo",
-			Description:      "A loyal robot navigator",
-			VisualAttributes: map[string]interface{}{"optics": "amber"},
-			UpdatedAt:        time.Now().UTC(),
-		},
-	}
-	for _, ch := range chars {
-		_ = s.Repo.CreateCharacter(r.Context(), ch)
+	if s.AIClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
 	}
 
+	hashedUID := domain.HashUserID(userID)
+
+	// Pre-moderation
+	blocked, reason, err := s.checkPromptModeration(r, proj.OriginalScript, hashedUID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		return
+	}
+	if blocked {
+		writeError(w, http.StatusBadRequest, reason)
+		return
+	}
+
+	idempKey := uuid.NewString()
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		ProjectID:      proj.ID,
+		UserID:         userID,
+		JobType:        "script_analysis",
+		Stage:          "script",
+		ModelID:        "meta-llama-3.1-8b-instruct",
+		IdempotencyKey: idempKey,
+		EstimatedCost:  0.0,
+		HashedUserID:   hashedUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	targetChapters := proj.ChapterCount
+	aiResp, err := s.AIClient.AnalyzeScript(r.Context(), gen.AnalyzeScriptRequest{
+		JobID:              job.ID,
+		HashedUserID:       hashedUID,
+		ProjectID:          proj.ID,
+		Script:             proj.OriginalScript,
+		TargetChapterCount: &targetChapters,
+	})
+	if err != nil {
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("AI script analysis failed: %v", err))
+		return
+	}
+
+	now := time.Now().UTC()
+	var chars []*domain.Character
+	for _, p := range aiResp.CharacterProfiles {
+		visualAttrs := p.VisualAttributes
+		if visualAttrs == nil {
+			visualAttrs = make(map[string]interface{})
+		}
+		if p.AgeRange != "" {
+			visualAttrs["age_range"] = p.AgeRange
+		}
+		if p.Appearance != "" {
+			visualAttrs["appearance"] = p.Appearance
+		}
+		if p.HairStyle != "" {
+			visualAttrs["hair_style"] = p.HairStyle
+		}
+		if p.Clothing != "" {
+			visualAttrs["clothing"] = p.Clothing
+		}
+		if p.Personality != "" {
+			visualAttrs["personality"] = p.Personality
+		}
+
+		ch := &domain.Character{
+			ID:               uuid.NewString(),
+			ProjectID:        proj.ID,
+			Name:             p.Name,
+			Description:      p.Description,
+			VisualAttributes: visualAttrs,
+			UpdatedAt:        now,
+		}
+		_ = s.Repo.CreateCharacter(r.Context(), ch)
+		chars = append(chars, ch)
+	}
+
+	if aiResp.SuggestedChapterCount > 0 && proj.ChapterCount <= 0 {
+		proj.ChapterCount = aiResp.SuggestedChapterCount
+		_ = s.Repo.UpdateProject(r.Context(), proj)
+	}
+
+	actualCost := 0.0
+	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
+
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
-		"job_id":             uuid.NewString(),
+		"job_id":             job.ID,
 		"character_profiles": chars,
 		"chapter_count":      proj.ChapterCount,
 	})
@@ -468,19 +728,100 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if s.AIClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
+	}
+
+	hashedUID := domain.HashUserID(userID)
+
+	// Pre-moderation
+	blocked, reason, err := s.checkPromptModeration(r, proj.OriginalScript, hashedUID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		return
+	}
+	if blocked {
+		writeError(w, http.StatusBadRequest, reason)
+		return
+	}
+
+	idempKey := uuid.NewString()
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		ProjectID:      proj.ID,
+		UserID:         userID,
+		JobType:        "chapter_outline",
+		Stage:          "outline",
+		ModelID:        "meta-llama-3.1-8b-instruct",
+		IdempotencyKey: idempKey,
+		EstimatedCost:  0.0,
+		HashedUserID:   hashedUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var approvedProfiles []gen.CharacterProfile
+	for _, ch := range chars {
+		visAttrs := ch.VisualAttributes
+		if visAttrs == nil {
+			visAttrs = make(map[string]interface{})
+		}
+		ageRange, _ := visAttrs["age_range"].(string)
+		appearance, _ := visAttrs["appearance"].(string)
+		hairStyle, _ := visAttrs["hair_style"].(string)
+		clothing, _ := visAttrs["clothing"].(string)
+		personality, _ := visAttrs["personality"].(string)
+
+		approvedProfiles = append(approvedProfiles, gen.CharacterProfile{
+			Name:             ch.Name,
+			Description:      ch.Description,
+			AgeRange:         ageRange,
+			Appearance:       appearance,
+			HairStyle:        hairStyle,
+			Clothing:         clothing,
+			Personality:      personality,
+			VisualAttributes: visAttrs,
+		})
+	}
+
+	chapCount := proj.ChapterCount
+	if chapCount <= 0 {
+		chapCount = 2
+	}
+
+	outlineResp, err := s.AIClient.GenerateChapterOutline(r.Context(), gen.GenerateChapterOutlineRequest{
+		JobID:              job.ID,
+		HashedUserID:       hashedUID,
+		ProjectID:          proj.ID,
+		Script:             proj.OriginalScript,
+		ChapterCount:       chapCount,
+		ApprovedCharacters: approvedProfiles,
+	})
+	if err != nil {
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Chapter outline generation failed: %v", err))
+		return
+	}
+
 	var createdChapters []*domain.Chapter
-	for i := 1; i <= proj.ChapterCount; i++ {
+	for _, cItem := range outlineResp.Chapters {
 		chap := &domain.Chapter{
 			ID:            uuid.NewString(),
 			ProjectID:     proj.ID,
-			ChapterNumber: i,
-			Title:         fmt.Sprintf("Chapter %d: The Odyssey", i),
-			Summary:       fmt.Sprintf("The heroes venture into sector %d.", i),
+			ChapterNumber: cItem.ChapterNumber,
+			Title:         cItem.Title,
+			Summary:       cItem.Summary,
 			Status:        "pending",
 		}
 		_ = s.Repo.CreateChapter(r.Context(), chap)
 		createdChapters = append(createdChapters, chap)
 	}
+
+	actualCost := 0.0
+	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"chapters": createdChapters})
 }
@@ -600,17 +941,73 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate 4 panels
+	if s.AIClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
+	}
+
+	hashedUID := domain.HashUserID(userID)
+
+	// Pre-moderation
+	blocked, reason, err := s.checkPromptModeration(r, c.Summary+" "+c.Title, hashedUID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		return
+	}
+	if blocked {
+		writeError(w, http.StatusBadRequest, reason)
+		return
+	}
+
+	idempKey := uuid.NewString()
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		ProjectID:      proj.ID,
+		UserID:         userID,
+		JobType:        "panel_text",
+		Stage:          "panels",
+		ModelID:        "meta-llama-3.1-8b-instruct",
+		IdempotencyKey: idempKey,
+		EstimatedCost:  0.0,
+		HashedUserID:   hashedUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
+	var charNames []string
+	for _, ch := range chars {
+		charNames = append(charNames, ch.Name)
+	}
+
+	panelResp, err := s.AIClient.GeneratePanelText(r.Context(), gen.GeneratePanelTextRequest{
+		JobID:          job.ID,
+		HashedUserID:   hashedUID,
+		ProjectID:      proj.ID,
+		ChapterID:      c.ID,
+		ChapterNumber:  c.ChapterNumber,
+		ChapterTitle:   c.Title,
+		ChapterSummary: c.Summary,
+		Characters:     charNames,
+	})
+	if err != nil {
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Panel text generation failed: %v", err))
+		return
+	}
+
 	var pids []string
 	var panels []*domain.Panel
 	now := time.Now().UTC()
-	for i := 1; i <= 4; i++ {
+	for _, pItem := range panelResp.Panels {
 		p := &domain.Panel{
 			ID:               uuid.NewString(),
 			ChapterID:        c.ID,
-			PanelNumber:      i,
-			SceneDescription: fmt.Sprintf("Scene description for panel %d", i),
-			Dialogue:         fmt.Sprintf("Dialogue in panel %d", i),
+			PanelNumber:      pItem.PanelNumber,
+			SceneDescription: pItem.SceneDescription,
+			Dialogue:         pItem.Dialogue,
 			Status:           "ready",
 			UpdatedAt:        now,
 		}
@@ -643,6 +1040,9 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		pages = append(pages, pg)
 		pageNum++
 	}
+
+	actualCost := 0.0
+	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"panels": panels,
@@ -808,10 +1208,14 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	// Prerequisite approval check: character references & chapter outline (ARCHITECTURE 5.3)
 	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
 	allCharsApproved := len(chars) > 0
+	var charImageURLs []string
 	for _, ch := range chars {
 		if ch.ApprovedAt == nil || domain.IsApprovalStale(ch.ApprovedAt, ch.UpdatedAt) {
 			allCharsApproved = false
 			break
+		}
+		if ch.ReferenceImageURL != "" {
+			charImageURLs = append(charImageURLs, ch.ReferenceImageURL)
 		}
 	}
 	outlineApp, _ := s.Repo.GetLatestApproval(r.Context(), "chapter_outline", c.ID)
@@ -827,10 +1231,52 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idempKey := uuid.NewString()
+	if s.AIClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
+	}
+
+	allPanels, _ := s.Repo.ListPanels(r.Context(), c.ID)
+	panelMap := make(map[string]*domain.Panel)
+	for _, p := range allPanels {
+		panelMap[p.ID] = p
+	}
+
+	var panelItems []gen.PanelTextItem
+	var combinedText []string
+	for idx, pid := range pg.PanelIDs {
+		if p, ok := panelMap[pid]; ok {
+			panelItems = append(panelItems, gen.PanelTextItem{
+				PanelNumber:      p.PanelNumber,
+				SceneDescription: p.SceneDescription,
+				Dialogue:         p.Dialogue,
+				ImagePrompt:      p.SceneDescription,
+			})
+			combinedText = append(combinedText, p.SceneDescription, p.Dialogue)
+		} else {
+			panelItems = append(panelItems, gen.PanelTextItem{
+				PanelNumber:      idx + 1,
+				SceneDescription: fmt.Sprintf("Panel %d", idx+1),
+				ImagePrompt:      fmt.Sprintf("Panel %d", idx+1),
+			})
+		}
+	}
+
 	hashedUID := domain.HashUserID(userID)
 
-	job, _, _ := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+	// Pre-moderation
+	blocked, reason, err := s.checkPromptModeration(r, strings.Join(combinedText, " "), hashedUID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		return
+	}
+	if blocked {
+		writeError(w, http.StatusBadRequest, reason)
+		return
+	}
+
+	idempKey := uuid.NewString()
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		ProjectID:      proj.ID,
 		UserID:         userID,
 		JobType:        "draft_sketch",
@@ -840,15 +1286,53 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		EstimatedCost:  credits.ImageUnitPrice,
 		HashedUserID:   hashedUID,
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
-	_, _ = s.CreditService.Debit(r.Context(), credits.DebitRequest{
+	_, err = s.CreditService.Debit(r.Context(), credits.DebitRequest{
 		UserID:          userID,
 		ProjectID:       proj.ID,
 		GenerationJobID: job.ID,
 		Amount:          credits.ImageUnitPrice,
 	})
+	if err != nil {
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusPaymentRequired, fmt.Sprintf("Debit failed: %v", err))
+		return
+	}
 
-	imgURL := s.ImageHosting.ResolveURL(fmt.Sprintf("drafts/page_%s.png", pg.ID))
+	draftStyle := proj.ArtStyle
+	if draftStyle == "" {
+		draftStyle = "classic-comic"
+	}
+
+	draftResp, err := s.AIClient.GenerateDraftSketch(r.Context(), gen.GenerateDraftSketchRequest{
+		JobID:                       job.ID,
+		HashedUserID:                hashedUID,
+		ProjectID:                   proj.ID,
+		PageID:                      pg.ID,
+		PageNumber:                  pg.PageNumber,
+		Panels:                      panelItems,
+		Style:                       draftStyle,
+		CharacterReferenceImageURLs: charImageURLs,
+	})
+	if err != nil {
+		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
+			UserID:          userID,
+			ProjectID:       proj.ID,
+			GenerationJobID: job.ID,
+			Amount:          credits.ImageUnitPrice,
+		})
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Draft sketch generation failed: %v", err))
+		return
+	}
+
+	imgURL := s.ImageHosting.ResolveURL(draftResp.ImageURL)
 	now := time.Now().UTC()
 	actualCost := credits.ImageUnitPrice
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
@@ -938,10 +1422,47 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.AIClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
+	}
+
+	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
+	var charImageURLs []string
+	for _, ch := range chars {
+		if ch.ReferenceImageURL != "" {
+			charImageURLs = append(charImageURLs, ch.ReferenceImageURL)
+		}
+	}
+
+	allPanels, _ := s.Repo.ListPanels(r.Context(), c.ID)
+	panelMap := make(map[string]*domain.Panel)
+	for _, p := range allPanels {
+		panelMap[p.ID] = p
+	}
+
+	var panelItems []gen.PanelTextItem
+	for idx, pid := range pg.PanelIDs {
+		if p, ok := panelMap[pid]; ok {
+			panelItems = append(panelItems, gen.PanelTextItem{
+				PanelNumber:      p.PanelNumber,
+				SceneDescription: p.SceneDescription,
+				Dialogue:         p.Dialogue,
+				ImagePrompt:      p.SceneDescription,
+			})
+		} else {
+			panelItems = append(panelItems, gen.PanelTextItem{
+				PanelNumber:      idx + 1,
+				SceneDescription: fmt.Sprintf("Panel %d", idx+1),
+				ImagePrompt:      fmt.Sprintf("Panel %d", idx+1),
+			})
+		}
+	}
+
 	idempKey := uuid.NewString()
 	hashedUID := domain.HashUserID(userID)
 
-	job, _, _ := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		ProjectID:      proj.ID,
 		UserID:         userID,
 		JobType:        "final_line_art",
@@ -951,15 +1472,54 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		EstimatedCost:  credits.ImageUnitPrice,
 		HashedUserID:   hashedUID,
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
-	_, _ = s.CreditService.Debit(r.Context(), credits.DebitRequest{
+	_, err = s.CreditService.Debit(r.Context(), credits.DebitRequest{
 		UserID:          userID,
 		ProjectID:       proj.ID,
 		GenerationJobID: job.ID,
 		Amount:          credits.ImageUnitPrice,
 	})
+	if err != nil {
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusPaymentRequired, fmt.Sprintf("Debit failed: %v", err))
+		return
+	}
 
-	imgURL := s.ImageHosting.ResolveURL(fmt.Sprintf("lineart/page_%s.png", pg.ID))
+	lineArtStyle := proj.ArtStyle
+	if lineArtStyle == "" {
+		lineArtStyle = "classic-comic"
+	}
+
+	lineArtResp, err := s.AIClient.GenerateLineArt(r.Context(), gen.GenerateLineArtRequest{
+		JobID:                       job.ID,
+		HashedUserID:                hashedUID,
+		ProjectID:                   proj.ID,
+		PageID:                      pg.ID,
+		PageNumber:                  pg.PageNumber,
+		DraftImageURL:               pg.DraftImageURL,
+		Panels:                      panelItems,
+		Style:                       lineArtStyle,
+		CharacterReferenceImageURLs: charImageURLs,
+	})
+	if err != nil {
+		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
+			UserID:          userID,
+			ProjectID:       proj.ID,
+			GenerationJobID: job.ID,
+			Amount:          credits.ImageUnitPrice,
+		})
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Line art generation failed: %v", err))
+		return
+	}
+
+	imgURL := s.ImageHosting.ResolveURL(lineArtResp.ImageURL)
 	now := time.Now().UTC()
 	actualCost := credits.ImageUnitPrice
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
@@ -1063,17 +1623,87 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	palette := map[string]interface{}{
-		"background": "#1A0B2E",
-		"skin":       "#F5D0C5",
-		"hair":       "#00CED1",
+	if s.AIClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
 	}
-	_ = s.Repo.SaveColourPalette(r.Context(), &domain.ColourPalette{
-		PageID:  pageID,
-		Palette: palette,
+
+	idempKey := uuid.NewString()
+	hashedUID := domain.HashUserID(userID)
+
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		ProjectID:      proj.ID,
+		UserID:         userID,
+		JobType:        "colour_suggestion",
+		Stage:          "colour",
+		ModelID:        "meta-vision-colour",
+		IdempotencyKey: idempKey,
+		EstimatedCost:  credits.ColourSuggestionUnitPrice,
+		HashedUserID:   hashedUID,
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	_, err = s.CreditService.Debit(r.Context(), credits.DebitRequest{
+		UserID:          userID,
+		ProjectID:       proj.ID,
+		GenerationJobID: job.ID,
+		Amount:          credits.ColourSuggestionUnitPrice,
+	})
+	if err != nil {
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusPaymentRequired, fmt.Sprintf("Debit failed: %v", err))
+		return
+	}
+
+	lineArtURL := pg.LineArtImageURL
+	if lineArtURL == "" {
+		lineArtURL = pg.DraftImageURL
+	}
+	if lineArtURL == "" {
+		lineArtURL = fmt.Sprintf("lineart/page_%s.png", pg.ID)
+	}
+
+	palResp, err := s.AIClient.SuggestColourPalette(r.Context(), gen.SuggestColourPaletteRequest{
+		JobID:           job.ID,
+		HashedUserID:    hashedUID,
+		ProjectID:       proj.ID,
+		PageID:          pg.ID,
+		LineArtImageURL: lineArtURL,
+		PanelContext:    fmt.Sprintf("Page %d of chapter %d", pg.PageNumber, c.ChapterNumber),
+	})
+	if err != nil {
+		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
+			UserID:          userID,
+			ProjectID:       proj.ID,
+			GenerationJobID: job.ID,
+			Amount:          credits.ColourSuggestionUnitPrice,
+		})
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Colour palette suggestion failed: %v", err))
+		return
+	}
+
+	palette := make(map[string]interface{})
+	for _, item := range palResp.Palette {
+		palette[item.RegionName] = item.HexColor
+	}
+
+	_ = s.Repo.SaveColourPalette(r.Context(), &domain.ColourPalette{
+		PageID:          pageID,
+		SuggestionJobID: &job.ID,
+		Palette:         palette,
+	})
+
+	actualCost := credits.ColourSuggestionUnitPrice
+	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
+
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
-		"job_id":  uuid.NewString(),
+		"job_id":  job.ID,
 		"palette": palette,
 	})
 }
@@ -1210,16 +1840,87 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.AIClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
+	}
+
+	chapters, _ := s.Repo.ListChapters(r.Context(), proj.ID)
+	var exportPages []gen.PageExportItem
+	for _, ch := range chapters {
+		pages, _ := s.Repo.ListPages(r.Context(), ch.ID)
+		for _, pg := range pages {
+			imgURL := pg.LineArtImageURL
+			if imgURL == "" {
+				imgURL = pg.DraftImageURL
+			}
+			if imgURL == "" {
+				imgURL = fmt.Sprintf("pages/%s.png", pg.ID)
+			}
+			exportPages = append(exportPages, gen.PageExportItem{
+				PageNumber:         pg.PageNumber,
+				ImageURL:           imgURL,
+				PanelCount:         len(pg.PanelIDs),
+				ProvenanceMetadata: map[string]interface{}{"c2pa": true},
+			})
+		}
+	}
+	if len(exportPages) == 0 {
+		exportPages = append(exportPages, gen.PageExportItem{
+			PageNumber:         1,
+			ImageURL:           fmt.Sprintf("projects/%s/page_1.png", proj.ID),
+			PanelCount:         1,
+			ProvenanceMetadata: map[string]interface{}{"c2pa": true},
+		})
+	}
+
+	hashedUID := domain.HashUserID(userID)
+	idempKey := uuid.NewString()
+
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		ProjectID:      proj.ID,
+		UserID:         userID,
+		JobType:        "assemble_pdf",
+		Stage:          "export",
+		ModelID:        "pdf-assembler",
+		IdempotencyKey: idempKey,
+		EstimatedCost:  0.0,
+		HashedUserID:   hashedUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	pdfResp, err := s.AIClient.AssemblePdf(r.Context(), gen.AssemblePdfRequest{
+		JobID:               job.ID,
+		HashedUserID:        hashedUID,
+		ProjectID:           proj.ID,
+		Title:               proj.Title,
+		PageSize:            "A4",
+		IncludeAIDisclosure: true,
+		Pages:               exportPages,
+	})
+	if err != nil {
+		errMsg := err.Error()
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Assemble PDF failed: %v", err))
+		return
+	}
+
 	exp := &domain.Export{
 		ID:                          uuid.NewString(),
 		ProjectID:                   proj.ID,
-		FileURL:                     fmt.Sprintf("/exports/comic_%s.pdf", proj.ID),
+		FileURL:                     pdfResp.PdfURL,
 		Format:                      "pdf",
 		Status:                      "completed",
-		ProvenanceMetadataPreserved: true,
+		ProvenanceMetadataPreserved: pdfResp.ProvenanceMetadataPreserved,
 		CreatedAt:                   time.Now().UTC(),
 	}
 	_ = s.Repo.CreateExport(r.Context(), exp)
+
+	actualCost := 0.0
+	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{"export": exp})
 }
@@ -1261,7 +1962,56 @@ func (s *Server) DownloadExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fileURL := exp.FileURL
 	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"comic_%s.pdf\"", exp.ProjectID))
+
+	// If HTTP URL, proxy it
+	if strings.HasPrefix(fileURL, "http://") || strings.HasPrefix(fileURL, "https://") {
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, fileURL, nil)
+		if err == nil {
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.Copy(w, resp.Body)
+				return
+			}
+		}
+	}
+
+	// Local file
+	if strings.HasPrefix(fileURL, "/") {
+		mediaDir := os.Getenv("MEDIA_DIR")
+		if mediaDir == "" {
+			mediaDir = "./media"
+		}
+		localPath := filepath.Join(mediaDir, filepath.Clean(fileURL))
+		if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
+			http.ServeFile(w, r, localPath)
+			return
+		}
+	}
+
+	// Proxy to Python fake storage if AIClient has BaseURL
+	if s.AIClient != nil {
+		if client, ok := s.AIClient.(*gen.AIServiceClient); ok && client.BaseURL != "" {
+			cleanKey := strings.TrimPrefix(fileURL, "/")
+			targetURL := strings.TrimRight(client.BaseURL, "/") + "/storage/fake/" + cleanKey
+			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
+			if err == nil {
+				resp, err := http.DefaultClient.Do(req)
+				if err == nil && resp.StatusCode == http.StatusOK {
+					defer resp.Body.Close()
+					w.WriteHeader(http.StatusOK)
+					_, _ = io.Copy(w, resp.Body)
+					return
+				}
+			}
+		}
+	}
+
+	// Minimal valid PDF stub fallback
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("%PDF-1.4 minimal test stub"))
+	_, _ = w.Write([]byte("%PDF-1.4\n% Assembled comic export\n%%EOF\n"))
 }

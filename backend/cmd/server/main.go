@@ -36,10 +36,14 @@ func main() {
 		repo = db.NewInMemoryRepository()
 	}
 
-	var aiClient *gen.AIServiceClient
+	var aiClient gen.AIService
 	aiURL := os.Getenv("PYTHON_AI_URL")
 	if aiURL != "" {
+		log.Printf("Connecting to Python AI service at %s", aiURL)
 		aiClient = gen.NewAIServiceClient(aiURL, 30*time.Second)
+	} else {
+		log.Println("PYTHON_AI_URL not set; using fake AI service client")
+		aiClient = gen.NewFakeAIServiceClient()
 	}
 
 	// Pluggable policy seam

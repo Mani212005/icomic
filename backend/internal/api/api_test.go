@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"icomic/backend/gen"
 	"icomic/backend/internal/api"
 	"icomic/backend/internal/auth"
 	"icomic/backend/internal/credits"
@@ -18,20 +22,25 @@ import (
 
 func setupTestServer(devAuthEnabled bool, defaultUID string) (*api.Server, http.Handler, db.Repository) {
 	repo := db.NewInMemoryRepository()
-	creditSvc := credits.NewInMemoryCreditService(map[string]float64{
+	balances := map[string]float64{
 		"test-user": 50.0,
 		"user-1":    50.0,
 		"user-2":    50.0,
-	})
+	}
+	if defaultUID != "" {
+		balances[defaultUID] = 50.0
+	}
+	creditSvc := credits.NewInMemoryCreditService(balances)
 	jobSvc := jobs.NewInMemoryJobService()
 	authenticator := auth.NewDevAuthenticator(devAuthEnabled, defaultUID)
 	imageHosting := auth.NewDefaultImageHosting("/media")
+	fakeAI := gen.NewFakeAIServiceClient()
 
 	s := api.NewServer(
 		repo,
 		creditSvc,
 		jobSvc,
-		nil,
+		fakeAI,
 		authenticator,
 		imageHosting,
 		2, // 2 panels per page for tests
@@ -346,5 +355,155 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 	handler.ServeHTTP(recDownload, reqDownload)
 	if recDownload.Code != http.StatusOK || recDownload.Header().Get("Content-Type") != "application/pdf" {
 		t.Fatalf("download failed: %d, content-type: %s", recDownload.Code, recDownload.Header().Get("Content-Type"))
+	}
+}
+
+func TestCORSMiddleware(t *testing.T) {
+	_, handler, _ := setupTestServer(true, "test-user")
+
+	// 1. Preflight OPTIONS request
+	reqOptions := httptest.NewRequest(http.MethodOptions, "/api/v1/projects", nil)
+	reqOptions.Header.Set("Origin", "http://localhost:5173")
+	reqOptions.Header.Set("Access-Control-Request-Method", "POST")
+	recOptions := httptest.NewRecorder()
+	handler.ServeHTTP(recOptions, reqOptions)
+
+	if recOptions.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 No Content for preflight, got %d", recOptions.Code)
+	}
+	if recOptions.Header().Get("Access-Control-Allow-Origin") != "http://localhost:5173" {
+		t.Errorf("expected origin http://localhost:5173, got %s", recOptions.Header().Get("Access-Control-Allow-Origin"))
+	}
+	if recOptions.Header().Get("Access-Control-Allow-Methods") == "" {
+		t.Errorf("expected Access-Control-Allow-Methods header to be set")
+	}
+
+	// 2. Normal GET request
+	reqGet := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	reqGet.Header.Set("Origin", "http://localhost:5173")
+	recGet := httptest.NewRecorder()
+	handler.ServeHTTP(recGet, reqGet)
+
+	if recGet.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", recGet.Code)
+	}
+	if recGet.Header().Get("Access-Control-Allow-Origin") != "http://localhost:5173" {
+		t.Errorf("expected origin http://localhost:5173, got %s", recGet.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestPromptPreModeration(t *testing.T) {
+	server, handler, repo := setupTestServer(true, "creator-1")
+
+	// 1. Create project with blocked keyword in script
+	proj := &domain.Project{
+		ID:             "proj-mod-1",
+		UserID:         "creator-1",
+		Title:          "Moderation Test",
+		OriginalScript: "This scene has extreme violence and illegal stuff.",
+		ChapterCount:   1,
+		ArtStyle:       "manga",
+	}
+	_ = repo.CreateProject(context.Background(), proj)
+
+	// AnalyzeScript should be rejected by pre-moderation screening
+	reqAnalyze := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+proj.ID+"/analyze", nil)
+	recAnalyze := httptest.NewRecorder()
+	handler.ServeHTTP(recAnalyze, reqAnalyze)
+
+	if recAnalyze.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for blocked prompt, got %d (body: %s)", recAnalyze.Code, recAnalyze.Body.String())
+	}
+
+	// 2. Test utility endpoint POST /api/v1/prompts/moderate
+	modBody, _ := json.Marshal(map[string]string{"prompt": "A peaceful landscape"})
+	reqMod := httptest.NewRequest(http.MethodPost, "/api/v1/prompts/moderate", bytes.NewReader(modBody))
+	recMod := httptest.NewRecorder()
+	handler.ServeHTTP(recMod, reqMod)
+
+	if recMod.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for prompt moderation, got %d", recMod.Code)
+	}
+	var modResp map[string]interface{}
+	_ = json.NewDecoder(recMod.Body).Decode(&modResp)
+	if modResp["blocked"].(bool) != false {
+		t.Errorf("expected unblocked prompt, got %+v", modResp)
+	}
+
+	_ = server
+}
+
+func TestMediaRoute(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.Setenv("MEDIA_DIR", tmpDir)
+	defer os.Unsetenv("MEDIA_DIR")
+
+	// Write a test image file
+	testSubDir := filepath.Join(tmpDir, "characters")
+	_ = os.MkdirAll(testSubDir, 0755)
+	testFilePath := filepath.Join(testSubDir, "hero.png")
+	_ = os.WriteFile(testFilePath, []byte("\x89PNG\r\n\x1a\nfake-png-bytes"), 0644)
+
+	_, handler, _ := setupTestServer(true, "user-1")
+
+	// 1. Existing media file
+	reqMedia := httptest.NewRequest(http.MethodGet, "/media/characters/hero.png", nil)
+	recMedia := httptest.NewRecorder()
+	handler.ServeHTTP(recMedia, reqMedia)
+
+	if recMedia.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for media, got %d", recMedia.Code)
+	}
+	if !bytes.Contains(recMedia.Body.Bytes(), []byte("fake-png-bytes")) {
+		t.Errorf("expected body to contain test bytes, got %s", recMedia.Body.String())
+	}
+
+	// 2. Missing media file
+	reqMissing := httptest.NewRequest(http.MethodGet, "/media/missing/nonexistent.png", nil)
+	recMissing := httptest.NewRecorder()
+	handler.ServeHTTP(recMissing, reqMissing)
+
+	if recMissing.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found for missing media, got %d", recMissing.Code)
+	}
+}
+
+func TestAIServiceFailureRefund(t *testing.T) {
+	server, handler, repo := setupTestServer(true, "user-fail")
+
+	proj := &domain.Project{
+		ID:       "proj-fail-1",
+		UserID:   "user-fail",
+		Title:    "Fail Test",
+		ArtStyle: "manga",
+	}
+	_ = repo.CreateProject(context.Background(), proj)
+	char := &domain.Character{
+		ID:          "char-fail-1",
+		ProjectID:   proj.ID,
+		Name:        "Hero",
+		Description: "A hero",
+	}
+	_ = repo.CreateCharacter(context.Background(), char)
+
+	// Inject AI failure
+	fakeAI := server.AIClient.(*gen.FakeAIServiceClient)
+	fakeAI.GenerateCharacterReferenceFunc = func(ctx context.Context, req gen.GenerateCharacterReferenceRequest) (*gen.GenerateCharacterReferenceResponse, error) {
+		return nil, errors.New("upstream AI generation service timed out")
+	}
+
+	initialBalance, _ := server.CreditService.GetBalance(context.Background(), "user-fail")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+char.ID+"/reference-image", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request on AI failure, got %d", rec.Code)
+	}
+
+	finalBalance, _ := server.CreditService.GetBalance(context.Background(), "user-fail")
+	if finalBalance != initialBalance {
+		t.Errorf("expected credit refund after AI failure: initial %f, final %f", initialBalance, finalBalance)
 	}
 }
