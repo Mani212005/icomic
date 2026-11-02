@@ -21,6 +21,7 @@ from app.adapters.image.port import ImagePort, ImageResult
 from app.adapters.language.fake import FakeLanguageAdapter
 from app.adapters.language.meta import MetaLanguageAdapter
 from app.adapters.language.port import LanguagePort, Message, TokenUsage
+from app.adapters.meta_http import MetaEmptyResponseError
 from app.adapters.vision.fake import FakeVisionAdapter
 from app.adapters.vision.meta import MetaVisionAdapter
 from app.adapters.vision.port import PaletteSuggestion, VisionPort
@@ -71,14 +72,44 @@ def test_meta_language_adapter_complete_and_payload_shape():
     assert adapter.last_request_id == "chatcmpl-mock-lang-001"
     assert adapter.last_usage is not None
     assert adapter.last_usage.total_tokens == 30
+    assert adapter.last_finish_reason == "stop"
+
+
+def test_meta_language_adapter_empty_length_raises():
+    fixture = load_fixture("chat_completion_empty_length.json")
+    captured_payloads: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_payloads.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json=fixture, headers={"x-request-id": "req-lang-empty"})
+
+    adapter = MetaLanguageAdapter(
+        api_key="mock-key-123",
+        base_url=MOCK_BASE_URL,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(MetaEmptyResponseError) as exc_info:
+        adapter.complete(
+            model="muse-spark-1.3",
+            messages=[Message(role="user", content="Ping")],
+            max_tokens=10,
+        )
+
+    assert "finish_reason='length'" in str(exc_info.value)
+    assert adapter.last_finish_reason == "length"
+    assert adapter.last_usage is not None
+    assert adapter.last_usage.reasoning_tokens == 10
+    assert adapter.last_usage.output_tokens == 10
+    assert adapter.last_cost_tokens == 24
 
     # Verify request payload
     assert len(captured_payloads) == 1
     req = captured_payloads[0]
     assert req["model"] == "muse-spark-1.3"
-    assert req["user"] == "user_hash_abc"
-    assert len(req["messages"]) == 2
-    assert req["messages"][0]["role"] == "system"
+    assert req["max_tokens"] == 10
+    assert len(req["messages"]) == 1
+    assert req["messages"][0]["content"] == "Ping"
 
 
 def test_meta_language_adapter_estimate_tokens():
@@ -119,14 +150,19 @@ def test_meta_vision_adapter_review_payload_and_response():
         model="muse-spark-1.3",
         image_bytes=raw_line_art,
         prompt="Review line contours and composition.",
+        max_tokens=25,
+        temperature=0.3,
     )
 
     assert "Line art verified" in review
     assert adapter.last_request_id == "chatcmpl-mock-vis-review-001"
+    assert adapter.last_finish_reason == "stop"
 
-    # Verify content parts
+    # Verify content parts and forwarded max_tokens / temperature
     assert len(captured_payloads) == 1
     req = captured_payloads[0]
+    assert req["max_tokens"] == 25
+    assert req["temperature"] == 0.3
     parts = req["messages"][0]["content"]
     assert parts[0]["type"] == "text"
     assert parts[0]["text"] == "Review line contours and composition."
@@ -136,8 +172,10 @@ def test_meta_vision_adapter_review_payload_and_response():
 
 def test_meta_vision_adapter_suggest_palette():
     fixture = load_fixture("vision_palette.json")
+    captured_payloads: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        captured_payloads.append(json.loads(request.content.decode("utf-8")))
         return httpx.Response(200, json=fixture, headers={"x-request-id": "req-vis-pal-01"})
 
     adapter = MetaVisionAdapter(
@@ -150,11 +188,20 @@ def test_meta_vision_adapter_suggest_palette():
         model="muse-spark-1.3",
         image_bytes=b"\x89PNG\r\n\x1a\nline-art-bytes",
         panel_context="Nighttime rainy street scene with neon reflections",
+        max_tokens=150,
+        temperature=0.1,
     )
 
     assert isinstance(suggestion, PaletteSuggestion)
     assert suggestion.theme == "Neo-Noir Alley"
     assert len(suggestion.palette) == 3
+    assert adapter.last_finish_reason == "stop"
+
+    # Verify payload forwards max_tokens and temperature
+    assert len(captured_payloads) == 1
+    req = captured_payloads[0]
+    assert req["max_tokens"] == 150
+    assert req["temperature"] == 0.1
     for item in suggestion.palette:
         assert item.hex_color.startswith("#")
         assert len(item.hex_color) == 7
@@ -193,6 +240,7 @@ def test_meta_image_adapter_generate_payload_and_byte_preservation():
     assert result.model_id == "muse-image-1.0"
     assert result.request_id == "resp-mock-img-001"
     assert result.image_bytes.startswith(b"\x89PNG")
+    assert result.media_type == "image/png"
     assert b"caBX" in result.image_bytes  # C2PA marker present in untouched bytes
     assert result.provenance_metadata["cost_usd"] == 0.01
 
@@ -206,6 +254,44 @@ def test_meta_image_adapter_generate_payload_and_byte_preservation():
     assert content[0]["image_url"].startswith("data:image/png;base64,")
     assert content[1]["type"] == "input_text"
     assert "Detective walking through rainy alley. Style: noir" in content[1]["text"]
+
+
+def test_meta_image_adapter_generate_jpeg_media_type():
+    import base64
+
+    # Minimal JPEG binary
+    jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+    jpeg_b64 = base64.b64encode(jpeg_bytes).decode("ascii")
+
+    fixture = {
+        "id": "resp-mock-img-jpeg",
+        "output": [
+            {
+                "image_generation_call": {
+                    "result": jpeg_b64,
+                }
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=fixture, headers={"x-request-id": "req-img-gen-jpeg"})
+
+    adapter = MetaImageAdapter(
+        api_key="mock-key-123",
+        base_url=MOCK_BASE_URL,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = adapter.generate(
+        prompt="A sunset over the ocean",
+        reference_images=[],
+        hashed_user_id="user_hash_jpeg",
+        style="realism",
+    )
+
+    assert result.media_type == "image/jpeg"
+    assert result.image_bytes.startswith(b"\xff\xd8")
 
 
 # ---------------------------------------------------------------------------

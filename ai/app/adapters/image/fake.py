@@ -72,4 +72,5 @@ class FakeImageAdapter(ImagePort):
             provenance_metadata=provenance,
             model_id=self.model_id,
             request_id=request_id,
+            media_type="image/png",
         )

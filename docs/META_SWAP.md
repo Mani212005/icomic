@@ -13,7 +13,7 @@ Live verification remains manual and strictly isolated from CI pipelines.
 The Icomic service stack runs entirely hermetically on deterministic fake adapters by default:
 - `FakeLanguageAdapter`: Generates deterministic text responses derived from the SHA-256 hash of the input prompt.
 - `FakeVisionAdapter`: Returns fixed, valid colour palette suggestions and image review confirmations.
-- `FakeImageAdapter`: Generates valid 64x64 test PNG images with fixed C2PA provenance metadata stubs.
+- `FakeImageAdapter`: Generates valid 64x64 test images with fixed C2PA provenance metadata stubs.
 - `FakeStorageAdapter`: Stores generated image assets and export files in memory or temporary local storage.
 - `FakeQueueAdapter`: Executes asynchronous generation jobs synchronously in-process with idempotency deduplication.
 - `FakeClockAdapter`: Provides controllable time progression from a fixed UTC epoch.
@@ -114,12 +114,12 @@ Each adapter must strictly implement its respective Python protocol.
 - `estimate_tokens(messages: list[Message]) -> TokenUsage`: Calculates or estimates input and output token counts for cost estimation.
 
 #### MetaVisionAdapter (`VisionPort`)
-- `review(model: str, image_bytes: bytes, prompt: str) -> str`: Submits image bytes and inspection prompts to Meta's multimodal model.
-- `suggest_palette(model: str, image_bytes: bytes, panel_context: str) -> PaletteSuggestion`: Analyzes line art and panel context to return theme names and regional hex colour suggestions.
+- `review(model: str, image_bytes: bytes, prompt: str, **kwargs) -> str`: Submits image bytes and inspection prompts to Meta's multimodal model, forwarding `max_tokens` and `temperature`.
+- `suggest_palette(model: str, image_bytes: bytes, panel_context: str, **kwargs) -> PaletteSuggestion`: Analyzes line art and panel context to return theme names and regional hex colour suggestions, forwarding `max_tokens` and `temperature`.
 
 #### MetaImageAdapter (`ImagePort`)
 - `generate(prompt: str, reference_images: list[bytes], hashed_user_id: str, style: str) -> ImageResult`: Calls Meta's image generation endpoint (`muse-image-1.0`) with text prompt, optional turnaround reference images, and style descriptors.
-- Must return an `ImageResult` dataclass containing `image_bytes`, `provenance_metadata`, `model_id`, and `request_id`.
+- Must return an `ImageResult` dataclass containing `image_bytes`, `provenance_metadata`, `model_id`, `request_id`, and `media_type`.
 
 ### 4.2 Error Mapping
 
@@ -158,12 +158,15 @@ The adapters must map external HTTP error responses into structured domain excep
 - Pre-moderation rejects prohibited content locally to avoid unnecessary API costs or account policy strikes.
 - Prompts that pass local pre-moderation remain subject to Meta's upstream moderation, requiring graceful handling as described in Section 4.2.
 
-### 4.7 Provenance Preservation
+### 4.7 Provenance Preservation and Image Container Handling
 
 - Meta's image models embed invisible watermarks and C2PA provenance metadata into generated images.
-- The `MetaImageAdapter` must extract and preserve the raw `provenance_metadata` dictionary returned in API responses.
+- The real media type of returned image bytes is detected by magic numbers (PNG, JPEG, WebP, GIF) without re-encoding or modifying raw bytes.
+- C2PA provenance detection scans standard PNG chunks, JPEG APP11 segments for JUMBF boxes, and WebP RIFF containers for JUMBF boxes without altering bytes.
+- The `MetaImageAdapter` extracts and preserves the raw `provenance_metadata` dictionary returned in API responses and sets the detected `media_type`.
 - Downstream processing (canvas manipulation, thumbnailing, PDF compilation) must never strip, alter, or obscure provenance metadata or watermarks.
-- The PDF export pipeline must verify that provenance metadata is preserved and record `exports.provenance_metadata_preserved = true` in the database.
+- The PDF export pipeline natively embeds JPEG bytes using `/Filter /DCTDecode` and PNG bytes using `/Filter /FlateDecode`, while raising `UnsupportedImageMediaError` on WebP or other formats to prevent provenance loss.
+- The PDF export pipeline records `exports.provenance_metadata_preserved = true` in the database.
 
 ### 4.8 Contributor Tier Protection
 
@@ -199,7 +202,7 @@ Once keys and live adapters are configured in a local or staging environment, ex
 
 4. **Image Generation Verification**:
    - Request generation of a character reference image.
-   - Confirm that generation completes successfully and returns a valid PNG image.
+   - Confirm that generation completes successfully and returns a valid image payload (JPEG, PNG, WebP, or GIF) with its detected media type.
    - Inspect the returned image payload to confirm C2PA provenance metadata is present.
    - Verify through outbound logging that `hashed_user_id` was attached to the request payload.
 
@@ -241,3 +244,28 @@ The following architectural and policy decisions remain reserved for the captain
 
 3. **Region Restrictions**:
    - Region restrictions: none, users are global per the owner decision of 2026-11-02; revisit only if the owner asks.
+
+## 8. Live Smoke Check Findings and Diagnostics
+
+The first owner-approved live smoke verification exposed operational insights across the adapter suite:
+
+1. **Language Completion Reasoning Tokens**:
+   - Text calls targeting `muse-spark-1.3` with small token limits (`max_tokens=10`) consumed the budget entirely on reasoning tokens before emitting output text.
+   - The parser now checks for empty responses and raises a non-retryable domain error `MetaEmptyResponseError`.
+   - The live smoke check uses `max_tokens=64` to provide adequate headroom for reasoning models.
+   - Parsers extract reasoning tokens additively from `usage.completion_tokens_details.reasoning_tokens` and expose `finish_reason`.
+
+2. **Vision Adapter Parameter Forwarding**:
+   - The multimodal review endpoint did not forward `max_tokens` and `temperature` from port kwargs.
+   - `MetaVisionAdapter.review` and `suggest_palette` now explicitly forward `max_tokens` and `temperature` in request payloads.
+
+3. **Image Format and Provenance Container Detection**:
+   - The `muse-image-1.0` endpoint returned valid image binary data in JPEG format rather than PNG.
+   - Image adapters now detect the real media type dynamically by inspecting header magic bytes.
+   - C2PA detection parses JPEG APP11 JUMBF boxes and WebP RIFF containers alongside standard PNG chunks.
+   - The PDF assembly service embeds JPEG binaries natively via DCTDecode to preserve original byte fidelity.
+
+4. **Sanitized Diagnostics Output**:
+   - Every execution of `scripts/manual/meta_live_check.py` writes a sanitized diagnostics record to `.live-diagnostics.json`.
+   - The diagnostics file records HTTP statuses, top-level response keys, token usage, finish reasons, detected media types, parseable dimensions, content lengths, and the first 12 bytes in hexadecimal.
+   - It strictly excludes API keys, authorization headers, prompts, and output text.

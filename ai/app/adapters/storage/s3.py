@@ -25,6 +25,11 @@ class S3Adapter(StoragePort):
             "S3 live storage adapter deferred until real infrastructure deploy."
         )
 
+    def get_content_type(self, key: str) -> str | None:
+        raise NotImplementedError(
+            "S3 live storage adapter deferred until real infrastructure deploy."
+        )
+
     def delete(self, key: str) -> None:
         raise NotImplementedError(
             "S3 live storage adapter deferred until real infrastructure deploy."

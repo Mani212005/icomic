@@ -12,8 +12,10 @@ from ..meta_http import (
     DEFAULT_META_USER_FIELD,
     DEFAULT_META_VISION_MODEL,
     MetaConfigurationError,
+    MetaEmptyResponseError,
     MetaHttpClient,
     build_chat_completion_request,
+    detect_image_media_type,
     parse_chat_completion_response,
     parse_palette_json,
     validate_model_id_tier,
@@ -54,18 +56,24 @@ class MetaVisionAdapter(VisionPort):
 
         self.last_request_id: str = ""
         self.last_usage = None
+        self.last_finish_reason: str | None = None
+        self.last_status_code: int | None = None
+        self.last_response_keys: list[str] = []
 
-    def review(self, model: str, image_bytes: bytes, prompt: str) -> str:
+    def review(self, model: str, image_bytes: bytes, prompt: str, **kwargs: Any) -> str:
         """Submit image bytes and review prompt to Meta multimodal vision endpoint."""
         target_model = model or self.default_model
         validate_model_id_tier(target_model)
         b64_image = base64.b64encode(image_bytes).decode("ascii")
+        media_type = detect_image_media_type(image_bytes)
+
+        user = kwargs.pop("hashed_user_id", None) or kwargs.pop("user", None)
 
         content_parts = [
             {"type": "text", "text": prompt},
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                "image_url": {"url": f"data:{media_type};base64,{b64_image}"},
             },
         ]
         messages = [{"role": "user", "content": content_parts}]
@@ -73,22 +81,37 @@ class MetaVisionAdapter(VisionPort):
         payload = build_chat_completion_request(
             model=target_model,
             messages=messages,
+            user=user,
+            user_field=self.user_field,
+            **kwargs,
         )
 
-        data, headers = self._client.post("/chat/completions", payload)
-        content, token_usage, request_id, _ = parse_chat_completion_response(data, headers)
+        try:
+            data, headers = self._client.post("/chat/completions", payload)
+            self.last_status_code = 200
+            self.last_response_keys = sorted(data.keys()) if isinstance(data, dict) else []
+            content, token_usage, request_id, _ = parse_chat_completion_response(data, headers)
 
-        self.last_request_id = request_id
-        self.last_usage = token_usage
-        return content
+            self.last_request_id = request_id
+            self.last_usage = token_usage
+            self.last_finish_reason = token_usage.finish_reason
+            return content
+        except MetaEmptyResponseError as exc:
+            self.last_request_id = exc.request_id or ""
+            self.last_usage = exc.token_usage
+            self.last_finish_reason = exc.finish_reason
+            raise
 
     def suggest_palette(
-        self, model: str, image_bytes: bytes, panel_context: str
+        self, model: str, image_bytes: bytes, panel_context: str, **kwargs: Any
     ) -> PaletteSuggestion:
         """Analyze line art and context to suggest structured colour palette."""
         target_model = model or self.default_model
         validate_model_id_tier(target_model)
         b64_image = base64.b64encode(image_bytes).decode("ascii")
+        media_type = detect_image_media_type(image_bytes)
+
+        user = kwargs.pop("hashed_user_id", None) or kwargs.pop("user", None)
 
         instruction = (
             "Analyze this comic panel line art and context. Suggest a cohesive, harmonious "
@@ -103,7 +126,7 @@ class MetaVisionAdapter(VisionPort):
             {"type": "text", "text": instruction},
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                "image_url": {"url": f"data:{media_type};base64,{b64_image}"},
             },
         ]
         messages = [{"role": "user", "content": content_parts}]
@@ -111,11 +134,23 @@ class MetaVisionAdapter(VisionPort):
         payload = build_chat_completion_request(
             model=target_model,
             messages=messages,
+            user=user,
+            user_field=self.user_field,
+            **kwargs,
         )
 
-        data, headers = self._client.post("/chat/completions", payload)
-        content, token_usage, request_id, _ = parse_chat_completion_response(data, headers)
+        try:
+            data, headers = self._client.post("/chat/completions", payload)
+            self.last_status_code = 200
+            self.last_response_keys = sorted(data.keys()) if isinstance(data, dict) else []
+            content, token_usage, request_id, _ = parse_chat_completion_response(data, headers)
 
-        self.last_request_id = request_id
-        self.last_usage = token_usage
-        return parse_palette_json(content)
+            self.last_request_id = request_id
+            self.last_usage = token_usage
+            self.last_finish_reason = token_usage.finish_reason
+            return parse_palette_json(content)
+        except MetaEmptyResponseError as exc:
+            self.last_request_id = exc.request_id or ""
+            self.last_usage = exc.token_usage
+            self.last_finish_reason = exc.finish_reason
+            raise

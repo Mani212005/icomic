@@ -45,6 +45,7 @@ EXCLUDE_FILES = {
     "package-lock.json",
     "uv.lock",
     ".live-spend.jsonl",
+    ".live-diagnostics.json",
     ".env.local",
 }
 

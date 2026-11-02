@@ -10,6 +10,7 @@ class ImageResult:
     provenance_metadata: dict[str, Any]
     model_id: str
     request_id: str
+    media_type: str | None = None
 
 
 @runtime_checkable
