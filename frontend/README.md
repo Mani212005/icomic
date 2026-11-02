@@ -25,10 +25,10 @@ Svelte SPA frontend for the Icomic comic generation studio (docs/ARCHITECTURE.md
 - **Export & Publishing UI**:
   - PDF document and PNG page bundle export options with page size selection (A4, US Letter, Custom comic page).
   - Mandatory Meta AI model disclosure and C2PA content provenance notices.
-- **Pluggable Policy Seams (Open Captain Decisions)**:
-  - 18+ age gate verification seam with leap-year-safe calendar calculation (`DefaultAgeGatePolicy`).
-  - Regional location and image generation restriction seam (`DefaultLocationPolicy`).
-  - Image hosting and CDN resolver seam (`DefaultImageHostingPolicy`).
+- **Policies (Owner Decisions 2026-11-02)**:
+  - Global user access: no geo-blocking or regional restriction.
+  - Age terms: 18+ advisory notice (enforced gate deferred).
+  - Image hosting: configurable CDN/storage URL resolver.
 
 ## Running Locally
 

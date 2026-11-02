@@ -1,7 +1,7 @@
 <script>
 	import ComicEditor from '$lib/editor/ComicEditor.svelte';
 	import { MockApiClient } from '$lib/api/mockClient.js';
-	import { defaultAgeGatePolicy, defaultLocationPolicy } from '$lib/config/policies.js';
+	import { AGE_TERMS_ADVISORY } from '$lib/config/policies.js';
 
 	// Client instance
 	const apiClient = new MockApiClient();
@@ -16,8 +16,6 @@
 	};
 
 	let activeStage = 'script';
-	let userAgeGate = defaultAgeGatePolicy.verify('1998-04-12');
-	let geoStatus = defaultLocationPolicy.canGenerateImages('US');
 </script>
 
 <div class="app-layout">
@@ -31,14 +29,13 @@
 		</div>
 
 		<div class="nav-status">
-			<div class="status-pill age-pill" title="Age gate policy compliant with Meta API terms">
+			<div class="status-pill global-pill" title="Users are global (no geo-restrictions)">
 				<span class="indicator green"></span>
-				<span>18+ Verified (Age {userAgeGate.age})</span>
+				<span>Global Access</span>
 			</div>
 
-			<div class="status-pill geo-pill" title="Regional generation status">
-				<span class="indicator green"></span>
-				<span>Region: US (Full Access)</span>
+			<div class="status-pill advisory-pill" title={AGE_TERMS_ADVISORY}>
+				<span class="advisory-text">18+ Advisory</span>
 			</div>
 
 			<div class="status-pill mock-pill" title="Running against hermetic typed mock API">
@@ -117,6 +114,9 @@
 	}
 	.indicator.green {
 		background: #16a34a;
+	}
+	.advisory-text {
+		color: #64748b;
 	}
 	.badge {
 		background: #0284c7;
