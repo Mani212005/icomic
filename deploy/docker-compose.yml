@@ -10,13 +10,25 @@ services:
       - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U icomic -d icomic"]
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 5s
+
+  migration:
+    image: postgres:16-alpine
+    container_name: icomic-migration
+    environment:
+      DATABASE_URL: "postgres://icomic:icomic@postgres:5432/icomic?sslmode=disable"
+      APPLY_SEEDS: "true"
+    volumes:
+      - ./:/deploy:ro
+    entrypoint: ["/bin/bash", "/deploy/migrate.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine
@@ -80,6 +92,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       ai:
