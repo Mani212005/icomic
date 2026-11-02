@@ -111,3 +111,161 @@ test('ApiClient sends correct HTTP request for projects and operations', async (
 		globalThis.fetch = originalFetch;
 	}
 });
+
+test('ApiClient identity handling matches Go API authenticator contract', async () => {
+	const requests = [];
+	const originalFetch = globalThis.fetch;
+
+	try {
+		globalThis.fetch = async (url, options) => {
+			requests.push({ url, options });
+			return {
+				ok: true,
+				status: 200,
+				json: async () => ({ status: 'ok' })
+			};
+		};
+
+		// 1. Unauthenticated client (devMode: false, token: null) -> NEVER sends identity headers
+		const unauthClient = new ApiClient({
+			baseUrl: 'http://test-api:8080',
+			devMode: false,
+			devUserId: null,
+			token: null
+		});
+		assert.equal(unauthClient.isAuthenticated(), false);
+		assert.equal(unauthClient.getAuthMode(), 'unauthenticated');
+
+		await unauthClient.checkHealth();
+		const unauthHeaders = requests[0].options.headers;
+		assert.equal(unauthHeaders['X-User-ID'], undefined);
+		assert.equal(unauthHeaders['Authorization'], undefined);
+
+		// 2. Dev mode client -> sends X-User-ID header
+		const devClient = new ApiClient({
+			baseUrl: 'http://test-api:8080',
+			devMode: true,
+			devUserId: '00000000-0000-0000-0000-000000000001'
+		});
+		assert.equal(devClient.isAuthenticated(), true);
+		assert.equal(devClient.getAuthMode(), 'dev');
+
+		await devClient.checkHealth();
+		const devHeaders = requests[1].options.headers;
+		assert.equal(devHeaders['X-User-ID'], '00000000-0000-0000-0000-000000000001');
+		assert.equal(devHeaders['Authorization'], undefined);
+
+		// 3. Bearer token client -> sends Authorization header
+		const bearerClient = new ApiClient({
+			baseUrl: 'http://test-api:8080',
+			token: 'test-session-token-xyz'
+		});
+		assert.equal(bearerClient.isAuthenticated(), true);
+		assert.equal(bearerClient.getAuthMode(), 'bearer');
+
+		await bearerClient.checkHealth();
+		const bearerHeaders = requests[2].options.headers;
+		assert.equal(bearerHeaders['Authorization'], 'Bearer test-session-token-xyz');
+		assert.equal(bearerHeaders['X-User-ID'], undefined);
+
+		// 4. Dynamic toggling of dev mode
+		unauthClient.setDevMode(true, '00000000-0000-0000-0000-000000000002');
+		assert.equal(unauthClient.isAuthenticated(), true);
+		assert.equal(unauthClient.getAuthMode(), 'dev');
+
+		await unauthClient.checkHealth();
+		assert.equal(requests[3].options.headers['X-User-ID'], '00000000-0000-0000-0000-000000000002');
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
+test('ApiClient normalizes wrapped Go backend responses for projects and entities', async () => {
+	const originalFetch = globalThis.fetch;
+
+	try {
+		globalThis.fetch = async (url) => {
+			if (url.endsWith('/api/v1/projects')) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						projects: [{ id: 'p1', title: 'Wrapped Project' }]
+					})
+				};
+			}
+			if (url.includes('/panels')) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						panels: [{ id: 'pnl1', panel_number: 1 }]
+					})
+				};
+			}
+			if (url.includes('/pages')) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						pages: [{ id: 'pg1', page_number: 1 }]
+					})
+				};
+			}
+			if (url.includes('/characters')) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						characters: [{ id: 'c1', name: 'Maya' }]
+					})
+				};
+			}
+			if (url.includes('/chapters')) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						chapters: [{ id: 'ch1', title: 'Chapter 1' }]
+					})
+				};
+			}
+			if (url.includes('/me/credit-usage')) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						user_id: 'u1',
+						balance: 75.5,
+						usage_history: []
+					})
+				};
+			}
+			return { ok: true, status: 200, json: async () => ({}) };
+		};
+
+		const client = new ApiClient('http://test-api:8080');
+
+		const projects = await client.listProjects();
+		assert.ok(Array.isArray(projects), 'unwraps projects array');
+		assert.equal(projects[0].id, 'p1');
+
+		const characters = await client.getCharacters('p1');
+		assert.ok(Array.isArray(characters), 'unwraps characters array');
+		assert.equal(characters[0].name, 'Maya');
+
+		const chapters = await client.getChapters('p1');
+		assert.ok(Array.isArray(chapters), 'unwraps chapters array');
+
+		const panels = await client.getPanels('ch1');
+		assert.ok(Array.isArray(panels), 'unwraps panels array');
+
+		const pages = await client.getPages('ch1');
+		assert.ok(Array.isArray(pages), 'unwraps pages array');
+
+		const credits = await client.getCreditUsage();
+		assert.equal(credits.remaining_credits, 75.5, 'normalizes remaining_credits from balance');
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
