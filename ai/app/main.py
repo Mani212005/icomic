@@ -30,7 +30,7 @@ from .gen.models import (
     SuggestColourPaletteRequest,
     SuggestColourPaletteResponse,
 )
-from .policies import PermissiveGeoPolicy
+from .policies import DirectStoragePolicy
 from .services.character import CharacterService
 from .services.colour import ColourService
 from .services.draft import DraftService
@@ -73,8 +73,8 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     job_statuses: dict[str, dict[str, Any]] = {}
     app.state.job_statuses = job_statuses
 
-    # Pluggable policy seam (safe defaults)
-    app.state.geo_policy = PermissiveGeoPolicy()
+    # Pluggable image hosting policy seam
+    app.state.image_hosting_policy = DirectStoragePolicy()
 
     # Exception handlers conforming to ErrorResponse schema
     @app.exception_handler(RequestValidationError)

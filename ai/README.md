@@ -56,15 +56,12 @@ Meta adapters are inert stubs that raise `RuntimeError` if instantiated, ensurin
 - `ModerationService`: Pre-moderation screening against prohibited content guidelines.
 - `PdfAssemblyService`: Assembles completed comic book pages into an exportable PDF preserving provenance and AI disclosures.
 
-## Open Captain Decisions Policy Seams (`app/policies.py`)
+## Policy Seams and Owner Decisions (`app/policies.py`)
 
-Pluggable policy seams model open product decisions with safe defaults and documented TODOs:
-1. **User Location and Geo-restriction**: `GeoRestrictionPolicy` (default: `PermissiveGeoPolicy`).
-   - TODO: Finalize India geo-restriction enforcement point (Go backend vs edge proxy).
-2. **Image Hosting Architecture**: `ImageHostingPolicy` (default: `DirectStoragePolicy`).
-   - TODO: Finalize S3 presigned URLs vs CDN vs media proxy.
-3. **18+ Age Gate**: `AgeGatePolicy` (default: `BackendTrustedAgePolicy`).
-   - TODO: Verification mechanism (DOB self-declaration, ID, or payment inference) enforced at Go API boundary.
+Per Owner Decisions (2026-11-02):
+1. **Global Users**: No geo-blocking or region restrictions anywhere; users are global.
+2. **18+ Age Gate**: Deferred (no enforced age gate or DOB-based blocking in code; advisory warning to be added later).
+3. **Image Hosting Architecture**: `ImageHostingPolicy` seam (`DirectStoragePolicy` default) swappable for future presigned URLs or CDN proxy.
 
 ## Running Locally
 
