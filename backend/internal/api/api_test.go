@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -195,7 +196,7 @@ func TestStrictOwnershipEnforcement(t *testing.T) {
 }
 
 func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
-	_, handler, _ := setupTestServer(true, "creator-1")
+	server, handler, _ := setupTestServer(true, "creator-1")
 
 	// 1. Create project
 	projBody, _ := json.Marshal(map[string]interface{}{
@@ -340,6 +341,23 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 	}
 
 	// 15. Export and Download
+	storageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("%PDF-1.4\n% Real assembled test comic\n%%EOF\n"))
+	}))
+	defer storageServer.Close()
+
+	fakeAI := server.AIClient.(*gen.FakeAIServiceClient)
+	fakeAI.AssemblePdfFunc = func(ctx context.Context, req gen.AssemblePdfRequest) (*gen.AssemblePdfResponse, error) {
+		return &gen.AssemblePdfResponse{
+			JobID:                       req.JobID,
+			PdfURL:                      fmt.Sprintf("%s/storage/fake/exports/%s/comic.pdf", storageServer.URL, req.ProjectID),
+			ProvenanceMetadataPreserved: true,
+			PageCount:                   len(req.Pages) + 1,
+		}, nil
+	}
+
 	reqExport := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projID+"/export", nil)
 	recExport := httptest.NewRecorder()
 	handler.ServeHTTP(recExport, reqExport)
@@ -355,6 +373,9 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 	handler.ServeHTTP(recDownload, reqDownload)
 	if recDownload.Code != http.StatusOK || recDownload.Header().Get("Content-Type") != "application/pdf" {
 		t.Fatalf("download failed: %d, content-type: %s", recDownload.Code, recDownload.Header().Get("Content-Type"))
+	}
+	if !bytes.Contains(recDownload.Body.Bytes(), []byte("% Real assembled test comic")) {
+		t.Fatalf("expected real assembled PDF bytes, got %s", recDownload.Body.String())
 	}
 }
 

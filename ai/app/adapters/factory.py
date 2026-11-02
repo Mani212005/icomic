@@ -65,7 +65,8 @@ def get_image_adapter(selection: str | None = None) -> ImagePort:
 def get_storage_adapter(selection: str | None = None) -> StoragePort:
     name = (selection or os.getenv("ADAPTER_STORAGE", "fake")).strip().lower()
     if name == "fake":
-        return FakeStorageAdapter()
+        base_url = os.getenv("STORAGE_BASE_URL")
+        return FakeStorageAdapter(base_url=base_url)
     if name == "s3":
         return S3Adapter()
     raise ValueError(f"Unknown storage adapter: {name}. Supported: 'fake', 's3'.")

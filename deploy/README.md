@@ -54,6 +54,7 @@ All services include container healthchecks and depends_on conditions ensuring a
 - Redis (`icomic-redis`): `localhost:6379` (Health: `redis-cli ping`)
 - Python AI Service (`icomic-ai`): `http://localhost:8000` (Health: `GET /healthz`)
   - Configured with `ADAPTER_*=fake` and deterministic ports.
+  - Configured with `STORAGE_BASE_URL=http://ai:8000/storage/fake` so stored artifact URLs resolve across Docker containers.
   - Serves generated image and PDF assets via `GET /storage/fake/{key:path}`.
 - Go Backend API (`icomic-backend`): `http://localhost:8080` (Health: `GET /healthz`)
   - Connected to PostgreSQL via `DATABASE_URL` and Redis via `REDIS_URL`.
