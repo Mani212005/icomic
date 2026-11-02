@@ -105,6 +105,42 @@ def test_fake_storage_adapter():
         adapter.get(key)
 
 
+def test_fake_storage_adapter_storage_base_url_default(monkeypatch):
+    monkeypatch.delenv("STORAGE_BASE_URL", raising=False)
+    adapter = FakeStorageAdapter()
+    assert adapter.base_url == "http://localhost:8000/storage/fake"
+    url = adapter.put("exports/123/comic.pdf", b"%PDF-1.4", "application/pdf")
+    assert url == "http://localhost:8000/storage/fake/exports/123/comic.pdf"
+
+
+def test_fake_storage_adapter_storage_base_url_from_env(monkeypatch):
+    custom_url = "http://ai-service:9000/storage/fake/"
+    monkeypatch.setenv("STORAGE_BASE_URL", custom_url)
+    adapter = FakeStorageAdapter()
+    assert adapter.base_url == "http://ai-service:9000/storage/fake"
+    url = adapter.put("exports/123/comic.pdf", b"%PDF-1.4", "application/pdf")
+    assert url == "http://ai-service:9000/storage/fake/exports/123/comic.pdf"
+    assert adapter.get(url) == b"%PDF-1.4"
+
+
+def test_fake_storage_adapter_storage_base_url_explicit_override(monkeypatch):
+    monkeypatch.setenv("STORAGE_BASE_URL", "http://env-url:8000/storage/fake")
+    adapter = FakeStorageAdapter(base_url="http://explicit-url:8080/storage/fake/")
+    assert adapter.base_url == "http://explicit-url:8080/storage/fake"
+
+
+def test_adapter_factory_storage_base_url(monkeypatch):
+    monkeypatch.delenv("STORAGE_BASE_URL", raising=False)
+    adapter_default = get_storage_adapter("fake")
+    assert isinstance(adapter_default, FakeStorageAdapter)
+    assert adapter_default.base_url == "http://localhost:8000/storage/fake"
+
+    monkeypatch.setenv("STORAGE_BASE_URL", "http://custom-ai:8000/storage/fake")
+    adapter_custom = get_storage_adapter("fake")
+    assert isinstance(adapter_custom, FakeStorageAdapter)
+    assert adapter_custom.base_url == "http://custom-ai:8000/storage/fake"
+
+
 def test_storage_fake_route_serving():
     storage = FakeStorageAdapter()
     app = create_app(

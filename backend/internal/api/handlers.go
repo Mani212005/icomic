@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -1945,6 +1947,49 @@ func (s *Server) GetExport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"export": exp})
 }
 
+// DeriveStorageKey extracts and validates a relative storage key from a raw URL or path,
+// stripping any prefix up to /storage/fake/ and guarding against path traversal.
+func DeriveStorageKey(rawURL string) (string, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty storage URL")
+	}
+
+	clean := trimmed
+	if u, err := url.Parse(trimmed); err == nil && u.Path != "" {
+		clean = u.Path
+	}
+
+	const marker = "/storage/fake/"
+	if idx := strings.Index(clean, marker); idx != -1 {
+		clean = clean[idx+len(marker):]
+	} else if strings.HasPrefix(clean, "storage/fake/") {
+		clean = strings.TrimPrefix(clean, "storage/fake/")
+	} else {
+		clean = strings.TrimPrefix(clean, "/")
+	}
+
+	if unescaped, err := url.PathUnescape(clean); err == nil {
+		clean = unescaped
+	}
+
+	clean = strings.TrimPrefix(clean, "/")
+	norm := path.Clean("/" + clean)
+	norm = strings.TrimPrefix(norm, "/")
+
+	if norm == "" || norm == "." || norm == ".." || strings.HasPrefix(norm, "../") {
+		return "", fmt.Errorf("invalid storage key: path traversal detected in %q", rawURL)
+	}
+
+	for _, part := range strings.Split(clean, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("invalid storage key: path traversal detected in %q", rawURL)
+		}
+	}
+
+	return norm, nil
+}
+
 // DownloadExport handles GET /api/v1/exports/{id}/download
 func (s *Server) DownloadExport(w http.ResponseWriter, r *http.Request) {
 	userID := s.getUserID(r)
@@ -1962,56 +2007,83 @@ func (s *Server) DownloadExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileURL := exp.FileURL
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"comic_%s.pdf\"", exp.ProjectID))
-
-	// If HTTP URL, proxy it
-	if strings.HasPrefix(fileURL, "http://") || strings.HasPrefix(fileURL, "https://") {
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, fileURL, nil)
-		if err == nil {
-			resp, err := http.DefaultClient.Do(req)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				defer resp.Body.Close()
-				w.WriteHeader(http.StatusOK)
-				_, _ = io.Copy(w, resp.Body)
-				return
-			}
-		}
+	fileURL := strings.TrimSpace(exp.FileURL)
+	if fileURL == "" {
+		writeError(w, http.StatusNotFound, "Export file not found")
+		return
 	}
 
-	// Local file
-	if strings.HasPrefix(fileURL, "/") {
+	// 1. Local file (if fileURL is a relative local path that doesn't target fake storage)
+	if strings.HasPrefix(fileURL, "/") && !strings.Contains(fileURL, "/storage/fake/") {
 		mediaDir := os.Getenv("MEDIA_DIR")
 		if mediaDir == "" {
 			mediaDir = "./media"
 		}
 		localPath := filepath.Join(mediaDir, filepath.Clean(fileURL))
 		if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
+			w.Header().Set("Content-Type", "application/pdf")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"comic_%s.pdf\"", exp.ProjectID))
 			http.ServeFile(w, r, localPath)
 			return
 		}
 	}
 
-	// Proxy to Python fake storage if AIClient has BaseURL
-	if s.AIClient != nil {
-		if client, ok := s.AIClient.(*gen.AIServiceClient); ok && client.BaseURL != "" {
-			cleanKey := strings.TrimPrefix(fileURL, "/")
-			targetURL := strings.TrimRight(client.BaseURL, "/") + "/storage/fake/" + cleanKey
-			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
-			if err == nil {
-				resp, err := http.DefaultClient.Do(req)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					defer resp.Body.Close()
-					w.WriteHeader(http.StatusOK)
-					_, _ = io.Copy(w, resp.Body)
-					return
-				}
-			}
-		}
+	// 2. Resolve upstream target URL
+	var targetURL string
+	var aiBaseURL string
+	if client, ok := s.AIClient.(*gen.AIServiceClient); ok && client.BaseURL != "" {
+		aiBaseURL = client.BaseURL
 	}
 
-	// Minimal valid PDF stub fallback
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("%PDF-1.4\n% Assembled comic export\n%%EOF\n"))
+	if aiBaseURL != "" {
+		key, err := DeriveStorageKey(fileURL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid storage key")
+			return
+		}
+		targetURL = strings.TrimRight(aiBaseURL, "/") + "/storage/fake/" + key
+	} else if strings.HasPrefix(fileURL, "http://") || strings.HasPrefix(fileURL, "https://") {
+		targetURL = fileURL
+	} else {
+		key, err := DeriveStorageKey(fileURL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid storage key")
+			return
+		}
+		targetURL = "http://localhost:8000/storage/fake/" + key
+	}
+
+	// 3. Proxy request upstream
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "Failed to create upstream request")
+		return
+	}
+
+	httpClient := http.DefaultClient
+	if client, ok := s.AIClient.(*gen.AIServiceClient); ok && client.HTTPClient != nil {
+		httpClient = client.HTTPClient
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "Failed to retrieve export file from storage")
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"comic_%s.pdf\"", exp.ProjectID))
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.Copy(w, resp.Body)
+		return
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		writeError(w, http.StatusNotFound, "Export file not found")
+		return
+	}
+
+	writeError(w, http.StatusBadGateway, "Failed to retrieve export file from storage")
 }

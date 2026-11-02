@@ -43,6 +43,9 @@ Adapters are selected via environment variables, defaulting to `fake`:
 - `ADAPTER_QUEUE`: `fake` (default) or `redis` (stub)
 - `ADAPTER_CLOCK`: `fake` (default) or `system`
 
+Storage configuration:
+- `STORAGE_BASE_URL`: Base URL used by `FakeStorageAdapter` to construct stored artifact URLs, defaulting to `http://localhost:8000/storage/fake`. In containerized or ephemeral test environments, set this to the reachable AI service address (e.g. `http://ai:8000/storage/fake`).
+
 Meta adapters are inert stubs that raise `RuntimeError` if instantiated, ensuring no live API calls or keys are attempted.
 
 ## AI Services (`app/services/`)

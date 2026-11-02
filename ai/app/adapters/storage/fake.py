@@ -1,15 +1,23 @@
 """In-memory fake storage adapter for hermetic tests and development."""
 
+import os
 import posixpath
 
 from .port import StoragePort
+
+DEFAULT_STORAGE_BASE_URL = "http://localhost:8000/storage/fake"
 
 
 class FakeStorageAdapter(StoragePort):
     """In-memory object storage adapter with local URL generation and traversal prevention."""
 
-    def __init__(self, base_url: str = "http://localhost:8000/storage/fake"):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str | None = None):
+        url = (
+            base_url
+            if base_url is not None
+            else os.getenv("STORAGE_BASE_URL", DEFAULT_STORAGE_BASE_URL)
+        )
+        self.base_url = (url or DEFAULT_STORAGE_BASE_URL).rstrip("/")
         self._blobs: dict[str, bytes] = {}
         self._content_types: dict[str, str] = {}
 

@@ -57,6 +57,7 @@ services:
       ADAPTER_STORAGE: "fake"
       ADAPTER_QUEUE: "fake"
       ADAPTER_CLOCK: "fake"
+      STORAGE_BASE_URL: "http://ai:8000/storage/fake"
       REDIS_URL: "redis://redis:6379/0"
     ports:
       - "8000:8000"
