@@ -100,7 +100,7 @@ icomic/
 | **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, line art, colour suggestion, PDF assembly |
 | **PostgreSQL** | Postgres | Durable project state, credit ledger, job records, stage approvals, colour palettes |
 | **Redis** | Redis | Job queue; pending, running, retried, and cancelled job envelopes |
-| **Object storage** | S3-compatible | Generated images (draft, line art, reference), exported PDFs |
+| **Object storage** | S3-compatible | Approved working copies (draft, line art, reference), exported PDFs (generated images are Meta-hosted) |
 
 **Communication rules:**
 
@@ -203,6 +203,7 @@ Real adapters are never imported in tests or CI.
 - Must preserve the `provenance_metadata` field from the response without modification.
 - Must handle HTTP 400 content-policy errors by returning a structured error (not raising an unhandled exception) so the Go backend can surface a plain user message.
 - Must NOT be called before the approval gate in Go has recorded the user's approval.
+- Returns Meta-hosted URLs or Meta-delivered bytes per Meta's API; the image hosting seam (ImageHostingSeam in Go, ImageHostingPolicy in Python) stays configurable.
 
 ---
 
@@ -446,7 +447,7 @@ The following assumptions were made in drafting this document:
 3. **Paint-bucket fill is entirely client-side.** The colour editor runs in the browser using Canvas API flood-fill. No AI call is made during fill. Only the palette suggestion step costs a language/vision model call.
 4. **Gap-closing is a client-side algorithm.** Morphological dilation/erosion and the manual gap-closer stroke tool run in the browser; no server round-trip.
 5. **The Python service is an internal service only.** It is not exposed to the internet. Only the Go API is public. This is enforced by Docker network configuration.
-6. **Self-hosted language and vision models are in scope; self-hosted image models are not.** Meta has released open-weights language and vision models (Llama 3.x, Llama 3.2 Vision). No open-weights image model from Meta exists. The image adapter port keeps this swappable, while the image hosting decision remains an open owner decision and must not be decided.
+6. **Self-hosted language and vision models are in scope; self-hosted image models are not.** Meta has released open-weights language and vision models (Llama 3.x, Llama 3.2 Vision). No open-weights image model from Meta exists. Per the owner decision of 2026-11-02, generated images are Meta-hosted: the real image adapter returns Meta-hosted URLs or Meta-delivered bytes per Meta's API, and the image hosting seam (ImageHostingSeam in Go, ImageHostingPolicy in Python) stays configurable. Our own storage still holds approved working copies and export PDFs as the architecture already says. The image adapter port keeps this swappable.
 7. **Colour suggestion uses the vision model (image + panel context -> palette).** This is consistent with the spec requirement to suggest per-region colours based on the actual line art.
 8. **`idempotency_key` on generation jobs is a UUID set by Go at job creation.** It is stored in `generation_jobs` with a unique constraint. Postgres enforces uniqueness; the application does not need a separate lock.
 9. **Age gate is deferred.** The enforced age gate and date-of-birth collection are removed from the build scope; a warning that users must be 18+ (the threshold may be 21, to be confirmed with the owner) will be added in a later release.

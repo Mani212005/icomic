@@ -50,7 +50,7 @@ User age warning (18+ or 21+, to be confirmed with owner) is deferred to a later
 
 All AI features use Meta models only (Meta Model API at `api.meta.ai`).
 
-Image generation uses `muse-image-1.0`, which is currently available only as a hosted API; no open-weights image model from Meta exists. The image generation adapter port must remain independent so a future self-hosted or alternative image model can be substituted without rewriting the product. The hosting decision for image generation remains an open owner decision and must not be decided.
+Image generation uses `muse-image-1.0`, which is currently available only as a hosted API; no open-weights image model from Meta exists. Per the owner decision of 2026-11-02, generated images are Meta-hosted: the real image adapter returns Meta-hosted URLs or Meta-delivered bytes per Meta's API, and the image hosting seam (ImageHostingSeam in Go, ImageHostingPolicy in Python) stays configurable. Our own storage still holds approved working copies and export PDFs as the architecture already says. The image generation adapter port must remain independent so a future self-hosted or alternative image model can be substituted without rewriting the product.
 
 Meta API keys come only after the whole project is built on fakes, with the Meta adapters inert behind the ports until then. The product must run end-to-end with no network access and no API key in development and test, using deterministic fake adapters (see section 8 and ARCHITECTURE.md).
 
@@ -427,7 +427,7 @@ The system must support two model access methods:
 1. Meta-hosted API (`api.meta.ai`)
 2. Self-hosted Meta models (open-weights, where available)
 
-**Image generation note:** No open-weights image model from Meta exists. `muse-image-1.0` is hosted-only. The image adapter port must stay independent; the hosting decision remains an open owner decision and must not be decided.
+**Image generation note:** No open-weights image model from Meta exists. `muse-image-1.0` is hosted-only. Per the owner decision of 2026-11-02, generated images are Meta-hosted: the real image adapter returns Meta-hosted URLs or Meta-delivered bytes per Meta's API, and the image hosting seam (ImageHostingSeam in Go, ImageHostingPolicy in Python) stays configurable. Our own storage still holds approved working copies and export PDFs as the architecture already says. The image adapter port must stay independent so a future alternative image model can be substituted without rewriting the product.
 
 The system must verify that the selected model supports the required task.
 
@@ -1323,8 +1323,8 @@ The user can edit the complete comic book and download a PDF.
 - Track the cost of every generation.
 - Require approval before paid generation.
 - Use background workers for image generation.
-- Store generated images in object storage.
 - Store project metadata in PostgreSQL.
+- Generated images are Meta-hosted (seam stays configurable); our own storage holds approved working copies and export PDFs.
 - Keep the AI model layer independent (ports and adapters).
 - Use Meta models only.
 - Do not build video generation in the first release.
