@@ -1,4 +1,4 @@
-.PHONY: all test lint test-contracts test-migrations test-backend test-ai test-frontend dev clean migrate-up migrate-down migrate-seed
+.PHONY: all test lint test-contracts test-migrations test-backend test-ai test-frontend lint-frontend dev clean migrate-up migrate-down migrate-seed
 
 all: lint test
 
@@ -15,7 +15,7 @@ test-ai:
 	( cd ai && uv run pytest -v )
 
 test-frontend:
-	( cd frontend && npm test )
+	( cd frontend && npm test && npm run build )
 
 test: test-contracts test-migrations test-backend test-ai test-frontend
 
@@ -25,7 +25,10 @@ lint-backend:
 lint-ai:
 	( cd ai && uv run ruff check . && uv run ruff format --check . )
 
-lint: lint-backend lint-ai test-contracts test-migrations
+lint-frontend:
+	( cd frontend && npm run check )
+
+lint: lint-backend lint-ai lint-frontend test-contracts test-migrations
 
 dev:
 	docker compose -f deploy/docker-compose.yml up --build
