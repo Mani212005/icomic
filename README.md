@@ -53,9 +53,7 @@ icomic/
 │   └── requirements.txt
 ├── deploy/
 │   ├── docker-compose.yml      # Local dev stack (Postgres, Redis, services)
-│   ├── docker-compose.prod.yml # Production overrides
-│   ├── migrations/             # PostgreSQL migration files (up and down)
-│   └── seeds.sql               # Database seed data for plans
+│   └── docker-compose.prod.yml # Production overrides
 ├── docs/                       # Specifications and architecture docs
 └── .github/workflows/          # CI workflows
 ```
@@ -80,34 +78,58 @@ Services started:
 
 All unit and boundary-contract tests run hermetically with zero external dependencies and zero live network calls.
 
-Run all tests across the monorepo:
+Run all linters, tests, builds, and hermetic guards across the monorepo:
 
 ```bash
-make test
+make check
 ```
 
-Or test each service individually:
+Or run individual phases:
 
 ```bash
-# 1. Contract and JSON Schema validation
+# 1. Run all tests and hermetic guard
+make test
+
+# 2. Run all linters (Go vet, Ruff, svelte-check)
+make lint
+
+# 3. Build all components (Go backend, Svelte frontend)
+make build
+```
+
+Individual service targets:
+
+```bash
+# Hermetic guard validation
+make guard-hermetic
+
+# Contract and JSON Schema validation
 make test-contracts
 
-# 2. Database migrations and schema structural validation
+# Database migrations and schema structural validation
 make test-migrations
 
-# 3. Go Backend unit and contract tests
+# Go Backend checks, tests, and build
+make fmt-backend
+make lint-backend
 make test-backend
+make build-backend
 
-# 4. Python AI service contract tests
+# Python AI service checks and tests
+make lint-ai
 make test-ai
 
-# 5. Frontend unit tests
+# Frontend checks, tests, and build
+make lint-frontend
 make test-frontend
+make build-frontend
 ```
+
+For full details on CI jobs, local execution, and toolchain configurations, see [docs/CI.md](docs/CI.md).
 
 ## Continuous Integration
 
-GitHub Actions workflows run on every push and pull request:
+GitHub Actions workflows run on every push to `main` and on pull requests:
 
-- `.github/workflows/ci.yml`: Runs contract validation, database migration structural validation, Go lint and tests, Python Ruff checks and pytest, and Svelte frontend tests and build.
-- `.github/workflows/lint-openapi.yml`: Validates OpenAPI specifications and JSON schemas whenever `contracts/**` changes.
+- `.github/workflows/ci.yml`: Complete CI pipeline running hermetic guard, contracts validation, database migrations validation, Go lint/tests/build, Python AI Ruff/pytest with locked dependencies, Svelte lint/tests/build, and aggregate `ci-success` gate check.
+- `.github/workflows/lint-openapi.yml`: Path-filtered workflow validating OpenAPI specifications and JSON schemas whenever `contracts/**` changes.
