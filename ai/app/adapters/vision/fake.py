@@ -6,11 +6,11 @@ from .port import ColourItem, PaletteSuggestion, VisionPort
 class FakeVisionAdapter(VisionPort):
     """Deterministic vision model adapter providing fixed review and palette responses."""
 
-    def review(self, model: str, image_bytes: bytes, prompt: str) -> str:
+    def review(self, model: str, image_bytes: bytes, prompt: str, **kwargs) -> str:
         return "OK: Image passes quality and composition checks."
 
     def suggest_palette(
-        self, model: str, image_bytes: bytes, panel_context: str
+        self, model: str, image_bytes: bytes, panel_context: str, **kwargs
     ) -> PaletteSuggestion:
         return PaletteSuggestion(
             theme="Neo-Noir Sunset",

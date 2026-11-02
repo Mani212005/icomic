@@ -28,7 +28,7 @@ Per architecture rules:
 Default adapters for local development and CI:
 - `FakeLanguageAdapter`: Deterministic responses based on input SHA-256 hash.
 - `FakeVisionAdapter`: Fixed palette suggestions with valid hex colours.
-- `FakeImageAdapter`: Generates valid 64x64 test PNGs and deterministic C2PA provenance metadata.
+- `FakeImageAdapter`: Generates valid 64x64 test images and deterministic C2PA provenance metadata.
 - `FakeStorageAdapter`: In-memory object store.
 - `FakeQueueAdapter`: In-process synchronous queue enforcing idempotency deduplication.
 - `FakeClockAdapter`: Controllable time starting from a fixed UTC epoch.
@@ -49,8 +49,11 @@ Storage configuration:
 When `meta` is selected, adapters read credentials lazily at construction time.
 If credentials are not configured, adapters raise a descriptive `RuntimeError`.
 All outbound HTTP interactions support injectable transports for hermetic unit testing.
-A dedicated smoke verification script is provided in `scripts/manual/meta_live_check.py` for manual validation.
+A dedicated smoke verification script is provided in `scripts/manual/meta_live_check.py` for manual validation, generating a sanitized `.live-diagnostics.json` record on every run.
 Contributor tier models (`*-contributor`) train Meta models on submitted prompts and completions, so all Meta adapters reject them by default unless `META_ALLOW_CONTRIBUTOR_TIER=1` is set.
+Adapter parsers robustly handle string and multipart content, expose reasoning tokens and `finish_reason` on `TokenUsage`, and raise `MetaEmptyResponseError` on empty content.
+The vision adapter forwards `max_tokens` and `temperature` from port kwargs.
+The image adapter detects real media types (PNG, JPEG, WebP, GIF) by magic numbers without re-encoding, exposes `media_type` on `ImageResult`, and inspects C2PA JUMBF containers in JPEG APP11 and WebP containers.
 
 ## AI Services (`app/services/`)
 
@@ -61,7 +64,7 @@ Contributor tier models (`*-contributor`) train Meta models on submitted prompts
 - `LineArtService`: Closed-contour black-and-white inking generation from approved draft.
 - `ColourService`: Region-based palette suggestions using multimodal vision models.
 - `ModerationService`: Pre-moderation screening against prohibited content guidelines.
-- `PdfAssemblyService`: Assembles completed comic book pages into an exportable PDF preserving provenance and AI disclosures.
+- `PdfAssemblyService`: Assembles completed comic book pages into an exportable PDF preserving provenance and AI disclosures, natively embedding JPEG (DCTDecode) and PNG (FlateDecode) while raising `UnsupportedImageMediaError` on WebP.
 
 ## Policy Seams and Owner Decisions (`app/policies.py`)
 

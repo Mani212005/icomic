@@ -15,6 +15,8 @@ class TokenUsage:
     input_tokens: int
     output_tokens: int
     total_tokens: int
+    reasoning_tokens: int | None = None
+    finish_reason: str | None = None
 
 
 @runtime_checkable

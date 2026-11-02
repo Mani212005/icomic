@@ -15,6 +15,10 @@ class StoragePort(Protocol):
         """Retrieve stored blob."""
         ...
 
+    def get_content_type(self, key: str) -> str | None:
+        """Retrieve content type of stored blob if recorded."""
+        ...
+
     def delete(self, key: str) -> None:
         """Delete stored blob."""
         ...

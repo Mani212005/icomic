@@ -43,7 +43,10 @@ if str(AI_PATH) not in sys.path:
 from app.adapters.image.meta import MetaImageAdapter  # noqa: E402
 from app.adapters.language.meta import MetaLanguageAdapter  # noqa: E402
 from app.adapters.language.port import Message  # noqa: E402
-from app.adapters.meta_http import MetaHttpClient  # noqa: E402
+from app.adapters.meta_http import (  # noqa: E402
+    MetaHttpClient,
+    detect_image_media_type,
+)
 from app.adapters.vision.meta import MetaVisionAdapter  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -55,13 +58,78 @@ PRICE_OUTPUT_TOKEN_PER_M: float = 4.25    # $4.25 per 1,000,000 output tokens
 PRICE_PER_IMAGE_FLAT_USD: float = 0.01    # $0.01 per muse-image-1.0 call
 DEFAULT_BUDGET_USD: float = 5.00
 
-# Worst-case token estimates for capped calls
+# Worst-case token estimates for capped calls (64 output tokens for reasoning models)
 WORST_CASE_TEXT_INPUT_TOKENS = 60
-WORST_CASE_TEXT_OUTPUT_TOKENS = 10
+WORST_CASE_TEXT_OUTPUT_TOKENS = 64
 WORST_CASE_VISION_INPUT_TOKENS = 350
 WORST_CASE_VISION_OUTPUT_TOKENS = 20
 
 DEFAULT_LEDGER_PATH = REPO_ROOT / ".live-spend.jsonl"
+DEFAULT_DIAGNOSTICS_PATH = REPO_ROOT / ".live-diagnostics.json"
+
+
+def parse_image_dimensions(data: bytes) -> dict[str, int] | None:
+    """Parse image dimensions (width, height) without external dependencies."""
+    if not data:
+        return None
+    # PNG: IHDR chunk has width and height at offset 16..24
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+        try:
+            w, h = struct.unpack(">II", data[16:24])
+            return {"width": w, "height": h}
+        except struct.error:
+            pass
+    # JPEG: Scan SOF markers
+    if data.startswith(b"\xff\xd8"):
+        pos = 2
+        length = len(data)
+        while pos < length - 1:
+            if data[pos] != 0xFF:
+                pos += 1
+                continue
+            while pos < length and data[pos] == 0xFF:
+                pos += 1
+            if pos >= length:
+                break
+            marker = data[pos]
+            pos += 1
+            if marker in (0xD8, 0xD9):
+                continue
+            if marker == 0xDA:
+                break
+            if pos + 2 > length:
+                break
+            seg_len = struct.unpack(">H", data[pos : pos + 2])[0]
+            if seg_len < 2 or pos + seg_len > length:
+                break
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                h = struct.unpack(">H", data[pos + 3 : pos + 5])[0]
+                w = struct.unpack(">H", data[pos + 5 : pos + 7])[0]
+                return {"width": w, "height": h}
+            pos += seg_len
+    # GIF: Dimensions at offset 6..10
+    if data.startswith((b"GIF87a", b"GIF89a")) and len(data) >= 10:
+        try:
+            w, h = struct.unpack("<HH", data[6:10])
+            return {"width": w, "height": h}
+        except struct.error:
+            pass
+    # WebP:
+    if len(data) >= 30 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        chunk_type = data[12:16]
+        if chunk_type == b"VP8 " and len(data) >= 30:
+            w, h = struct.unpack("<HH", data[26:30])
+            return {"width": w & 0x3FFF, "height": h & 0x3FFF}
+        elif chunk_type == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
+            b0, b1, b2, b3 = data[21:25]
+            w = 1 + (((b1 & 0x3F) << 8) | b0)
+            h = 1 + (((b3 & 0x0F) << 10) | (b2 << 2) | ((b1 & 0xC0) >> 6))
+            return {"width": w, "height": h}
+        elif chunk_type == b"VP8X" and len(data) >= 30:
+            w = 1 + data[24] + (data[25] << 8) + (data[26] << 16)
+            h = 1 + data[27] + (data[28] << 8) + (data[29] << 16)
+            return {"width": w, "height": h}
+    return None
 
 
 def calculate_token_cost(input_tokens: int, output_tokens: int) -> float:
@@ -282,6 +350,7 @@ class LiveCheckRunner:
         base_url: str = "https://api.meta.ai/v1",
         budget_usd: float = DEFAULT_BUDGET_USD,
         ledger: SpendLedger | None = None,
+        diagnostics_path: Path | None = None,
         transport: httpx.BaseTransport | None = None,
         clock: Callable[[], float] | None = None,
     ):
@@ -289,6 +358,7 @@ class LiveCheckRunner:
         self.base_url = base_url
         self.budget_usd = budget_usd
         self.ledger = ledger or SpendLedger()
+        self.diagnostics_path = diagnostics_path or DEFAULT_DIAGNOSTICS_PATH
         self.transport = transport
         self._clock = clock or time.monotonic
 
@@ -301,12 +371,30 @@ class LiveCheckRunner:
 
         Returns (success: bool, machine_readable_summary: str).
         """
+        diagnostics: dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "stages": {},
+        }
+
+        def save_diagnostics() -> None:
+            try:
+                self.diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.diagnostics_path, "w", encoding="utf-8") as f:
+                    json.dump(diagnostics, f, indent=2)
+                    f.write("\n")
+            except Exception as e:
+                print(
+                    f"Warning: Failed to write diagnostics file {self.diagnostics_path}: {e}",
+                    file=sys.stderr,
+                )
+
         # Ensure ledger accessibility
         try:
             self.ledger.verify_accessible()
         except Exception as exc:
             err_msg = f"Spend ledger error: {exc}"
             print(f"[ABORTED] {err_msg}", file=sys.stderr)
+            save_diagnostics()
             summary = f"STATUS: FAIL stage=ledger reason={json.dumps(str(exc))} spend_usd=0.000000 cumulative_spend_usd=0.000000 calls=0/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
             return False, summary
@@ -333,12 +421,13 @@ class LiveCheckRunner:
                 "\n[ABORTED] Safety gate active: META_LIVE_CHECK must be '1' for live calls.\n",
                 file=sys.stderr,
             )
+            save_diagnostics()
             summary = "STATUS: FAIL reason=\"safety_gate_active\" calls=0/3"
             print(summary)
             return False, summary
 
         # ---------------------------------------------------------------------
-        # Stage 1: Text Call (MetaLanguageAdapter) - Cheapest ($~0.0001)
+        # Stage 1: Text Call (MetaLanguageAdapter) - Cheapest ($~0.0003)
         # ---------------------------------------------------------------------
         stage_worst_case = estimate_call_worst_case("language")
         projected = cumulative_spend + session_spend + stage_worst_case
@@ -348,6 +437,7 @@ class LiveCheckRunner:
                 f"${projected:.6f} exceeds budget ceiling ${self.budget_usd:.2f}.",
                 file=sys.stderr,
             )
+            save_diagnostics()
             summary = f"STATUS: FAIL stage=language reason=\"budget_exceeded\" spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
             return False, summary
@@ -367,7 +457,7 @@ class LiveCheckRunner:
                 http_client=lang_client,
             )
 
-            messages = [Message(role="user", content="Reply with one word: ping")]
+            messages = [Message(role="user", content="Reply with a short one-sentence greeting.")]
             response_text = lang_adapter.complete(
                 model=self.lang_model,
                 messages=messages,
@@ -388,6 +478,24 @@ class LiveCheckRunner:
                 output_tokens=out_tokens,
             )
 
+            diagnostics["stages"]["language"] = {
+                "status_code": lang_adapter.last_status_code,
+                "stage_status": "SUCCESS",
+                "top_level_keys": lang_adapter.last_response_keys,
+                "finish_reason": lang_adapter.last_finish_reason,
+                "usage": {
+                    "input_tokens": in_tokens,
+                    "output_tokens": out_tokens,
+                    "prompt_tokens": in_tokens,
+                    "completion_tokens": out_tokens,
+                    "total_tokens": in_tokens + out_tokens,
+                    "reasoning_tokens": lang_adapter.last_usage.reasoning_tokens
+                    if lang_adapter.last_usage
+                    else None,
+                },
+                "content_length": len(response_text),
+            }
+
             print("  - Status: SUCCESS")
             print(f"  - Response size:   {len(response_text)} chars")
             print(f"  - Request ID:      {lang_adapter.last_request_id or 'none'}")
@@ -405,6 +513,35 @@ class LiveCheckRunner:
                 output_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
                 failed=True,
             )
+            top_keys = (
+                sorted(exc.details.keys())
+                if isinstance(getattr(exc, "details", None), dict)
+                else []
+            )
+            diagnostics["stages"]["language"] = {
+                "status_code": getattr(exc, "status_code", None),
+                "stage_status": "FAILED",
+                "top_level_keys": top_keys,
+                "finish_reason": getattr(exc, "finish_reason", None),
+                "usage": {
+                    "prompt_tokens": exc.token_usage.input_tokens
+                    if getattr(exc, "token_usage", None)
+                    else None,
+                    "completion_tokens": exc.token_usage.output_tokens
+                    if getattr(exc, "token_usage", None)
+                    else None,
+                    "total_tokens": exc.token_usage.total_tokens
+                    if getattr(exc, "token_usage", None)
+                    else None,
+                    "reasoning_tokens": exc.token_usage.reasoning_tokens
+                    if getattr(exc, "token_usage", None)
+                    else None,
+                }
+                if getattr(exc, "token_usage", None)
+                else None,
+                "content_length": 0,
+            }
+            save_diagnostics()
             print(f"  - Status: FAILED ({type(exc).__name__}: {exc})", file=sys.stderr)
             summary = f"STATUS: FAIL stage=language reason={json.dumps(str(exc))} spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
@@ -421,6 +558,7 @@ class LiveCheckRunner:
                 f"${projected:.6f} exceeds budget ceiling ${self.budget_usd:.2f}.",
                 file=sys.stderr,
             )
+            save_diagnostics()
             summary = f"STATUS: FAIL stage=vision reason=\"budget_exceeded\" spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
             return False, summary
@@ -445,6 +583,7 @@ class LiveCheckRunner:
                 model=self.vis_model,
                 image_bytes=tiny_png,
                 prompt="Brief one-sentence review.",
+                max_tokens=WORST_CASE_VISION_OUTPUT_TOKENS,
             )
 
             in_tokens = vis_adapter.last_usage.input_tokens if vis_adapter.last_usage else 100
@@ -460,6 +599,24 @@ class LiveCheckRunner:
                 input_tokens=in_tokens,
                 output_tokens=out_tokens,
             )
+
+            diagnostics["stages"]["vision"] = {
+                "status_code": vis_adapter.last_status_code,
+                "stage_status": "SUCCESS",
+                "top_level_keys": vis_adapter.last_response_keys,
+                "finish_reason": vis_adapter.last_finish_reason,
+                "usage": {
+                    "input_tokens": in_tokens,
+                    "output_tokens": out_tokens,
+                    "prompt_tokens": in_tokens,
+                    "completion_tokens": out_tokens,
+                    "total_tokens": in_tokens + out_tokens,
+                    "reasoning_tokens": vis_adapter.last_usage.reasoning_tokens
+                    if vis_adapter.last_usage
+                    else None,
+                },
+                "content_length": len(review_text),
+            }
 
             print("  - Status: SUCCESS")
             print(f"  - Review size:     {len(review_text)} chars")
@@ -478,6 +635,35 @@ class LiveCheckRunner:
                 output_tokens=WORST_CASE_VISION_OUTPUT_TOKENS,
                 failed=True,
             )
+            top_keys = (
+                sorted(exc.details.keys())
+                if isinstance(getattr(exc, "details", None), dict)
+                else []
+            )
+            diagnostics["stages"]["vision"] = {
+                "status_code": getattr(exc, "status_code", None),
+                "stage_status": "FAILED",
+                "top_level_keys": top_keys,
+                "finish_reason": getattr(exc, "finish_reason", None),
+                "usage": {
+                    "prompt_tokens": exc.token_usage.input_tokens
+                    if getattr(exc, "token_usage", None)
+                    else None,
+                    "completion_tokens": exc.token_usage.output_tokens
+                    if getattr(exc, "token_usage", None)
+                    else None,
+                    "total_tokens": exc.token_usage.total_tokens
+                    if getattr(exc, "token_usage", None)
+                    else None,
+                    "reasoning_tokens": exc.token_usage.reasoning_tokens
+                    if getattr(exc, "token_usage", None)
+                    else None,
+                }
+                if getattr(exc, "token_usage", None)
+                else None,
+                "content_length": 0,
+            }
+            save_diagnostics()
             print(f"  - Status: FAILED ({type(exc).__name__}: {exc})", file=sys.stderr)
             summary = f"STATUS: FAIL stage=vision reason={json.dumps(str(exc))} spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
@@ -494,6 +680,7 @@ class LiveCheckRunner:
                 f"${projected:.6f} exceeds budget ceiling ${self.budget_usd:.2f}.",
                 file=sys.stderr,
             )
+            save_diagnostics()
             summary = f"STATUS: FAIL stage=image reason=\"budget_exceeded\" spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
             return False, summary
@@ -531,12 +718,32 @@ class LiveCheckRunner:
                 image_count=1,
             )
 
-            is_png = result.image_bytes.startswith(b"\x89PNG")
-            has_c2pa = result.provenance_metadata.get("c2pa", {}).get("manifest_marker_detected", False)
+            media_type = detect_image_media_type(result.image_bytes)
+            has_c2pa = result.provenance_metadata.get("c2pa", {}).get(
+                "manifest_marker_detected", False
+            )
+            dims = parse_image_dimensions(result.image_bytes)
+            prov_signals = ("provenance", "c2pa", "watermark", "signature", "manifest")
+            prov_keys = [
+                k for k in img_adapter.last_response_keys if any(sig in k.lower() for sig in prov_signals)
+            ]
+
+            diagnostics["stages"]["image"] = {
+                "status_code": img_adapter.last_status_code,
+                "stage_status": "SUCCESS",
+                "top_level_keys": img_adapter.last_response_keys,
+                "content_length": len(result.image_bytes),
+                "first_12_bytes_hex": result.image_bytes[:12].hex()
+                if len(result.image_bytes) >= 12
+                else result.image_bytes.hex(),
+                "detected_media_type": media_type,
+                "image_dimensions": dims,
+                "provenance_keys": prov_keys,
+            }
 
             print("  - Status: SUCCESS")
             print(f"  - Bytes received:  {len(result.image_bytes)} bytes")
-            print(f"  - PNG valid:       {is_png}")
+            print(f"  - Media type:      {media_type}")
             print(f"  - C2PA Marker:     {'DETECTED' if has_c2pa else 'NOT DETECTED'}")
             print(f"  - Request ID:      {result.request_id or 'none'}")
             print(f"  - Step Cost:       ${call_cost:.6f} USD")
@@ -551,6 +758,24 @@ class LiveCheckRunner:
                 image_count=1,
                 failed=True,
             )
+            top_keys = (
+                sorted(exc.details.keys())
+                if isinstance(getattr(exc, "details", None), dict)
+                else []
+            )
+            prov_signals = ("provenance", "c2pa", "watermark", "signature", "manifest")
+            prov_keys = [k for k in top_keys if any(sig in k.lower() for sig in prov_signals)]
+            diagnostics["stages"]["image"] = {
+                "status_code": getattr(exc, "status_code", None),
+                "stage_status": "FAILED",
+                "top_level_keys": top_keys,
+                "content_length": 0,
+                "first_12_bytes_hex": None,
+                "detected_media_type": None,
+                "image_dimensions": None,
+                "provenance_keys": prov_keys,
+            }
+            save_diagnostics()
             print(f"  - Status: FAILED ({type(exc).__name__}: {exc})", file=sys.stderr)
             summary = f"STATUS: FAIL stage=image reason={json.dumps(str(exc))} spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
             print(summary)
@@ -559,6 +784,7 @@ class LiveCheckRunner:
         # ---------------------------------------------------------------------
         # Final Summary
         # ---------------------------------------------------------------------
+        save_diagnostics()
         print("\n" + "=" * 65)
         print("[ALL CHECKS PASSED] Meta AI live integration confirmed working.")
         print(f"Session spend:      ${session_spend:.6f} USD")

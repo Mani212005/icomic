@@ -15,6 +15,55 @@ from ..adapters.storage.port import StoragePort
 from ..gen.models import PageExportItem
 
 
+class UnsupportedImageMediaError(ValueError):
+    """Raised when an image media type cannot be embedded in PDF without loss of provenance."""
+
+
+def parse_jpeg_info(data: bytes) -> tuple[int, int, str]:
+    """Parse JPEG dimensions (width, height) and color space without re-encoding.
+
+    Extracts SOF segment parameters: precision, height, width, and number of components.
+    """
+    if not data.startswith(b"\xff\xd8"):
+        raise ValueError("Not a valid JPEG binary: missing SOI signature")
+
+    pos = 2
+    length = len(data)
+    while pos < length - 1:
+        if data[pos] != 0xFF:
+            pos += 1
+            continue
+        while pos < length and data[pos] == 0xFF:
+            pos += 1
+        if pos >= length:
+            break
+        marker = data[pos]
+        pos += 1
+        if marker in (0xD8, 0xD9):  # SOI, EOI
+            continue
+        if marker == 0xDA:  # SOS: Start of Scan (entropy-coded stream starts)
+            break
+        if pos + 2 > length:
+            break
+        seg_len = struct.unpack(">H", data[pos : pos + 2])[0]
+        if seg_len < 2 or pos + seg_len > length:
+            break
+        # SOF markers: 0xC0 .. 0xCF except 0xC4 (DHT), 0xC8 (JPG), 0xCC (DAC)
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            height = struct.unpack(">H", data[pos + 3 : pos + 5])[0]
+            width = struct.unpack(">H", data[pos + 5 : pos + 7])[0]
+            components = data[pos + 7]
+            cs = (
+                "/DeviceGray"
+                if components == 1
+                else ("/DeviceRGB" if components == 3 else "/DeviceCMYK")
+            )
+            return width, height, cs
+        pos += seg_len
+
+    raise ValueError("Start of Frame (SOF) marker not found in JPEG data")
+
+
 def escape_pdf_string(text: str) -> str:
     """Escape text for inclusion in PDF literal string parenthesis."""
     cleaned = text.encode("ascii", "replace").decode("ascii")
@@ -293,20 +342,47 @@ class PdfWriter:
             if not img_bytes:
                 img_bytes = _generate_fallback_png()
 
-            try:
-                img_w, img_h, rgb_data = parse_png_to_rgb(img_bytes)
-            except (KeyError, ValueError, OSError, struct.error, zlib.error):
-                fallback = _generate_fallback_png()
-                img_w, img_h, rgb_data = parse_png_to_rgb(fallback)
+            if img_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                try:
+                    img_w, img_h, rgb_data = parse_png_to_rgb(img_bytes)
+                except (KeyError, ValueError, OSError, struct.error, zlib.error):
+                    fallback = _generate_fallback_png()
+                    img_w, img_h, rgb_data = parse_png_to_rgb(fallback)
 
-            compressed_rgb = zlib.compress(rgb_data)
-            img_xobj_id = self._add_object(
-                f"<< /Type /XObject /Subtype /Image /Width {img_w} /Height {img_h} "
-                f"/ColorSpace /DeviceRGB /BitsPerComponent 8 "
-                f"/Filter /FlateDecode /Length {len(compressed_rgb)} >>\nstream\n".encode()
-                + compressed_rgb
-                + b"\nendstream"
-            )
+                compressed_rgb = zlib.compress(rgb_data)
+                img_xobj_id = self._add_object(
+                    f"<< /Type /XObject /Subtype /Image /Width {img_w} /Height {img_h} "
+                    f"/ColorSpace /DeviceRGB /BitsPerComponent 8 "
+                    f"/Filter /FlateDecode /Length {len(compressed_rgb)} >>\nstream\n".encode()
+                    + compressed_rgb
+                    + b"\nendstream"
+                )
+            elif img_bytes.startswith(b"\xff\xd8"):
+                img_w, img_h, colorspace = parse_jpeg_info(img_bytes)
+                img_xobj_id = self._add_object(
+                    f"<< /Type /XObject /Subtype /Image /Width {img_w} /Height {img_h} "
+                    f"/ColorSpace {colorspace} /BitsPerComponent 8 "
+                    f"/Filter /DCTDecode /Length {len(img_bytes)} >>\nstream\n".encode()
+                    + img_bytes
+                    + b"\nendstream"
+                )
+            elif (
+                img_bytes.startswith(b"RIFF")
+                and len(img_bytes) >= 12
+                and img_bytes[8:12] == b"WEBP"
+            ):
+                page_num = p.get("page_number", idx)
+                raise UnsupportedImageMediaError(
+                    f"Unsupported image format 'image/webp' on page {page_num}. "
+                    "Native PDF embedding supports image/png and image/jpeg. Conversion to PNG/JPEG "
+                    "would strip C2PA provenance metadata and requires an owner decision."
+                )
+            else:
+                page_num = p.get("page_number", idx)
+                raise UnsupportedImageMediaError(
+                    f"Unsupported image format on page {page_num}. "
+                    "Native PDF embedding supports image/png and image/jpeg."
+                )
 
             # Scale and center image
             avail_w = self.width - 100

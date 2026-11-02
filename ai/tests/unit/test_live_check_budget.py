@@ -119,6 +119,7 @@ def test_budget_aborts_before_call_when_ceiling_exceeded(tmp_path: Path):
         base_url=MOCK_BASE_URL,
         budget_usd=0.005,
         ledger=ledger,
+        diagnostics_path=tmp_path / "diagnostics_abort.json",
         transport=create_success_transport(),
     )
 
@@ -152,6 +153,7 @@ def test_cumulative_spend_across_runs_triggers_budget_abort(tmp_path: Path):
         base_url=MOCK_BASE_URL,
         budget_usd=5.00,
         ledger=ledger,
+        diagnostics_path=tmp_path / "diagnostics_multi.json",
         transport=create_success_transport(),
     )
 
@@ -176,6 +178,7 @@ def test_stop_at_first_failure(tmp_path: Path):
         base_url=MOCK_BASE_URL,
         budget_usd=5.00,
         ledger=ledger,
+        diagnostics_path=tmp_path / "diagnostics_fail.json",
         transport=httpx.MockTransport(failing_handler),
     )
 
@@ -195,6 +198,7 @@ def test_key_never_printed_or_logged(tmp_path: Path, monkeypatch):
         base_url=MOCK_BASE_URL,
         budget_usd=5.00,
         ledger=ledger,
+        diagnostics_path=tmp_path / "diagnostics_privacy.json",
         transport=create_success_transport(),
     )
 
@@ -239,6 +243,7 @@ def test_successful_run_order_and_summary_line(tmp_path: Path):
         base_url=MOCK_BASE_URL,
         budget_usd=5.00,
         ledger=ledger,
+        diagnostics_path=tmp_path / "diagnostics_success.json",
         transport=httpx.MockTransport(tracking_handler),
     )
 
@@ -312,6 +317,7 @@ def test_failed_call_records_worst_case_cost_in_ledger_with_failed_flag(tmp_path
         base_url=MOCK_BASE_URL,
         budget_usd=5.00,
         ledger=ledger,
+        diagnostics_path=tmp_path / "diagnostics_failed_call.json",
         transport=httpx.MockTransport(failing_handler),
     )
 
@@ -341,6 +347,7 @@ def test_key_found_printed_without_length(tmp_path: Path, monkeypatch):
         base_url=MOCK_BASE_URL,
         budget_usd=5.00,
         ledger=ledger,
+        diagnostics_path=tmp_path / "diagnostics_key_display.json",
         transport=create_success_transport(),
     )
 
@@ -354,3 +361,66 @@ def test_key_found_printed_without_length(tmp_path: Path, monkeypatch):
     assert "[FOUND]" in out
     assert "length:" not in out
     assert str(len(TEST_SECRET_KEY)) not in out
+
+
+def test_diagnostics_file_sanitization_and_keys(tmp_path: Path):
+    """Diagnostics file must be created on run, contain all required sanitized keys, and never leak keys or prompts."""
+    ledger_file = tmp_path / "spend_diag.jsonl"
+    ledger = SpendLedger(ledger_path=ledger_file)
+    diag_file = tmp_path / ".live-diagnostics.json"
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        budget_usd=5.00,
+        ledger=ledger,
+        diagnostics_path=diag_file,
+        transport=create_success_transport(),
+    )
+
+    success, _ = runner.run()
+    assert success is True
+    assert diag_file.is_file(), "Diagnostics file was not created"
+
+    raw_text = diag_file.read_text(encoding="utf-8")
+    assert TEST_SECRET_KEY not in raw_text, "Secret key leaked in diagnostics file"
+    assert "Authorization" not in raw_text, "Headers leaked in diagnostics file"
+    assert "Say 'hello' in one word" not in raw_text, "Prompt leaked in diagnostics file"
+    assert "mock assistant response" not in raw_text, "Response body leaked in diagnostics file"
+
+    data = json.loads(raw_text)
+    assert "timestamp" in data
+    assert "stages" in data
+
+    stages = data["stages"]
+    assert "language" in stages
+    assert "vision" in stages
+    assert "image" in stages
+
+    lang_stage = stages["language"]
+    assert lang_stage["status_code"] == 200
+    assert isinstance(lang_stage["top_level_keys"], list)
+    assert "choices" in lang_stage["top_level_keys"]
+    assert lang_stage["finish_reason"] == "stop"
+    assert lang_stage["usage"]["input_tokens"] == 16
+    assert lang_stage["usage"]["output_tokens"] == 14
+    assert lang_stage["content_length"] > 0
+
+    vis_stage = stages["vision"]
+    assert vis_stage["status_code"] == 200
+    assert isinstance(vis_stage["top_level_keys"], list)
+    assert vis_stage["finish_reason"] == "stop"
+    assert vis_stage["usage"]["input_tokens"] == 42
+    assert vis_stage["usage"]["output_tokens"] == 16
+    assert vis_stage["content_length"] > 0
+
+    img_stage = stages["image"]
+    assert img_stage["status_code"] == 200
+    assert isinstance(img_stage["top_level_keys"], list)
+    assert img_stage["detected_media_type"] == "image/png"
+    assert img_stage["first_12_bytes_hex"] is not None
+    assert isinstance(img_stage["first_12_bytes_hex"], str)
+    assert len(img_stage["first_12_bytes_hex"]) == 24  # 12 bytes = 24 hex chars
+    assert img_stage["image_dimensions"] == {"width": 1, "height": 1}
+    assert isinstance(img_stage["provenance_keys"], list)
+    assert img_stage["content_length"] > 0

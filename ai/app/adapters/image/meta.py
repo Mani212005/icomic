@@ -59,6 +59,9 @@ class MetaImageAdapter(ImagePort):
 
         self.last_request_id: str = ""
         self.last_cost: float = 0.01
+        self.last_status_code: int | None = None
+        self.last_response_keys: list[str] = []
+        self.last_response_data: dict[str, Any] = {}
 
     def generate(
         self,
@@ -78,6 +81,9 @@ class MetaImageAdapter(ImagePort):
         )
 
         data, headers = self._client.post("/responses", payload)
+        self.last_status_code = 200
+        self.last_response_keys = sorted(data.keys()) if isinstance(data, dict) else []
+        self.last_response_data = data
         result = parse_responses_image_response(data, self.model_id, headers)
 
         self.last_request_id = result.request_id

@@ -17,12 +17,14 @@ from app.adapters.meta_http import (
     DEFAULT_META_USER_FIELD,
     MetaConfigurationError,
     MetaContentPolicyError,
+    MetaEmptyResponseError,
     MetaHttpClient,
     MetaTransientError,
     TokenBucket,
     build_chat_completion_request,
     build_responses_image_request,
     detect_c2pa_markers,
+    detect_image_media_type,
     parse_chat_completion_response,
     parse_palette_json,
     parse_responses_image_response,
@@ -86,6 +88,36 @@ def test_parse_chat_completion_response_success():
     assert meta["model"] == "muse-spark-1.3"
 
 
+def test_parse_chat_completion_response_content_parts():
+    fixture = load_fixture("chat_completion_content_parts.json")
+    content, token_usage, _request_id, meta = parse_chat_completion_response(fixture)
+
+    assert "Hello world from part 1." in content
+    assert "And greeting from part 2." in content
+    assert token_usage.input_tokens == 20
+    assert token_usage.output_tokens == 15
+    assert token_usage.total_tokens == 35
+    assert token_usage.reasoning_tokens == 5
+    assert token_usage.finish_reason == "stop"
+    assert meta["finish_reason"] == "stop"
+    assert meta["reasoning_tokens"] == 5
+
+
+def test_parse_chat_completion_response_empty_length_raises():
+    fixture = load_fixture("chat_completion_empty_length.json")
+    with pytest.raises(MetaEmptyResponseError) as exc_info:
+        parse_chat_completion_response(fixture)
+
+    err = exc_info.value
+    assert "finish_reason='length'" in err.message
+    assert err.finish_reason == "length"
+    assert err.token_usage is not None
+    assert err.token_usage.input_tokens == 14
+    assert err.token_usage.output_tokens == 10
+    assert err.token_usage.reasoning_tokens == 10
+    assert err.request_id == "chatcmpl-mock-lang-empty"
+
+
 def test_build_responses_image_request_structure_and_encoding():
     ref_image_1 = b"\x89PNG\r\n\x1a\nfake-ref-image-1"
     ref_image_2 = b"\x89PNG\r\n\x1a\nfake-ref-image-2"
@@ -140,6 +172,34 @@ def test_parse_responses_image_response_and_provenance_preservation():
     assert provenance["model"] == "muse-image-1.0"
     assert provenance["cost_usd"] == DEFAULT_IMAGE_COST_USD
     assert provenance["usage"]["total_tokens"] == 120
+    assert result.media_type == "image/png"
+
+
+def test_detect_image_media_type():
+    assert detect_image_media_type(b"\x89PNG\r\n\x1a\n\x00\x00") == "image/png"
+    assert detect_image_media_type(b"\xff\xd8\xff\xe0\x00\x10JFIF") == "image/jpeg"
+    assert detect_image_media_type(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "image/webp"
+    assert detect_image_media_type(b"GIF89a\x01\x00\x01\x00") == "image/gif"
+    assert detect_image_media_type(b"GIF87a\x01\x00\x01\x00") == "image/gif"
+    assert detect_image_media_type(b"unknown binary data stream") == "application/octet-stream"
+
+
+def test_detect_c2pa_markers_in_jpeg_app11_and_webp():
+    # 1. Plain marker substring in arbitrary bytes
+    assert detect_c2pa_markers(b"raw-data-with-jumb-marker") is True
+    assert detect_c2pa_markers(b"raw-data-with-caBX-marker") is True
+
+    # 2. JPEG with APP11 JUMBF segment (starts with 0xFF 0xEB, length, "JP\x00")
+    jpeg_app11 = b"\xff\xd8\xff\xeb\x00\x0cJP\x00\x01testbox\xff\xd9"
+    assert detect_c2pa_markers(jpeg_app11) is True
+
+    # 3. WebP RIFF container with JUMB chunk
+    webp_jumb = b"RIFF\x20\x00\x00\x00WEBPJUMB\x08\x00\x00\x0012345678"
+    assert detect_c2pa_markers(webp_jumb) is True
+
+    # 4. Clean image bytes without C2PA marker return False
+    clean_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+    assert detect_c2pa_markers(clean_bytes) is False
 
 
 def test_parse_palette_json_valid_and_fallback():

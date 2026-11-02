@@ -8,6 +8,7 @@ import logging
 import os
 import random
 import re
+import struct
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -77,6 +78,23 @@ class MetaContentPolicyError(MetaAPIError):
     ) -> None:
         super().__init__(message, status_code=400, details=details, request_id=request_id)
         self.policy_category = policy_category
+
+
+class MetaEmptyResponseError(MetaAPIError):
+    """Domain error raised when Meta API returns an empty response content (not retryable)."""
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = 200,
+        details: dict[str, Any] | None = None,
+        request_id: str | None = None,
+        finish_reason: str | None = None,
+        token_usage: TokenUsage | None = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code, details=details, request_id=request_id)
+        self.finish_reason = finish_reason
+        self.token_usage = token_usage
 
 
 class MetaRateLimitError(MetaAPIError):
@@ -171,15 +189,77 @@ class TokenBucket:
 
 
 # ---------------------------------------------------------------------------
-# C2PA Provenance Utilities
+# C2PA Provenance Utilities & Media Type Detection
 # ---------------------------------------------------------------------------
 
-C2PA_MARKERS: tuple[bytes, ...] = (b"caBX", b"c2pa", b"jumb", b"C2PA")
+C2PA_MARKERS: tuple[bytes, ...] = (b"caBX", b"c2pa", b"jumb", b"C2PA", b"JUMB")
+
+
+def detect_image_media_type(data: bytes) -> str:
+    """Detect real media type from magic numbers without re-encoding or modifying bytes."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8"):
+        return "image/jpeg"
+    if len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    return "application/octet-stream"
+
+
+def _detect_jpeg_app11_jumbf(image_bytes: bytes) -> bool:
+    """Scan JPEG APP11 marker segments for JUMBF / C2PA boxes without altering bytes."""
+    pos = 0
+    length = len(image_bytes)
+    while pos < length - 3:
+        if image_bytes[pos] == 0xFF and image_bytes[pos + 1] == 0xEB:  # APP11
+            seg_len = struct.unpack(">H", image_bytes[pos + 2 : pos + 4])[0]
+            seg_data = image_bytes[pos + 4 : pos + 2 + seg_len]
+            if (
+                seg_data.startswith(b"JP")
+                or b"jumb" in seg_data
+                or b"JUMB" in seg_data
+                or b"c2pa" in seg_data
+                or b"C2PA" in seg_data
+                or b"caBX" in seg_data
+            ):
+                return True
+            pos += 2 + seg_len
+        else:
+            pos += 1
+    return False
+
+
+def _detect_webp_jumbf(image_bytes: bytes) -> bool:
+    """Scan WebP RIFF chunks for JUMBF / C2PA boxes without altering bytes."""
+    if len(image_bytes) < 12 or not image_bytes.startswith(b"RIFF") or image_bytes[8:12] != b"WEBP":
+        return False
+    pos = 12
+    length = len(image_bytes)
+    while pos + 8 <= length:
+        fourcc = image_bytes[pos : pos + 4]
+        chunk_len = struct.unpack("<I", image_bytes[pos + 4 : pos + 8])[0]
+        if fourcc in (b"JUMB", b"jumb", b"C2PA", b"c2pa"):
+            return True
+        chunk_data = image_bytes[pos + 8 : pos + 8 + chunk_len]
+        if any(marker in chunk_data for marker in C2PA_MARKERS):
+            return True
+        pos += 8 + chunk_len + (chunk_len % 2)
+    return False
 
 
 def detect_c2pa_markers(image_bytes: bytes) -> bool:
-    """Detect presence of C2PA manifest markers in raw image bytes."""
-    return any(marker in image_bytes for marker in C2PA_MARKERS)
+    """Detect presence of C2PA manifest markers in raw image bytes.
+
+    Looks for C2PA marker substrings, JUMBF boxes in JPEG APP11 segments,
+    and JUMBF/C2PA chunks in WebP containers. Never alters or touches bytes.
+    """
+    if any(marker in image_bytes for marker in C2PA_MARKERS):
+        return True
+    if image_bytes.startswith(b"\xff\xd8") and _detect_jpeg_app11_jumbf(image_bytes):
+        return True
+    return bool(image_bytes.startswith(b"RIFF") and _detect_webp_jumbf(image_bytes))
 
 
 def extract_provenance(
@@ -216,6 +296,7 @@ def extract_provenance(
     provenance["c2pa"] = c2pa_info
     provenance["model"] = model_id
     provenance["cost_usd"] = DEFAULT_IMAGE_COST_USD
+    provenance["media_type"] = detect_image_media_type(image_bytes)
 
     # Capture token usage if present
     usage = response_data.get("usage")
@@ -278,17 +359,32 @@ def parse_chat_completion_response(
     """Pure function to parse chat completion response.
 
     Returns (text_content, token_usage, request_id, usage_metadata).
+    Raises MetaEmptyResponseError if response content is empty.
     """
     request_id = str(data.get("id") or (headers.get("x-request-id") if headers else "") or "")
 
     choices = data.get("choices")
     content = ""
+    finish_reason: str | None = None
     if isinstance(choices, list) and len(choices) > 0:
         first_choice = choices[0]
         if isinstance(first_choice, dict):
+            finish_reason = first_choice.get("finish_reason")
             message = first_choice.get("message")
             if isinstance(message, dict):
-                content = str(message.get("content") or "")
+                raw_content = message.get("content")
+                if isinstance(raw_content, str):
+                    content = raw_content
+                elif isinstance(raw_content, list):
+                    parts: list[str] = []
+                    for part in raw_content:
+                        if isinstance(part, str):
+                            parts.append(part)
+                        elif isinstance(part, dict) and "text" in part:
+                            parts.append(str(part["text"]))
+                    content = "".join(parts)
+                elif raw_content is None:
+                    content = ""
             elif "text" in first_choice:
                 content = str(first_choice.get("text") or "")
 
@@ -299,17 +395,49 @@ def parse_chat_completion_response(
     in_tokens = int(usage_data.get("prompt_tokens", 0))
     out_tokens = int(usage_data.get("completion_tokens", 0))
     tot_tokens = int(usage_data.get("total_tokens", in_tokens + out_tokens))
+
+    reasoning_tokens: int | None = None
+    if "reasoning_tokens" in usage_data:
+        try:
+            reasoning_tokens = int(usage_data["reasoning_tokens"])
+        except (ValueError, TypeError):
+            pass
+    elif "completion_tokens_details" in usage_data and isinstance(
+        usage_data["completion_tokens_details"], dict
+    ):
+        details = usage_data["completion_tokens_details"]
+        if "reasoning_tokens" in details:
+            try:
+                reasoning_tokens = int(details["reasoning_tokens"])
+            except (ValueError, TypeError):
+                pass
+
     token_usage = TokenUsage(
         input_tokens=in_tokens,
         output_tokens=out_tokens,
         total_tokens=tot_tokens,
+        reasoning_tokens=reasoning_tokens,
+        finish_reason=finish_reason,
     )
 
     usage_metadata = {
         "request_id": request_id,
         "model": data.get("model", ""),
         "usage": usage_data,
+        "finish_reason": finish_reason,
+        "reasoning_tokens": reasoning_tokens,
     }
+
+    if not content or not content.strip():
+        raise MetaEmptyResponseError(
+            f"Meta API returned empty content (finish_reason={finish_reason!r}, request_id={request_id!r})",
+            status_code=200,
+            details=data,
+            request_id=request_id,
+            finish_reason=finish_reason,
+            token_usage=token_usage,
+        )
+
     return content, token_usage, request_id, usage_metadata
 
 
@@ -328,10 +456,11 @@ def build_responses_image_request(
     if reference_images:
         for ref_bytes in reference_images:
             b64_data = base64.b64encode(ref_bytes).decode("ascii")
+            ref_media_type = detect_image_media_type(ref_bytes)
             content_parts.append(
                 {
                     "type": "input_image",
-                    "image_url": f"data:image/png;base64,{b64_data}",
+                    "image_url": f"data:{ref_media_type};base64,{b64_data}",
                 }
             )
 
@@ -418,12 +547,14 @@ def parse_responses_image_response(
         ) from exc
 
     provenance = extract_provenance(data, raw_bytes, model_id)
+    media_type = detect_image_media_type(raw_bytes)
 
     return ImageResult(
         image_bytes=raw_bytes,
         provenance_metadata=provenance,
         model_id=model_id,
         request_id=request_id,
+        media_type=media_type,
     )
 
 

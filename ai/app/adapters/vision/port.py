@@ -21,12 +21,12 @@ class PaletteSuggestion:
 class VisionPort(Protocol):
     """Protocol defining multimodal image review and palette suggestion interface."""
 
-    def review(self, model: str, image_bytes: bytes, prompt: str) -> str:
+    def review(self, model: str, image_bytes: bytes, prompt: str, **kwargs) -> str:
         """Review an image with a multimodal model."""
         ...
 
     def suggest_palette(
-        self, model: str, image_bytes: bytes, panel_context: str
+        self, model: str, image_bytes: bytes, panel_context: str, **kwargs
     ) -> PaletteSuggestion:
         """Suggest colour palette based on line art and panel context."""
         ...
