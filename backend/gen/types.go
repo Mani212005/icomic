@@ -292,3 +292,83 @@ func (c *AIServiceClient) ModeratePrompt(ctx context.Context, req ModeratePrompt
 	}
 	return &resp, nil
 }
+
+func (c *AIServiceClient) GenerateCharacterReference(ctx context.Context, req GenerateCharacterReferenceRequest) (*GenerateCharacterReferenceResponse, error) {
+	var resp GenerateCharacterReferenceResponse
+	if err := c.postJSON(ctx, "/internal/v1/generate-character-reference", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AIServiceClient) GenerateChapterOutline(ctx context.Context, req GenerateChapterOutlineRequest) (*GenerateChapterOutlineResponse, error) {
+	var resp GenerateChapterOutlineResponse
+	if err := c.postJSON(ctx, "/internal/v1/generate-chapter-outline", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AIServiceClient) GeneratePanelText(ctx context.Context, req GeneratePanelTextRequest) (*GeneratePanelTextResponse, error) {
+	var resp GeneratePanelTextResponse
+	if err := c.postJSON(ctx, "/internal/v1/generate-panel-text", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AIServiceClient) GenerateDraftSketch(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error) {
+	var resp GenerateDraftSketchResponse
+	if err := c.postJSON(ctx, "/internal/v1/generate-draft-sketch", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AIServiceClient) GenerateLineArt(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error) {
+	var resp GenerateLineArtResponse
+	if err := c.postJSON(ctx, "/internal/v1/generate-line-art", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AIServiceClient) SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error) {
+	var resp SuggestColourPaletteResponse
+	if err := c.postJSON(ctx, "/internal/v1/suggest-colour-palette", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AIServiceClient) AssemblePdf(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error) {
+	var resp AssemblePdfResponse
+	if err := c.postJSON(ctx, "/internal/v1/assemble-pdf", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AIServiceClient) GetJobStatus(ctx context.Context, jobID string) (*JobStatusResponse, error) {
+	path := fmt.Sprintf("/internal/v1/job/%s/status", jobID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get job status %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ai service %s returned %d: %s", path, resp.StatusCode, string(body))
+	}
+
+	var statusResp JobStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &statusResp, nil
+}

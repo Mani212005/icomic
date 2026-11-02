@@ -1,18 +1,46 @@
 package api_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"icomic/backend/internal/api"
+	"icomic/backend/internal/auth"
+	"icomic/backend/internal/credits"
+	"icomic/backend/internal/db"
+	"icomic/backend/internal/domain"
+	"icomic/backend/internal/jobs"
 )
 
-func TestHealthCheck(t *testing.T) {
-	server := api.NewServer()
-	handler := server.NewRouter()
+func setupTestServer(devAuthEnabled bool, defaultUID string) (*api.Server, http.Handler, db.Repository) {
+	repo := db.NewInMemoryRepository()
+	creditSvc := credits.NewInMemoryCreditService(map[string]float64{
+		"test-user": 50.0,
+		"user-1":    50.0,
+		"user-2":    50.0,
+	})
+	jobSvc := jobs.NewInMemoryJobService()
+	authenticator := auth.NewDevAuthenticator(devAuthEnabled, defaultUID)
+	imageHosting := auth.NewDefaultImageHosting("/media")
 
+	s := api.NewServer(
+		repo,
+		creditSvc,
+		jobSvc,
+		nil,
+		authenticator,
+		imageHosting,
+		2, // 2 panels per page for tests
+	)
+	return s, s.NewRouter(), repo
+}
+
+func TestHealthCheck(t *testing.T) {
+	_, handler, _ := setupTestServer(true, "test-user")
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 
@@ -28,5 +56,295 @@ func TestHealthCheck(t *testing.T) {
 	}
 	if body["status"] != "ok" {
 		t.Fatalf("expected status 'ok', got '%s'", body["status"])
+	}
+}
+
+func TestAuthEnforcementAndDevAuthenticator(t *testing.T) {
+	// Dev auth disabled: passing X-User-ID must be rejected with 401
+	_, handlerDisabled, _ := setupTestServer(false, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	req.Header.Set("X-User-ID", "attacker")
+	rec := httptest.NewRecorder()
+	handlerDisabled.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized when dev auth disabled, got %d", rec.Code)
+	}
+
+	// Dev auth enabled: accepted
+	_, handlerEnabled, _ := setupTestServer(true, "test-user")
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	rec2 := httptest.NewRecorder()
+	handlerEnabled.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK when dev auth enabled, got %d", rec2.Code)
+	}
+}
+
+func TestCreateProject(t *testing.T) {
+	_, handler, _ := setupTestServer(true, "test-user")
+
+	payload := map[string]interface{}{
+		"title":           "The Quantum Detective",
+		"original_script": "Page 1: The neon lights flicker in Neo-Tokyo as detective Jax ignites his pipe.",
+		"art_style":       "cyberpunk-noir",
+		"chapter_count":   3,
+	}
+	data, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", bytes.NewReader(data))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEstimateCost(t *testing.T) {
+	_, handler, _ := setupTestServer(true, "test-user")
+
+	payload := map[string]interface{}{
+		"stage":       "draft_sketch",
+		"image_count": 5,
+	}
+	data, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/proj-123/estimate", bytes.NewReader(data))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["estimated_cost"] != 0.05 {
+		t.Fatalf("expected 0.05 estimated cost, got %v", resp["estimated_cost"])
+	}
+}
+
+func TestCreditUsage(t *testing.T) {
+	_, handler, _ := setupTestServer(true, "test-user")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/credit-usage", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["balance"] != 50.0 {
+		t.Fatalf("expected balance 50.0, got %v", resp["balance"])
+	}
+}
+
+func TestStrictOwnershipEnforcement(t *testing.T) {
+	_, handler, repo := setupTestServer(true, "user-1")
+
+	// User 1 creates project
+	proj := &domain.Project{
+		ID:             "p-user1",
+		UserID:         "user-1",
+		Title:          "User 1 Only Project",
+		OriginalScript: "Act 1. Secret notes.",
+	}
+	_ = repo.CreateProject(context.Background(), proj)
+
+	// User 1 can fetch project
+	reqOwner := httptest.NewRequest(http.MethodGet, "/api/v1/projects/p-user1", nil)
+	reqOwner.Header.Set("X-User-ID", "user-1")
+	recOwner := httptest.NewRecorder()
+	handler.ServeHTTP(recOwner, reqOwner)
+	if recOwner.Code != http.StatusOK {
+		t.Fatalf("expected 200 for owner, got %d", recOwner.Code)
+	}
+
+	// User 2 CANNOT fetch User 1's project -> 403 Forbidden (SPEC 10, 11.1)
+	reqAttacker := httptest.NewRequest(http.MethodGet, "/api/v1/projects/p-user1", nil)
+	reqAttacker.Header.Set("X-User-ID", "user-2")
+	recAttacker := httptest.NewRecorder()
+	handler.ServeHTTP(recAttacker, reqAttacker)
+	if recAttacker.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for cross-user get, got %d", recAttacker.Code)
+	}
+
+	// User 2 CANNOT delete User 1's project -> 403 Forbidden
+	reqDeleteAttacker := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/p-user1", nil)
+	reqDeleteAttacker.Header.Set("X-User-ID", "user-2")
+	recDeleteAttacker := httptest.NewRecorder()
+	handler.ServeHTTP(recDeleteAttacker, reqDeleteAttacker)
+	if recDeleteAttacker.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for cross-user delete, got %d", recDeleteAttacker.Code)
+	}
+}
+
+func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
+	_, handler, _ := setupTestServer(true, "creator-1")
+
+	// 1. Create project
+	projBody, _ := json.Marshal(map[string]interface{}{
+		"title":           "Cosmic Quest",
+		"original_script": "Chapter 1: The Starship departs. Chapter 2: Destination reached.",
+		"chapter_count":   2,
+	})
+	reqProj := httptest.NewRequest(http.MethodPost, "/api/v1/projects", bytes.NewReader(projBody))
+	recProj := httptest.NewRecorder()
+	handler.ServeHTTP(recProj, reqProj)
+	if recProj.Code != http.StatusCreated {
+		t.Fatalf("create project failed: %d", recProj.Code)
+	}
+	var projResp map[string]interface{}
+	_ = json.NewDecoder(recProj.Body).Decode(&projResp)
+	projID := projResp["project"].(map[string]interface{})["id"].(string)
+
+	// 2. Analyze script
+	reqAnalyze := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projID+"/analyze", nil)
+	recAnalyze := httptest.NewRecorder()
+	handler.ServeHTTP(recAnalyze, reqAnalyze)
+	if recAnalyze.Code != http.StatusAccepted {
+		t.Fatalf("analyze script failed: %d", recAnalyze.Code)
+	}
+
+	// 3. List characters
+	reqChars := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projID+"/characters", nil)
+	recChars := httptest.NewRecorder()
+	handler.ServeHTTP(recChars, reqChars)
+	var charsResp map[string]interface{}
+	_ = json.NewDecoder(recChars.Body).Decode(&charsResp)
+	chars := charsResp["characters"].([]interface{})
+	if len(chars) == 0 {
+		t.Fatal("expected characters extracted")
+	}
+	charID := chars[0].(map[string]interface{})["id"].(string)
+
+	// 4. Generate reference image
+	reqRef := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+charID+"/reference-image", nil)
+	recRef := httptest.NewRecorder()
+	handler.ServeHTTP(recRef, reqRef)
+	if recRef.Code != http.StatusAccepted {
+		t.Fatalf("generate reference image failed: %d", recRef.Code)
+	}
+
+	// 5. Approve characters
+	for _, ch := range chars {
+		cID := ch.(map[string]interface{})["id"].(string)
+		reqApp := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+cID+"/approve", nil)
+		recApp := httptest.NewRecorder()
+		handler.ServeHTTP(recApp, reqApp)
+		if recApp.Code != http.StatusOK {
+			t.Fatalf("approve character failed: %d", recApp.Code)
+		}
+	}
+
+	// 6. Generate chapters
+	reqChaps := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projID+"/chapters", nil)
+	recChaps := httptest.NewRecorder()
+	handler.ServeHTTP(recChaps, reqChaps)
+	if recChaps.Code != http.StatusOK {
+		t.Fatalf("generate chapters failed: %d", recChaps.Code)
+	}
+	var chapsResp map[string]interface{}
+	_ = json.NewDecoder(recChaps.Body).Decode(&chapsResp)
+	chapters := chapsResp["chapters"].([]interface{})
+	chapID := chapters[0].(map[string]interface{})["id"].(string)
+
+	// 7. Approve chapter outline
+	reqAppChap := httptest.NewRequest(http.MethodPost, "/api/v1/chapters/"+chapID+"/approve", nil)
+	recAppChap := httptest.NewRecorder()
+	handler.ServeHTTP(recAppChap, reqAppChap)
+	if recAppChap.Code != http.StatusOK {
+		t.Fatalf("approve chapter failed: %d", recAppChap.Code)
+	}
+
+	// 8. Generate panels and pages
+	reqPanels := httptest.NewRequest(http.MethodPost, "/api/v1/chapters/"+chapID+"/panels", nil)
+	recPanels := httptest.NewRecorder()
+	handler.ServeHTTP(recPanels, reqPanels)
+	if recPanels.Code != http.StatusOK {
+		t.Fatalf("generate panels failed: %d", recPanels.Code)
+	}
+	var panelsResp map[string]interface{}
+	_ = json.NewDecoder(recPanels.Body).Decode(&panelsResp)
+	pages := panelsResp["pages"].([]interface{})
+	pageID := pages[0].(map[string]interface{})["id"].(string)
+
+	// 9. Generate draft sketch on page
+	reqDraft := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/draft", nil)
+	recDraft := httptest.NewRecorder()
+	handler.ServeHTTP(recDraft, reqDraft)
+	if recDraft.Code != http.StatusAccepted {
+		t.Fatalf("generate draft failed: %d", recDraft.Code)
+	}
+
+	// 10. Attempt line art before draft approval -> must fail
+	reqLinePremature := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
+	recLinePremature := httptest.NewRecorder()
+	handler.ServeHTTP(recLinePremature, reqLinePremature)
+	if recLinePremature.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unapproved draft, got %d", recLinePremature.Code)
+	}
+
+	// 11. Approve draft sketch
+	reqAppDraft := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/draft/approve", nil)
+	recAppDraft := httptest.NewRecorder()
+	handler.ServeHTTP(recAppDraft, reqAppDraft)
+	if recAppDraft.Code != http.StatusOK {
+		t.Fatalf("approve draft failed: %d", recAppDraft.Code)
+	}
+
+	// 12. Generate line art
+	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
+	recLine := httptest.NewRecorder()
+	handler.ServeHTTP(recLine, reqLine)
+	if recLine.Code != http.StatusAccepted {
+		t.Fatalf("generate line art failed: %d", recLine.Code)
+	}
+
+	// 13. Approve line art
+	reqAppLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art/approve", nil)
+	recAppLine := httptest.NewRecorder()
+	handler.ServeHTTP(recAppLine, reqAppLine)
+	if recAppLine.Code != http.StatusOK {
+		t.Fatalf("approve line art failed: %d", recAppLine.Code)
+	}
+
+	// 14. Colouring: suggest, edit, approve
+	reqPalSuggest := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/colour-palette/suggest", nil)
+	recPalSuggest := httptest.NewRecorder()
+	handler.ServeHTTP(recPalSuggest, reqPalSuggest)
+	if recPalSuggest.Code != http.StatusAccepted {
+		t.Fatalf("suggest colour palette failed: %d", recPalSuggest.Code)
+	}
+
+	reqAppColour := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/colour/approve", nil)
+	recAppColour := httptest.NewRecorder()
+	handler.ServeHTTP(recAppColour, reqAppColour)
+	if recAppColour.Code != http.StatusOK {
+		t.Fatalf("approve colour failed: %d", recAppColour.Code)
+	}
+
+	// 15. Export and Download
+	reqExport := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projID+"/export", nil)
+	recExport := httptest.NewRecorder()
+	handler.ServeHTTP(recExport, reqExport)
+	if recExport.Code != http.StatusAccepted {
+		t.Fatalf("export failed: %d", recExport.Code)
+	}
+	var expResp map[string]interface{}
+	_ = json.NewDecoder(recExport.Body).Decode(&expResp)
+	exportID := expResp["export"].(map[string]interface{})["id"].(string)
+
+	reqDownload := httptest.NewRequest(http.MethodGet, "/api/v1/exports/"+exportID+"/download", nil)
+	recDownload := httptest.NewRecorder()
+	handler.ServeHTTP(recDownload, reqDownload)
+	if recDownload.Code != http.StatusOK || recDownload.Header().Get("Content-Type") != "application/pdf" {
+		t.Fatalf("download failed: %d, content-type: %s", recDownload.Code, recDownload.Header().Get("Content-Type"))
 	}
 }
