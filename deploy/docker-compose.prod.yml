@@ -1,0 +1,17 @@
+services:
+  backend:
+    restart: always
+    environment:
+      PORT: "8080"
+      PYTHON_AI_URL: "http://ai:8000"
+
+  ai:
+    restart: always
+    environment:
+      PORT: "8000"
+
+  frontend:
+    restart: always
+    environment:
+      PORT: "3000"
+      PUBLIC_API_URL: "${PUBLIC_API_URL}"
