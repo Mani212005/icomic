@@ -121,6 +121,11 @@ jobs:
           cd frontend
           npm test
 
+      - name: Svelte Check
+        run: |
+          cd frontend
+          npm run check
+
       - name: Build Application
         run: |
           cd frontend
