@@ -4,7 +4,7 @@ This directory contains container definitions, database migrations, seeds, and v
 
 ## Directory Contents
 
-- `docker-compose.yml`: Local development stack running PostgreSQL, Redis, Go backend, Python AI service, and Svelte frontend.
+- `docker-compose.yml`: Local development stack running PostgreSQL, Redis, Go backend, Python AI service, and Svelte frontend on fakes with healthchecks and automatic schema migration.
 - `docker-compose.prod.yml`: Production deployment overrides.
 - `migrations/`: Versioned PostgreSQL migrations (`.up.sql` and `.down.sql`).
   - `000001_initial_schema.up.sql`: Initial schema defining all 13 core tables, indexes, constraints, and baseline seeds.
@@ -17,6 +17,7 @@ This directory contains container definitions, database migrations, seeds, and v
 The schema strictly implements the entities and constraints specified in `docs/SPEC.md` Section 9, `docs/ARCHITECTURE.md` Section 5 & 7, and `contracts/schemas/`:
 
 - **Core entities**: `plans`, `users`, `projects`, `chapters`, `characters`, `panels`, `pages`, `colour_palettes`, `colour_regions`, `stage_approvals`, `generation_jobs`, `credit_ledger`, `exports`.
+- **Automatic Migration on Startup**: In `docker-compose.yml`, `deploy/migrations` is mounted directly into `/docker-entrypoint-initdb.d` so the PostgreSQL database initializes with all tables and baseline seeds on container start.
 - **Stale-approval rule semantics**: Entities support freshness checks comparing `approved_at` timestamps against `updated_at` (for edits) and `generation_jobs.completed_at` (for regenerations).
 - **Provenance preservation**: The `exports.provenance_metadata_preserved` column and check constraint ensure C2PA/watermark metadata is preserved prior to export completion.
 - **Owner decisions (2026-11-02)**:
@@ -35,23 +36,36 @@ python3 deploy/validate_migrations_test.py
 
 ## Running the Dev Stack
 
+The development stack runs entirely on deterministic fakes without external network access or real API keys.
+
 To start the full development environment with Docker Compose:
 
 ```bash
-docker compose -f deploy/docker-compose.yml up --build
+sg docker -c 'docker compose -f deploy/docker-compose.yml up -d --build'
 ```
 
-The stack exposes:
+### Services and Health Endpoints
 
-- Frontend: `http://localhost:5173`
-- Go Backend API: `http://localhost:8080`
-- Python AI Service: `http://localhost:8000`
-- PostgreSQL: `localhost:5432`
-- Redis: `localhost:6379`
+All services include container healthchecks and depends_on conditions ensuring an orderly startup:
+
+- PostgreSQL (`icomic-postgres`): `localhost:5432` (Health: `pg_isready -U icomic -d icomic`)
+- Redis (`icomic-redis`): `localhost:6379` (Health: `redis-cli ping`)
+- Python AI Service (`icomic-ai`): `http://localhost:8000` (Health: `GET /healthz`)
+  - Configured with `ADAPTER_*=fake` and deterministic ports.
+  - Serves generated image and PDF assets via `GET /storage/fake/{key:path}`.
+- Go Backend API (`icomic-backend`): `http://localhost:8080` (Health: `GET /healthz`)
+  - Connected to PostgreSQL via `DATABASE_URL` and Redis via `REDIS_URL`.
+- Svelte Frontend (`icomic-frontend`): `http://localhost:5173` (Health: `GET /`)
+
+To stop the stack and remove volumes:
+
+```bash
+sg docker -c 'docker compose -f deploy/docker-compose.yml down -v'
+```
 
 ## Managing Migrations with Docker Compose
 
-When Docker Compose is running, migrations can be applied or reverted via make targets:
+When Docker Compose is running, migrations can also be manually applied or reverted via make targets:
 
 ```bash
 # Apply up migrations

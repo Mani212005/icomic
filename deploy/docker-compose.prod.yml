@@ -4,11 +4,20 @@ services:
     environment:
       PORT: "8080"
       PYTHON_AI_URL: "http://ai:8000"
+      DATABASE_URL: "${DATABASE_URL}"
+      REDIS_URL: "${REDIS_URL}"
 
   ai:
     restart: always
     environment:
       PORT: "8000"
+      REDIS_URL: "${REDIS_URL}"
+      ADAPTER_LANGUAGE: "${ADAPTER_LANGUAGE:-fake}"
+      ADAPTER_VISION: "${ADAPTER_VISION:-fake}"
+      ADAPTER_IMAGE: "${ADAPTER_IMAGE:-fake}"
+      ADAPTER_STORAGE: "${ADAPTER_STORAGE:-fake}"
+      ADAPTER_QUEUE: "${ADAPTER_QUEUE:-fake}"
+      ADAPTER_CLOCK: "${ADAPTER_CLOCK:-fake}"
 
   frontend:
     restart: always

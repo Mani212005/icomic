@@ -7,14 +7,16 @@ services:
       POSTGRES_PASSWORD: icomic
       POSTGRES_DB: icomic
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U icomic -d icomic"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 5s
 
   redis:
     image: redis:7-alpine
@@ -28,6 +30,33 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 5s
+
+  ai:
+    build:
+      context: ../ai
+      dockerfile: Dockerfile
+    container_name: icomic-ai
+    environment:
+      PORT: "8000"
+      ADAPTER_LANGUAGE: "fake"
+      ADAPTER_VISION: "fake"
+      ADAPTER_IMAGE: "fake"
+      ADAPTER_STORAGE: "fake"
+      ADAPTER_QUEUE: "fake"
+      ADAPTER_CLOCK: "fake"
+      REDIS_URL: "redis://redis:6379/0"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')\" || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      redis:
+        condition: service_healthy
 
   backend:
     build:
@@ -37,27 +66,23 @@ services:
     environment:
       PORT: "8080"
       PYTHON_AI_URL: "http://ai:8000"
+      DATABASE_URL: "postgres://icomic:icomic@postgres:5432/icomic?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      DEV_AUTH_ENABLED: "true"
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       ai:
-        condition: service_started
-
-  ai:
-    build:
-      context: ../ai
-      dockerfile: Dockerfile
-    container_name: icomic-ai
-    environment:
-      PORT: "8000"
-    ports:
-      - "8000:8000"
-    depends_on:
-      redis:
         condition: service_healthy
 
   frontend:
@@ -70,8 +95,15 @@ services:
       PUBLIC_API_URL: "http://localhost:8080"
     ports:
       - "5173:5173"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
