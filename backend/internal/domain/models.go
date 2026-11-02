@@ -37,12 +37,13 @@ type Project struct {
 
 // Chapter represents a chapter within a project (SPEC 9).
 type Chapter struct {
-	ID            string `json:"id"`
-	ProjectID     string `json:"project_id"`
-	ChapterNumber int    `json:"chapter_number"`
-	Title         string `json:"title"`
-	Summary       string `json:"summary"`
-	Status        string `json:"status"`
+	ID            string    `json:"id"`
+	ProjectID     string    `json:"project_id"`
+	ChapterNumber int       `json:"chapter_number"`
+	Title         string    `json:"title"`
+	Summary       string    `json:"summary"`
+	Status        string    `json:"status"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Character represents an extracted character profile and reference image (SPEC 9).

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -81,12 +82,142 @@ func CheckApprovalGate(stage string, prereqs ApprovedPrereqs) error {
 }
 
 // IsApprovalStale checks if an approval occurred before the entity's latest update or generation (SPEC 3.2, 3.5, 3.6, 3.7).
+// An approval only counts if its approved_at timestamp is newer than the latest completed generation job or edit.
 func IsApprovalStale(approvedAt *time.Time, latestActivity time.Time) bool {
 	if approvedAt == nil {
 		return true
 	}
-	// An approval only counts if its approved_at is newer than the latest completed generation job or edit.
 	return approvedAt.Before(latestActivity)
+}
+
+// CheckChapterOutlineApproval verifies that a chapter outline has a valid, non-stale approval (SPEC 3.4, ARCHITECTURE 5.3).
+func CheckChapterOutlineApproval(outlineApprovedAt *time.Time, chapterUpdatedAt time.Time) error {
+	if outlineApprovedAt == nil {
+		return fmt.Errorf("%w: chapter outline must be approved before generating draft sketch", ErrMissingPrerequisiteApproval)
+	}
+	if IsApprovalStale(outlineApprovedAt, chapterUpdatedAt) {
+		return fmt.Errorf("%w: chapter outline was modified after approval", ErrStaleApproval)
+	}
+	return nil
+}
+
+// CheckCharacterApproval verifies that a character reference has a valid, non-stale approval (SPEC 3.2).
+func CheckCharacterApproval(approvedAt *time.Time, characterUpdatedAt time.Time) error {
+	if approvedAt == nil {
+		return fmt.Errorf("%w: character reference must be approved", ErrMissingPrerequisiteApproval)
+	}
+	if IsApprovalStale(approvedAt, characterUpdatedAt) {
+		return fmt.Errorf("%w: character reference was modified after approval", ErrStaleApproval)
+	}
+	return nil
+}
+
+// CheckDraftApproval verifies that a page draft sketch has a valid, non-stale approval (SPEC 3.6, ARCHITECTURE 5.3).
+func CheckDraftApproval(draftApprovedAt *time.Time, pageUpdatedAt time.Time) error {
+	if draftApprovedAt == nil {
+		return fmt.Errorf("%w: draft sketch must be approved before generating final line art", ErrMissingPrerequisiteApproval)
+	}
+	if IsApprovalStale(draftApprovedAt, pageUpdatedAt) {
+		return fmt.Errorf("%w: draft sketch or panel was modified after approval", ErrStaleApproval)
+	}
+	return nil
+}
+
+// CheckLineArtApproval verifies that a page line art has a valid, non-stale approval (SPEC 3.7, ARCHITECTURE 5.3).
+func CheckLineArtApproval(lineArtApprovedAt *time.Time, pageUpdatedAt time.Time) error {
+	if lineArtApprovedAt == nil {
+		return fmt.Errorf("%w: final line art must be approved before colour palette suggestion", ErrMissingPrerequisiteApproval)
+	}
+	if IsApprovalStale(lineArtApprovedAt, pageUpdatedAt) {
+		return fmt.Errorf("%w: line art was regenerated after approval", ErrStaleApproval)
+	}
+	return nil
+}
+
+// StaleDraftOnPanelEdit invalidates the parent page's draft approval when any of its panels are edited (SPEC 3.5, 3.6).
+func StaleDraftOnPanelEdit(page *Page, editTime time.Time) {
+	page.DraftApprovedAt = nil
+	page.UpdatedAt = editTime
+}
+
+// StaleOnDraftRegeneration invalidates both draft and downstream line art approvals when a draft sketch is regenerated (SPEC 3.6, 3.7).
+func StaleOnDraftRegeneration(page *Page, generationTime time.Time) {
+	page.DraftApprovedAt = nil
+	page.LineArtApprovedAt = nil
+	page.UpdatedAt = generationTime
+}
+
+// StaleOnLineArtRegeneration invalidates line art approval when line art is regenerated (SPEC 3.7).
+func StaleOnLineArtRegeneration(page *Page, generationTime time.Time) {
+	page.LineArtApprovedAt = nil
+	page.UpdatedAt = generationTime
+}
+
+// KillSwitchProvider defines the admin seam to query and control the global kill switch at runtime (SPEC 5.5).
+type KillSwitchProvider interface {
+	// IsActive reports whether the global kill switch is currently active.
+	IsActive() bool
+	// SetActive enables or disables the kill switch at runtime.
+	SetActive(active bool)
+	// SpendThreshold returns the platform-wide spend threshold that trips the switch, or 0 if disabled.
+	SpendThreshold() float64
+	// SetSpendThreshold updates the spending limit threshold at runtime without redeployment (SPEC 5.5).
+	SetSpendThreshold(threshold float64)
+	// CheckSpend evaluates platform-wide spend against the threshold and trips the switch if reached.
+	CheckSpend(totalSpend float64) bool
+}
+
+// InMemoryKillSwitchProvider is a thread-safe in-memory implementation of KillSwitchProvider (SPEC 5.5).
+type InMemoryKillSwitchProvider struct {
+	mu             sync.RWMutex
+	active         bool
+	spendThreshold float64
+}
+
+// NewInMemoryKillSwitchProvider creates an InMemoryKillSwitchProvider with initial status and budget threshold.
+func NewInMemoryKillSwitchProvider(initialActive bool, initialThreshold float64) *InMemoryKillSwitchProvider {
+	return &InMemoryKillSwitchProvider{
+		active:         initialActive,
+		spendThreshold: initialThreshold,
+	}
+}
+
+// IsActive returns whether the kill switch is currently active.
+func (p *InMemoryKillSwitchProvider) IsActive() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.active
+}
+
+// SetActive dynamically sets the kill switch state at runtime.
+func (p *InMemoryKillSwitchProvider) SetActive(active bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.active = active
+}
+
+// SpendThreshold returns the configured budget threshold.
+func (p *InMemoryKillSwitchProvider) SpendThreshold() float64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.spendThreshold
+}
+
+// SetSpendThreshold updates the spending threshold at runtime.
+func (p *InMemoryKillSwitchProvider) SetSpendThreshold(threshold float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.spendThreshold = threshold
+}
+
+// CheckSpend compares total spend against the threshold and trips the switch if exceeded.
+func (p *InMemoryKillSwitchProvider) CheckSpend(totalSpend float64) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.spendThreshold > 0 && totalSpend >= p.spendThreshold {
+		p.active = true
+	}
+	return p.active
 }
 
 // CheckKillSwitchAndQuota enforces global spend protection and per-user quota (SPEC 5.5).
