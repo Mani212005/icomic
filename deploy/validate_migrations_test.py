@@ -9,7 +9,7 @@ Validates that:
 - Foreign key references, unique constraints, and indexes are defined.
 - Stale approval rule requirements (approved_at, updated_at, completed_at) are satisfied.
 - Provenance tracking fields and completion invariants are enforced.
-- Open captain decisions (date_of_birth, country_code) are nullable and documented.
+- Owner decisions (users are global: no geo-blocking columns; 18+ gate deferred: no age enforcement).
 - Validation is completely hermetic and runs with zero external dependencies.
 """
 
@@ -352,7 +352,6 @@ class TestMigrationsStructural(unittest.TestCase):
                 "email",
                 "password_hash",
                 "date_of_birth",
-                "country_code",
                 "plan_id",
                 "created_at",
                 "updated_at",
@@ -638,22 +637,26 @@ class TestMigrationsStructural(unittest.TestCase):
             "exports table must enforce that provenance_metadata_preserved is TRUE before completion",
         )
 
-    def test_open_captain_decisions_nullability(self):
-        """Assert open captain decisions (date_of_birth and country_code) are nullable and documented."""
+    def test_owner_decisions_geo_and_age_gate(self):
+        """Assert Owner decisions (2026-11-02): no geo-blocking columns and 18+ gate deferred."""
         users_cols = self.tables["users"]["columns"]
+        # Owner decision (2): NO geo-block and NO region restriction anywhere (users are global)
+        self.assertNotIn(
+            "country_code",
+            users_cols,
+            "users table must not have country_code column per Owner decision 2026-11-02",
+        )
+        # Owner decision (3): 18+ gate is deferred: no enforced age logic
+        self.assertIn("date_of_birth", users_cols)
         self.assertFalse(
             users_cols["date_of_birth"]["not_null"],
-            "users.date_of_birth must be nullable per Firstmate brief open captain decision",
+            "users.date_of_birth must be nullable per Owner decision 2026-11-02",
         )
-        self.assertFalse(
-            users_cols["country_code"]["not_null"],
-            "users.country_code must be nullable per Firstmate brief open captain decision",
-        )
-        # Verify explanatory comments exist in SQL
-        self.assertIn(
-            "captain decision",
-            self.all_up_sql.lower(),
-            "Migration SQL must document pending captain decisions for nullable verification fields",
+        users_checks = " ".join(self.tables["users"]["check_constraints"])
+        self.assertNotIn(
+            "18",
+            users_checks,
+            "users table must not enforce age 18 check per Owner decision 2026-11-02",
         )
 
     def test_indexes_presence(self):

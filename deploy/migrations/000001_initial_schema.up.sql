@@ -17,22 +17,21 @@ INSERT INTO plans (id, name, entitlements) VALUES
 ('pro', 'Pro Creator', '{"max_daily_images": 200, "max_projects": 50}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
--- Users table: creator accounts (SPEC 9, 11.2, 11.5)
--- Open captain decisions: date_of_birth and country_code are stored as specified in SPEC 9
--- but kept nullable until 18+ verification and geo-blocking mechanisms are finalized.
+-- Users table: creator accounts (SPEC 9, 11.5)
+-- Owner decisions 2026-11-02:
+-- 1. No geo-blocking or region restrictions (users are global): country/region columns removed.
+-- 2. 18+ age gate is deferred (warning to be added later): date_of_birth is nullable with no enforced age logic.
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    date_of_birth DATE, -- Nullable pending captain decision on 18+ verification mechanism
-    country_code VARCHAR(3), -- Nullable pending captain decision on geo-detection mechanism
+    date_of_birth DATE, -- Nullable: 18+ age gate deferred per owner decision 2026-11-02; no enforced age logic
     plan_id VARCHAR(64) REFERENCES plans(id) DEFAULT 'free',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_plan_id ON users(plan_id);
-CREATE INDEX IF NOT EXISTS idx_users_country_code ON users(country_code);
 
 -- Projects table: comic book projects (SPEC 9)
 CREATE TABLE IF NOT EXISTS projects (

@@ -19,7 +19,9 @@ The schema strictly implements the entities and constraints specified in `docs/S
 - **Core entities**: `plans`, `users`, `projects`, `chapters`, `characters`, `panels`, `pages`, `colour_palettes`, `colour_regions`, `stage_approvals`, `generation_jobs`, `credit_ledger`, `exports`.
 - **Stale-approval rule semantics**: Entities support freshness checks comparing `approved_at` timestamps against `updated_at` (for edits) and `generation_jobs.completed_at` (for regenerations).
 - **Provenance preservation**: The `exports.provenance_metadata_preserved` column and check constraint ensure C2PA/watermark metadata is preserved prior to export completion.
-- **Open captain decisions**: Verification fields `users.date_of_birth` (18+ age gate) and `users.country_code` (India geo-blocking) are defined as nullable and documented pending final captain mechanisms.
+- **Owner decisions (2026-11-02)**:
+  - Users are global: no geo-blocking or region restrictions anywhere, and no country/region columns in the schema.
+  - 18+ age gate deferred: no enforced age logic or date-of-birth blocking in the database; `users.date_of_birth` remains nullable with no age check constraints.
 
 ## Validation
 
