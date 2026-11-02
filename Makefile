@@ -1,4 +1,4 @@
-.PHONY: all test lint build check guard-hermetic test-contracts test-migrations test-backend test-ai test-frontend fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
+.PHONY: all test lint build check guard-hermetic test-contracts test-migrations test-backend test-ai test-frontend test-e2e fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
 
 all: check
 
@@ -20,6 +20,9 @@ test-ai:
 
 test-frontend:
 	( cd frontend && npm test )
+
+test-e2e:
+	( cd ai && uv run --frozen pytest -v -c ../tests/e2e/pytest.ini ../tests/e2e )
 
 test: guard-hermetic test-contracts test-migrations test-backend test-ai test-frontend
 
