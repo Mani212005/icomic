@@ -225,9 +225,9 @@ If live Meta endpoints fail, credentials expire, or rate limits are reached, rol
 The following architectural and policy decisions remain reserved for the captain and must not be unilaterally decided by workers:
 
 1. **Image Hosting Provider**:
-   - The final architecture for hosting and serving generated image assets remains undecided.
-   - Options include direct local storage pass-through, Amazon S3 with presigned URLs, or CloudFront CDN edge proxying.
-   - The codebase must maintain the pluggable `ImageHostingPolicy` protocol in Python and `ImageHostingSeam` in Go without committing to a specific cloud provider.
+   - Generated images are Meta-hosted per the owner decision of 2026-11-02: the real image adapter returns Meta-hosted URLs or Meta-delivered bytes per Meta's API.
+   - The image hosting seam (`ImageHostingSeam` in Go, `ImageHostingPolicy` in Python) stays configurable.
+   - Our own storage still holds approved working copies and export PDFs as the architecture already says.
 
 2. **Deferred 18+ Advisory Warning**:
    - In accordance with Meta API terms, all end users must be 18 years of age or older.
