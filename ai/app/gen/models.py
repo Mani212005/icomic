@@ -149,7 +149,7 @@ class GenerateLineArtResponse(BaseModel):
 
 class ColourRegionSuggestion(BaseModel):
     region_name: str
-    hex_color: str
+    hex_color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
     label: str
 
 
