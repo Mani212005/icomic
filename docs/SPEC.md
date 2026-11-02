@@ -146,6 +146,8 @@ The system must generate a character reference image for each character using th
 
 The user must be able to approve or regenerate the reference image.
 
+Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
+
 Approved character references must be reused during all subsequent image generation stages.
 
 The system must attempt to preserve character identity across all chapters (via reference image anchoring as the API supports).
@@ -212,6 +214,8 @@ The user must be able to edit:
 
 Panel text is an editable intermediate; it is not an approval gate. Edited panel text feeds the draft image step directly.
 
+Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
+
 ### 3.5.1 Pagination and Page Layout
 
 The Go API automatically builds pages from the panel list using a configurable maximum panels per page (a configuration value).
@@ -239,6 +243,8 @@ The user must be able to:
 
 The system must not generate final line art before the user approves the draft.
 
+Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
+
 The draft stage costs one image call per attempt per page. Credit cost for the draft is displayed before generation.
 
 ### 3.7 Final Line Art Stage
@@ -255,6 +261,8 @@ The user must be able to:
 - Regenerate the line art (costs one additional image call).
 
 The system must not start colouring before the user approves the line art.
+
+Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 
 The final line art forms the fixed line layer in the colour editor. It is never re-rendered during colouring.
 
@@ -604,6 +612,8 @@ Before final line art generation, the user must be able to review:
 - Estimated final line art cost
 
 The system must require approval before generating final line art.
+
+Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 
 ### 6.4 Image Verification
 
