@@ -26,6 +26,7 @@ The primary CI pipeline is defined in `.github/workflows/ci.yml`. It runs on pus
 | `backend` | Go Backend Checks & Tests | Runs Go format verification (`gofmt`), static analysis (`go vet`), unit and contract tests with race detection (`go test -race`), and binary compilation (`go build`). |
 | `ai-service` | Python AI Service Checks & Tests | Syncs locked dependencies via `uv`, runs Ruff linting and format checks, and executes pytest boundary contract tests. |
 | `frontend` | Svelte Frontend Checks & Tests | Installs npm dependencies via `npm ci`, runs Svelte type and syntax checking (`svelte-check`), executes unit tests, and compiles the production bundle (`vite build`). |
+| `e2e` | End-to-End API Integration Suite | Starts real Python AI service on fakes and real Go API server on ephemeral ports, testing full project lifecycle from dev sign-in to downloaded PDF verification, plus negative paths (stale approvals, kill switch, quota exhaustion, prompt moderation). |
 | `ci-success` | CI Success | Aggregate job that evaluates the completion status of all required component jobs. |
 
 ## Running Checks Locally
@@ -148,7 +149,38 @@ make build-frontend
 # Or: ( cd frontend && npm run build )
 ```
 
-### 8. Workflow YAML Validation
+### 8. End-to-End (E2E) API Integration Suite
+
+Executes full-stack API integration tests driving the real Python AI service on fakes and the real Go API server as local processes with zero external network or database dependencies:
+
+```bash
+make test-e2e
+```
+
+Direct command:
+
+```bash
+( cd ai && uv run --frozen pytest -v -c ../tests/e2e/pytest.ini ../tests/e2e )
+```
+
+The e2e suite tests:
+- Authentication via supported dev identity (`dev@icomic.local`, `00000000-0000-0000-0000-000000000001`)
+- Project creation, script submission, and script analysis
+- Character turnaround generation and approval gates
+- Chapter outline generation and chapter outline approval
+- Panel generation and automatic page partitioning
+- Draft sketch generation and approval
+- Line art inking generation and approval
+- Multimodal colour palette suggestions and approval
+- Project export compilation and PDF download through Go download endpoint
+- Structural verification of generated PDF (valid PDF header/trailer, page count, mandatory AI generation disclosure text, and Meta C2PA provenance metadata)
+- Invariant and safety negative paths:
+  - Downstream generation rejection when approved upstream entity is edited (stale approval cascade) until re-approved
+  - Operator runtime kill switch enforcement (HTTP 429)
+  - Daily per-user image generation quota exhaustion (HTTP 429)
+  - Content pre-moderation blocking prohibited prompts (HTTP 400 or blocked: true)
+
+### 9. Workflow YAML Validation
 
 Validate GitHub Actions workflow syntax locally with `actionlint`:
 

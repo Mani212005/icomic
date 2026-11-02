@@ -186,6 +186,38 @@ jobs:
           cd frontend
           npm run build
 
+  e2e:
+    name: End-to-End API Integration Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "ai/uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install AI Service Dependencies
+        run: |
+          cd ai
+          uv sync --locked
+
+      - name: Run End-to-End Suite
+        run: make test-e2e
+
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
@@ -196,6 +228,7 @@ jobs:
       - backend
       - ai-service
       - frontend
+      - e2e
     if: always()
     steps:
       - name: Check Status of All CI Jobs
