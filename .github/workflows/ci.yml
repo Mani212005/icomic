@@ -26,6 +26,20 @@ jobs:
       - name: Validate OpenAPI spec and JSON schemas
         run: python contracts/validate_test.py
 
+  database:
+    name: Database Migrations & Schema Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Run Hermetic Migration Structural Validation
+        run: python3 deploy/validate_migrations_test.py
+
   backend:
     name: Go Backend Checks & Tests
     runs-on: ubuntu-latest
