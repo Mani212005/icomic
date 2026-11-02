@@ -284,6 +284,9 @@ func (m *InMemoryRepository) CreateChapter(_ context.Context, c *domain.Chapter)
 	if c.ID == "" {
 		c.ID = uuid.NewString()
 	}
+	if c.UpdatedAt.IsZero() {
+		c.UpdatedAt = time.Now().UTC()
+	}
 	cpy := *c
 	m.chapters[c.ID] = &cpy
 	return nil
@@ -322,6 +325,7 @@ func (m *InMemoryRepository) UpdateChapter(_ context.Context, c *domain.Chapter)
 	if _, ok := m.chapters[c.ID]; !ok {
 		return ErrNotFound
 	}
+	c.UpdatedAt = time.Now().UTC()
 	cpy := *c
 	m.chapters[c.ID] = &cpy
 	return nil

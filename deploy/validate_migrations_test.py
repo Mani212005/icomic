@@ -380,6 +380,7 @@ class TestMigrationsStructural(unittest.TestCase):
                 "title",
                 "summary",
                 "status",
+                "updated_at",
             ],
             "characters": [
                 "id",
@@ -551,6 +552,18 @@ class TestMigrationsStructural(unittest.TestCase):
                 f"Enum value '{tt}' for transaction_type missing from credit_ledger check constraint",
             )
 
+    def test_credit_ledger_nullable_job_id(self):
+        """Assert generation_job_id and project_id are nullable in credit_ledger for adjustments and signup credits."""
+        credit_cols = self.tables["credit_ledger"]["columns"]
+        self.assertFalse(
+            credit_cols["generation_job_id"]["not_null"],
+            "credit_ledger.generation_job_id must be nullable for signup credits and adjustments",
+        )
+        self.assertFalse(
+            credit_cols["project_id"]["not_null"],
+            "credit_ledger.project_id must be nullable for signup credits and adjustments",
+        )
+
     def test_foreign_key_relationships(self):
         """Assert essential foreign key relationships defined across all tables."""
         expected_fks = [
@@ -671,6 +684,30 @@ class TestMigrationsStructural(unittest.TestCase):
         self.assertIn("idx_generation_jobs_status", index_names)
         self.assertIn("idx_stage_approvals_entity", index_names)
         self.assertIn("idx_credit_ledger_job_id", index_names)
+
+    def test_migration_runner_artifacts_and_seeds(self):
+        """Assert migration runner scripts, binaries, and seeds exist with proper permissions."""
+        runner_sh = DEPLOY_DIR / "migrate.sh"
+        self.assertTrue(runner_sh.exists(), "deploy/migrate.sh must exist")
+        import os
+        self.assertTrue(
+            os.access(runner_sh, os.X_OK),
+            "deploy/migrate.sh must be executable",
+        )
+
+        runner_go = REPO_ROOT / "backend" / "cmd" / "migrate" / "main.go"
+        self.assertTrue(runner_go.exists(), "backend/cmd/migrate/main.go must exist")
+
+        runner_pkg = REPO_ROOT / "backend" / "internal" / "db" / "migrate.go"
+        self.assertTrue(runner_pkg.exists(), "backend/internal/db/migrate.go must exist")
+
+        seeds_file = DEPLOY_DIR / "seeds.sql"
+        self.assertTrue(seeds_file.exists(), "deploy/seeds.sql must exist")
+        seeds_content = seeds_file.read_text(encoding="utf-8")
+        self.assertIn("INSERT INTO plans", seeds_content)
+        self.assertIn("free", seeds_content)
+        self.assertIn("pro", seeds_content)
+        self.assertIn("enterprise", seeds_content)
 
 
 if __name__ == "__main__":

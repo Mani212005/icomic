@@ -71,10 +71,37 @@ func TestInMemoryRepositoryCRUD(t *testing.T) {
 	if err := repo.CreateChapter(ctx, chap); err != nil {
 		t.Fatalf("CreateChapter failed: %v", err)
 	}
+	if chap.UpdatedAt.IsZero() {
+		t.Fatal("expected chap.UpdatedAt to be non-zero after CreateChapter")
+	}
+
+	fetchedChap, err := repo.GetChapter(ctx, chap.ID)
+	if err != nil {
+		t.Fatalf("GetChapter failed: %v", err)
+	}
+	if fetchedChap.UpdatedAt.IsZero() {
+		t.Fatal("expected fetchedChap.UpdatedAt to be non-zero")
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	fetchedChap.Title = "The Launch (Revised)"
+	if err := repo.UpdateChapter(ctx, fetchedChap); err != nil {
+		t.Fatalf("UpdateChapter failed: %v", err)
+	}
+	updatedChap, err := repo.GetChapter(ctx, chap.ID)
+	if err != nil {
+		t.Fatalf("GetChapter after update failed: %v", err)
+	}
+	if !updatedChap.UpdatedAt.After(chap.UpdatedAt) && !updatedChap.UpdatedAt.Equal(chap.UpdatedAt) {
+		t.Fatalf("expected updatedChap.UpdatedAt (%v) >= initial (%v)", updatedChap.UpdatedAt, chap.UpdatedAt)
+	}
 
 	chapters, err := repo.ListChapters(ctx, proj.ID)
 	if err != nil || len(chapters) != 1 {
 		t.Fatalf("ListChapters failed: %v", err)
+	}
+	if chapters[0].UpdatedAt.IsZero() {
+		t.Fatal("expected Listed chapter UpdatedAt to be non-zero")
 	}
 
 	// 4. Character
@@ -204,6 +231,19 @@ func TestCreditTransactionsAndJobs(t *testing.T) {
 	ledger, err := repo.ListCreditLedger(ctx, user.ID)
 	if err != nil || len(ledger) != 2 {
 		t.Fatalf("expected 2 ledger entries (debit + refund), got %d: %v", len(ledger), err)
+	}
+
+	// Test RecordAdjustment (nullable job id)
+	if err := repo.RecordAdjustment(ctx, user.ID, "proj-1", 50.0); err != nil {
+		t.Fatalf("RecordAdjustment failed: %v", err)
+	}
+	balAfterAdj, _ := repo.GetCreditBalance(ctx, user.ID)
+	if balAfterAdj != 150.0 {
+		t.Fatalf("expected 150.0 after adjustment, got %f", balAfterAdj)
+	}
+	ledgerAfterAdj, err := repo.ListCreditLedger(ctx, user.ID)
+	if err != nil || len(ledgerAfterAdj) != 3 {
+		t.Fatalf("expected 3 ledger entries after adjustment, got %d: %v", len(ledgerAfterAdj), err)
 	}
 
 	// Test daily image count
