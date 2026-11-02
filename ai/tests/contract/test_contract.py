@@ -258,7 +258,8 @@ def test_assemble_pdf_contract():
     assert model.job_id == payload["job_id"]
     assert model.pdf_url.endswith(".pdf")
     assert model.provenance_metadata_preserved is True
-    assert model.page_count == 1
+    # 1 cover page + 1 comic page = 2 pages total
+    assert model.page_count == 2
 
 
 def test_job_status_contract():

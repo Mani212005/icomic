@@ -3,6 +3,7 @@
 import hashlib
 import struct
 import zlib
+from typing import Any
 
 from .port import ImagePort, ImageResult
 
@@ -40,10 +41,21 @@ class FakeImageAdapter(ImagePort):
     def __init__(self, model_id: str = "muse-image-1.0-fake"):
         self.model_id = model_id
         self._png_bytes = _generate_test_png()
+        self.recorded_calls: list[dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = self.recorded_calls
+        self.recorded_inputs: list[dict[str, Any]] = self.recorded_calls
 
     def generate(
         self, prompt: str, reference_images: list[bytes], hashed_user_id: str, style: str
     ) -> ImageResult:
+        self.recorded_calls.append(
+            {
+                "prompt": prompt,
+                "reference_images": list(reference_images),
+                "hashed_user_id": hashed_user_id,
+                "style": style,
+            }
+        )
         h = hashlib.sha256(f"{prompt}:{hashed_user_id}:{style}".encode()).hexdigest()
         request_id = f"req-fake-{h[:12]}"
         provenance = {

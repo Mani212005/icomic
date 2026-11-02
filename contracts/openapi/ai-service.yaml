@@ -788,6 +788,13 @@ components:
         provenance_metadata:
           type: object
           additionalProperties: true
+        panels:
+          type: array
+          items:
+            $ref: '#/components/schemas/PanelTextItem'
+        dialogue_text:
+          type: string
+          nullable: true
 
     AssemblePdfRequest:
       type: object

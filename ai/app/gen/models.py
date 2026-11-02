@@ -185,6 +185,8 @@ class PageExportItem(BaseModel):
     image_url: str
     panel_count: int | None = None
     provenance_metadata: dict[str, Any] = Field(default_factory=dict)
+    panels: list[PanelTextItem] = Field(default_factory=list)
+    dialogue_text: str | None = None
 
 
 class AssemblePdfRequest(BaseModel):
