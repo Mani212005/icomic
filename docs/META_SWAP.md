@@ -234,9 +234,5 @@ The following architectural and policy decisions remain reserved for the captain
    - The enforcement mechanism is currently deferred (no hard age gate or date-of-birth blocking in application code).
    - The UI presentation and copy for the advisory 18+ warning remain a pending captain decision.
 
-3. **Geo-Blocking Enforcement**:
-   - Owner decisions currently mandate global access with no region restrictions or geo-blocking in place.
-   - Whether to enforce regional restrictions (such as Meta's restriction on `muse-image-1.0` in India) via IP geo-detection or user profile declaration remains a pending captain decision.
-
-4. **Production Secret Management Infrastructure**:
-   - The production secret storage mechanism (such as AWS Secrets Manager, HashiCorp Vault, Kubernetes secrets, or cloud key vaults) remains undecided.
+3. **Region Restrictions**:
+   - Region restrictions: none, users are global per the owner decision of 2026-11-02; revisit only if the owner asks.
