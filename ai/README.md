@@ -10,7 +10,7 @@ Per architecture rules:
 - Python talks to AI adapter ports only (language, vision, image, storage, queue, clock).
 - Services depend strictly on port interfaces via dependency injection.
 - Development and CI run completely hermetic with deterministic fake adapters (no network access, no API key required).
-- Meta adapters are inert stubs raising clear not-configured errors until live credits are provisioned.
+- Real Meta adapters are implemented behind existing ports and selected only by configuration.
 
 ## Ports and Adapters Architecture
 
@@ -36,9 +36,9 @@ Default adapters for local development and CI:
 ### 3. Config-Selected Adapters (`ADAPTER_*`)
 
 Adapters are selected via environment variables, defaulting to `fake`:
-- `ADAPTER_LANGUAGE`: `fake` (default) or `meta` (inert stub)
-- `ADAPTER_VISION`: `fake` (default) or `meta` (inert stub)
-- `ADAPTER_IMAGE`: `fake` (default) or `meta` (inert stub)
+- `ADAPTER_LANGUAGE`: `fake` (default) or `meta` (real `MetaLanguageAdapter`)
+- `ADAPTER_VISION`: `fake` (default) or `meta` (real `MetaVisionAdapter`)
+- `ADAPTER_IMAGE`: `fake` (default) or `meta` (real `MetaImageAdapter` targeting `muse-image-1.0`)
 - `ADAPTER_STORAGE`: `fake` (default) or `s3` (stub)
 - `ADAPTER_QUEUE`: `fake` (default) or `redis` (stub)
 - `ADAPTER_CLOCK`: `fake` (default) or `system`
@@ -46,7 +46,10 @@ Adapters are selected via environment variables, defaulting to `fake`:
 Storage configuration:
 - `STORAGE_BASE_URL`: Base URL used by `FakeStorageAdapter` to construct stored artifact URLs, defaulting to `http://localhost:8000/storage/fake`. In containerized or ephemeral test environments, set this to the reachable AI service address (e.g. `http://ai:8000/storage/fake`).
 
-Meta adapters are inert stubs that raise `RuntimeError` if instantiated, ensuring no live API calls or keys are attempted.
+When `meta` is selected, adapters read credentials lazily at construction time.
+If credentials are not configured, adapters raise a descriptive `RuntimeError`.
+All outbound HTTP interactions support injectable transports for hermetic unit testing.
+A dedicated smoke verification script is provided in `scripts/manual/meta_live_check.py` for manual validation.
 
 ## AI Services (`app/services/`)
 

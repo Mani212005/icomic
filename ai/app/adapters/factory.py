@@ -40,7 +40,13 @@ def get_language_adapter(selection: str | None = None) -> LanguagePort:
     if name == "fake":
         return FakeLanguageAdapter()
     if name == "meta":
-        return MetaLanguageAdapter()
+        api_key = os.getenv("META_API_KEY")
+        if not api_key or not api_key.strip():
+            raise RuntimeError(
+                "MetaLanguageAdapter is not configured: META_API_KEY environment variable is not set. "
+                "Set META_API_KEY or use ADAPTER_LANGUAGE=fake."
+            )
+        return MetaLanguageAdapter(api_key=api_key)
     raise ValueError(f"Unknown language adapter: {name}. Supported: 'fake', 'meta'.")
 
 
@@ -49,7 +55,13 @@ def get_vision_adapter(selection: str | None = None) -> VisionPort:
     if name == "fake":
         return FakeVisionAdapter()
     if name == "meta":
-        return MetaVisionAdapter()
+        api_key = os.getenv("META_API_KEY")
+        if not api_key or not api_key.strip():
+            raise RuntimeError(
+                "MetaVisionAdapter is not configured: META_API_KEY environment variable is not set. "
+                "Set META_API_KEY or use ADAPTER_VISION=fake."
+            )
+        return MetaVisionAdapter(api_key=api_key)
     raise ValueError(f"Unknown vision adapter: {name}. Supported: 'fake', 'meta'.")
 
 
@@ -58,7 +70,13 @@ def get_image_adapter(selection: str | None = None) -> ImagePort:
     if name == "fake":
         return FakeImageAdapter()
     if name == "meta":
-        return MetaImageAdapter()
+        api_key = os.getenv("META_API_KEY")
+        if not api_key or not api_key.strip():
+            raise RuntimeError(
+                "MetaImageAdapter is not configured: META_API_KEY environment variable is not set. "
+                "Set META_API_KEY or use ADAPTER_IMAGE=fake."
+            )
+        return MetaImageAdapter(api_key=api_key)
     raise ValueError(f"Unknown image adapter: {name}. Supported: 'fake', 'meta'.")
 
 

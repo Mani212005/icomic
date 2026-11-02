@@ -23,11 +23,20 @@ class TestHermeticGuard(unittest.TestCase):
             self.assertTrue(any(v.rule == "NO_LIVE_PYTEST_MARKERS" for v in violations))
 
     def test_real_meta_host_detected(self):
-        with tempfile.NamedTemporaryFile("w+", suffix=".py") as f:
-            f.write('API_URL = "https://graph.facebook.com/v19.0/me"\n')
-            f.flush()
-            violations = check_file(Path(f.name))
-            self.assertTrue(any(v.rule == "NO_REAL_META_HOSTS" for v in violations))
+        hosts = [
+            "https://graph.facebook.com/v19.0/me",
+            "https://api.meta.ai/v1/chat/completions",
+            "https://api.openai.com/v1/chat/completions",
+        ]
+        for host in hosts:
+            with tempfile.NamedTemporaryFile("w+", suffix=".py") as f:
+                f.write(f'API_URL = "{host}"\n')
+                f.flush()
+                violations = check_file(Path(f.name))
+                self.assertTrue(
+                    any(v.rule == "NO_REAL_META_HOSTS" for v in violations),
+                    f"Failed to detect real host in {host}",
+                )
 
     def test_meta_api_key_detected(self):
         cases = [
@@ -68,6 +77,58 @@ class TestHermeticGuard(unittest.TestCase):
             f.flush()
             violations = check_file(Path(f.name))
             self.assertTrue(any(v.rule == "NO_LIVE_DB_CONNECTIONS_IN_TESTS" for v in violations))
+
+    def test_allowed_meta_http_file_permits_host_and_key(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "ai" / "app" / "adapters" / "meta_http.py"
+            file_path.parent.mkdir(parents=True)
+            file_path.write_text(
+                'DEFAULT_URL = "https://api.meta.ai/v1"\n'
+                'api_key = os.getenv("META_API_KEY")\n'
+            )
+            violations = check_file(file_path)
+            self.assertEqual(len(violations), 0)
+
+    def test_allowed_factory_file_permits_lazy_key_but_forbids_host(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "ai" / "app" / "adapters" / "factory.py"
+            file_path.parent.mkdir(parents=True)
+            file_path.write_text('api_key = os.getenv("META_API_KEY")\n')
+            violations = check_file(file_path)
+            self.assertEqual(len(violations), 0)
+
+            # Factory is NOT allowed to define live host URLs
+            file_path.write_text('HOST = "https://api.meta.ai/v1"\n')
+            violations = check_file(file_path)
+            self.assertTrue(any(v.rule == "NO_REAL_META_HOSTS" for v in violations))
+
+    def test_disallowed_files_fail_for_meta_host_and_key(self):
+        disallowed_paths = [
+            ("ai", "tests", "test_meta.py"),
+            ("ai", "tests", "fixtures", "meta", "chat.json"),
+            ("ai", "app", "adapters", "image", "meta.py"),
+            (".github", "workflows", "ci.yml"),
+        ]
+        for parts in disallowed_paths:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                file_path = Path(tmpdir).joinpath(*parts)
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Test live host rejection
+                file_path.write_text('url = "https://api.meta.ai/v1"\n')
+                violations = check_file(file_path)
+                self.assertTrue(
+                    any(v.rule == "NO_REAL_META_HOSTS" for v in violations),
+                    f"Allowed live host in disallowed path: {parts}",
+                )
+
+                # Test META_API_KEY rejection
+                file_path.write_text('key = os.getenv("META_API_KEY")\n')
+                violations = check_file(file_path)
+                self.assertTrue(
+                    any(v.rule == "NO_META_API_KEY_IN_CODE_OR_TESTS" for v in violations),
+                    f"Allowed META_API_KEY in disallowed path: {parts}",
+                )
 
 
 if __name__ == "__main__":
