@@ -49,6 +49,7 @@ Storage configuration:
 - `META_IMAGE_HOSTS`: Comma-separated exact hostnames allowed for externally hosted images when `ADAPTER_MEDIA_FETCH=http`. External hosts must use HTTPS and resolve only to public IP addresses.
 
 When `meta` is selected, adapters read credentials lazily at construction time.
+Script, panel, moderation and colour services use the selected adapter's default model unless an explicit service `model_id` is supplied. Meta defaults to `muse-spark-1.3` for language and vision; `META_LANGUAGE_MODEL` and `META_VISION_MODEL` configure those adapter defaults.
 If credentials are not configured, adapters raise a descriptive `RuntimeError`.
 All outbound HTTP interactions support injectable transports for hermetic unit testing.
 A dedicated smoke verification script is provided in `scripts/manual/meta_live_check.py` for manual validation, generating a sanitized `.live-diagnostics.json` record on every run.

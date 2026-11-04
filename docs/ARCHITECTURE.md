@@ -207,10 +207,10 @@ Meta API keys come only after the whole project is built on fakes, with the Meta
 
 The `meta.py` adapters implement the same ports using the real `api.meta.ai` endpoints. They are selected by setting `ADAPTER_IMAGE=meta`, `ADAPTER_LANGUAGE=meta`, etc. in environment config.
 
-Real adapters are never imported in tests or CI.
+Tests and CI exercise real adapter classes only with injected mock HTTP transports; they never call live Meta endpoints.
 
 **MetaImageAdapter specifics:**
-- Endpoint: `POST https://api.meta.ai/v1/images/generations` (text-to-image and image-to-image with reference images).
+- Endpoint: `POST https://api.meta.ai/v1/responses` using the Responses image-generation tool (text-to-image and image-to-image with reference images).
 - Pricing: flat $0.01 per returned image.
 - Rate limit: 150 requests per minute per team. The worker concurrency must be configured to stay within this.
 - Must attach `hashed_user_id` on every call.

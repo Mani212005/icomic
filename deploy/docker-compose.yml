@@ -57,6 +57,7 @@ services:
       ADAPTER_STORAGE: "${ADAPTER_STORAGE:-fake}"
       ADAPTER_QUEUE: "${ADAPTER_QUEUE:-fake}"
       ADAPTER_CLOCK: "${ADAPTER_CLOCK:-fake}"
+      # Model IDs and the Meta endpoint come from the adapter defaults.
       META_API_KEY: "${META_API_KEY:-}"
       META_REASONING_EFFORT: "${META_REASONING_EFFORT:-low}"
       META_REASONING_RESERVE_TOKENS: "${META_REASONING_RESERVE_TOKENS:-1024}"
