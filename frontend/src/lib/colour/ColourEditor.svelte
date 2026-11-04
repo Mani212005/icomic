@@ -1,5 +1,17 @@
 <script>
+	import Icon from '$lib/design/Icon.svelte';
 	import { onMount } from 'svelte';
+	import { keyboardCanvas } from './keyboardCanvas.js';
+	let keyboardCursor = null;
+	const canvasKeyboardHandlers = {
+		undo: handleUndo, redo: handleRedo,
+		apply: handleCanvasClick, start: handleMouseDown, move: handleMouseMove, stop: handleMouseUp,
+		isBrush: () => activeTool === 'brush', cursor: (point) => keyboardCursor = point
+	};
+	function handlePointerDown(event) {
+		canvas.setPointerCapture(event.pointerId);
+		handleMouseDown(event);
+	}
 	import {
 		floodFill,
 		CanvasHistory,
@@ -263,24 +275,25 @@
 		<div class="tool-group">
 			<button
 				class="tool-btn"
+				aria-pressed={activeTool === 'bucket'}
 				class:active={activeTool === 'bucket'}
 				on:click={() => (activeTool = 'bucket')}
 			>
-				🪣 Fill
+				<Icon name="bucket" size={18} /> Fill
 			</button>
 			<button
 				class="tool-btn"
-				class:active={activeTool === 'eyedropper'}
+				class:active={activeTool === 'eyedropper'} aria-pressed={activeTool === 'eyedropper'}
 				on:click={() => (activeTool = 'eyedropper')}
 			>
-				💉 Eyedropper
+				<Icon name="eyedropper" size={18} /> Eyedropper
 			</button>
 			<button
 				class="tool-btn"
-				class:active={activeTool === 'brush'}
+				class:active={activeTool === 'brush'} aria-pressed={activeTool === 'brush'}
 				on:click={() => (activeTool = 'brush')}
 			>
-				✏️ Close gaps
+				<Icon name="gap" size={18} /> Close gaps
 			</button>
 		</div>
 
@@ -297,16 +310,16 @@
 
 		<div class="history-group">
 			<button class="tool-btn" on:click={handleUndo} disabled={!canUndo} title="Undo (Ctrl+Z)">
-				↩ Undo ({historyLength})
+				<Icon name="undo" size={18} /> Undo ({historyLength})
 			</button>
 			<button class="tool-btn" on:click={handleRedo} disabled={!canRedo} title="Redo (Ctrl+Y)">
-				↪ Redo
+				<Icon name="redo" size={18} /> Redo
 			</button>
 		</div>
 
 		<div class="action-group">
 			<button class="approve-btn" on:click={approveColour} disabled={!lineArtReady}>
-				✓ Approve
+				<Icon name="check" size={18} /> Approve
 			</button>
 		</div>
 	</header>
@@ -318,6 +331,7 @@
 					class="colour-swatch"
 					style="background-color: {item.hex_color};"
 					class:selected={selectedColour.toLowerCase() === item.hex_color.toLowerCase()}
+					aria-pressed={selectedColour.toLowerCase() === item.hex_color.toLowerCase()}
 					title="{item.label} ({item.region_name || 'Palette'}) - {item.hex_color}"
 					on:click={() => (selectedColour = item.hex_color)}
 				>
@@ -340,11 +354,14 @@
 				{width}
 				{height}
 				class="active-canvas"
+				tabindex="0"
+				aria-label="Canvas: arrows move; Enter paints."
+				use:keyboardCanvas={canvasKeyboardHandlers}
 				on:click={handleCanvasClick}
-				on:mousedown={handleMouseDown}
-				on:mousemove={handleMouseMove}
-				on:mouseup={handleMouseUp}
-				on:mouseleave={handleMouseUp}
+				on:pointerdown={handlePointerDown}
+				on:pointermove={handleMouseMove}
+				on:pointerup={handleMouseUp}
+				on:pointercancel={handleMouseUp}
 			></canvas>
 
 			<canvas
@@ -353,170 +370,7 @@
 				{height}
 				class="line-art-overlay"
 			></canvas>
+			{#if keyboardCursor}<span class="canvas-cursor" aria-hidden="true" style="left: {keyboardCursor.x}%; top: {keyboardCursor.y}%"></span>{/if}
 		</div>
 	</div>
 </div>
-
-<style>
-	.colour-studio {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-		background: #ffffff;
-		border: 1px solid #e2e8f0;
-		border-radius: 8px;
-		padding: 1rem;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-	}
-	.toolbar {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		padding-bottom: 0.75rem;
-		border-bottom: 1px solid #e2e8f0;
-	}
-	.tool-group,
-	.settings-group,
-	.history-group,
-	.action-group {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-	.action-group .approve-btn {
-		min-width: 8.5rem;
-	}
-	.tool-btn {
-		background: #f8fafc;
-		border: 1px solid #cbd5e1;
-		padding: 0.4rem 0.75rem;
-		border-radius: 6px;
-		font-size: 0.875rem;
-		font-weight: 500;
-		cursor: pointer;
-		color: #1e293b;
-		transition: all 0.15s ease;
-	}
-	.tool-btn:hover:not(:disabled) {
-		background: #f1f5f9;
-		border-color: #94a3b8;
-	}
-	.tool-btn.active {
-		background: #0284c7;
-		color: #ffffff;
-		border-color: #0284c7;
-	}
-	.tool-btn:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-	.setting-item {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		font-size: 0.8125rem;
-		color: #475569;
-	}
-	.setting-item input[type='range'] {
-		width: 70px;
-	}
-	.approve-btn {
-		background: #16a34a;
-		color: white;
-		border: none;
-		padding: 0.45rem 1rem;
-		border-radius: 6px;
-		font-weight: 600;
-		font-size: 0.875rem;
-		cursor: pointer;
-		transition: background 0.15s ease;
-	}
-	.approve-btn:hover {
-		background: #15803d;
-	}
-	.palette-bar {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.5rem;
-		padding: 0.5rem 0.75rem;
-		background: #f8fafc;
-		border-radius: 6px;
-		border: 1px solid #e2e8f0;
-	}
-	.swatches {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-	}
-	.colour-swatch {
-		min-width: 50px;
-		height: 36px;
-		padding: 0 0.5rem;
-		border-radius: 6px;
-		border: 2px solid transparent;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-		transition: transform 0.1s ease, border-color 0.1s ease;
-	}
-	.colour-swatch.selected {
-		border-color: #0f172a;
-		transform: scale(1.08);
-		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-	}
-	.swatch-label {
-		font-size: 0.7rem;
-		font-weight: 600;
-		color: #ffffff;
-		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-		text-transform: capitalize;
-	}
-	.custom-picker {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-	}
-	.small-btn {
-		background: #e2e8f0;
-		border: 1px solid #cbd5e1;
-		font-size: 0.75rem;
-		padding: 0.25rem 0.5rem;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-	.workspace-area {
-		display: flex;
-		justify-content: center;
-		background: #f1f5f9;
-		padding: 1.5rem;
-		border-radius: 6px;
-		overflow: auto;
-	}
-	.canvas-viewport {
-		position: relative;
-		width: 600px;
-		height: 750px;
-		box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
-		background: #ffffff;
-	}
-	.active-canvas {
-		position: absolute;
-		top: 0;
-		left: 0;
-		cursor: crosshair;
-		z-index: 1;
-	}
-	.line-art-overlay {
-		position: absolute;
-		top: 0;
-		left: 0;
-		pointer-events: none;
-		mix-blend-mode: multiply;
-		z-index: 2;
-	}
-</style>
