@@ -1,6 +1,7 @@
 """Deterministic fake language adapter for hermetic testing and development."""
 
 import hashlib
+import json
 
 from .port import LanguagePort, Message, TokenUsage
 
@@ -12,6 +13,61 @@ class FakeLanguageAdapter(LanguagePort):
         self.default_response = default_response
 
     def complete(self, model: str, messages: list[Message], **kwargs) -> str:
+        try:
+            payload = json.loads(messages[-1].content)
+        except (ValueError, IndexError):
+            payload = {}
+        source = payload.get("source", "")
+        operation = payload.get("operation")
+        if operation == "characters":
+            return json.dumps(
+                [
+                    {
+                        "name": "Protagonist",
+                        "description": "The central figure described in the script",
+                        "age_range": "20-30",
+                        "appearance": "Determined expression, medium build",
+                        "hair_style": "Dark wavy hair",
+                        "clothing": "Work coat and boots",
+                        "personality": "Observant and persistent",
+                        "visual_attributes": {},
+                    }
+                ]
+            )
+        if operation == "outline":
+            number = payload["chapter_number"]
+            return json.dumps(
+                {
+                    "chapter_number": number,
+                    "title": f"Chapter {number}",
+                    "summary": " ".join(source.split()[:40]),
+                    "important_events": [" ".join(source.split()[-20:])],
+                    "character_names": payload["characters"],
+                    "ending": "Continue to the next story beat.",
+                }
+            )
+        if operation == "panels":
+            words = source.split()
+            count = payload["panel_count"]
+            return json.dumps(
+                [
+                    {
+                        "panel_number": i + 1,
+                        "scene_description": " ".join(
+                            words[i * len(words) // count : (i + 1) * len(words) // count]
+                        )
+                        or "A quiet transition.",
+                        "character_actions": "The character follows the story action.",
+                        "camera_angle": "Eye level",
+                        "background": "The setting described in the scene.",
+                        "dialogue": "",
+                        "narration": "",
+                        "image_prompt": "Comic scene: "
+                        + " ".join(words[i * len(words) // count : (i + 1) * len(words) // count]),
+                    }
+                    for i in range(count)
+                ]
+            )
         prompt_concat = "".join(f"{m.role}:{m.content}\n" for m in messages)
         h = hashlib.sha256(prompt_concat.encode("utf-8")).hexdigest()[:8]
         return f"[FakeLanguageAdapter hash={h}] {self.default_response}"

@@ -221,7 +221,7 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.ChapterCount <= 0 {
-		body.ChapterCount = 1
+		body.ChapterCount = domain.SuggestedChapterCount(len(strings.Fields(body.OriginalScript)))
 	}
 	if body.ArtStyle == "" {
 		body.ArtStyle = "classic-comic"
@@ -1010,10 +1010,21 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keep the complete chapter source and allocate the project panel budget evenly.
+	words := strings.Fields(proj.OriginalScript)
+	chapterCount := max(1, proj.ChapterCount)
+	chapterIndex := c.ChapterNumber - 1
+	if chapterIndex < 0 || chapterIndex >= chapterCount {
+		writeError(w, http.StatusConflict, "Chapter number is outside the project plan")
+		return
+	}
+	chapterScript := strings.Join(words[chapterIndex*len(words)/chapterCount:(chapterIndex+1)*len(words)/chapterCount], " ")
+	totalPanels := domain.TargetPanelCount(len(words))
+	panelCount := max(1, (chapterIndex+1)*totalPanels/chapterCount-chapterIndex*totalPanels/chapterCount)
 	hashedUID := domain.HashUserID(userID)
 
 	// Pre-moderation
-	blocked, reason, err := s.checkPromptModeration(r, c.Summary+" "+c.Title, hashedUID)
+	blocked, reason, err := s.checkPromptModeration(r, chapterScript+" "+c.Summary+" "+c.Title, hashedUID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
 		return
@@ -1057,6 +1068,8 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 			ChapterNumber:  c.ChapterNumber,
 			ChapterTitle:   c.Title,
 			ChapterSummary: c.Summary,
+			ChapterScript:  &chapterScript,
+			PanelCount:     &panelCount,
 			Characters:     charNames,
 		})
 	})
@@ -1064,6 +1077,13 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		errMsg := err.Error()
 		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Panel text generation failed: %v", err))
+		return
+	}
+
+	if len(panelResp.Panels) != panelCount {
+		errMsg := fmt.Sprintf("Expected %d panels, received %d", panelCount, len(panelResp.Panels))
+		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		writeError(w, http.StatusBadGateway, errMsg)
 		return
 	}
 
@@ -1076,6 +1096,11 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 			ChapterID:        c.ID,
 			PanelNumber:      pItem.PanelNumber,
 			SceneDescription: pItem.SceneDescription,
+			CharacterActions: pItem.CharacterActions,
+			CameraAngle:      pItem.CameraAngle,
+			Background:       pItem.Background,
+			Narration:        pItem.Narration,
+			ImagePrompt:      pItem.ImagePrompt,
 			Dialogue:         pItem.Dialogue,
 			Status:           "ready",
 			UpdatedAt:        now,
@@ -1091,16 +1116,15 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 	// Automatically partition panels into pages (SPEC 3.5.1)
 	pageSize := s.MaxPanelsPerPage
 	if pageSize <= 0 {
-		pageSize = 4
+		pageSize = 5
 	}
 
 	var pages []*domain.Page
 	pageNum := 1
-	for i := 0; i < len(pids); i += pageSize {
-		end := i + pageSize
-		if end > len(pids) {
-			end = len(pids)
-		}
+	pageCount := (len(pids) + pageSize - 1) / pageSize
+	for pageIndex := 0; pageIndex < pageCount; pageIndex++ {
+		i := pageIndex * len(pids) / pageCount
+		end := (pageIndex + 1) * len(pids) / pageCount
 		pg := &domain.Page{
 			ID:         uuid.NewString(),
 			ChapterID:  c.ID,
@@ -1337,8 +1361,12 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 			panelItems = append(panelItems, gen.PanelTextItem{
 				PanelNumber:      p.PanelNumber,
 				SceneDescription: p.SceneDescription,
+				CharacterActions: p.CharacterActions,
+				CameraAngle:      p.CameraAngle,
+				Background:       p.Background,
+				Narration:        p.Narration,
 				Dialogue:         p.Dialogue,
-				ImagePrompt:      p.SceneDescription,
+				ImagePrompt:      p.ImagePrompt,
 			})
 			combinedText = append(combinedText, p.SceneDescription, p.Dialogue)
 		} else {
@@ -1546,8 +1574,12 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 			panelItems = append(panelItems, gen.PanelTextItem{
 				PanelNumber:      p.PanelNumber,
 				SceneDescription: p.SceneDescription,
+				CharacterActions: p.CharacterActions,
+				CameraAngle:      p.CameraAngle,
+				Background:       p.Background,
+				Narration:        p.Narration,
 				Dialogue:         p.Dialogue,
-				ImagePrompt:      p.SceneDescription,
+				ImagePrompt:      p.ImagePrompt,
 			})
 		} else {
 			panelItems = append(panelItems, gen.PanelTextItem{
@@ -1721,7 +1753,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Kill switch and quota check (SPEC 5.5)
-	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
+	if err := domain.CheckKillSwitchAndQuota(s.IsKillSwitchActive(), 0, 0, 0, 0); err != nil {
 		writeError(w, http.StatusTooManyRequests, err.Error())
 		return
 	}
@@ -2017,7 +2049,7 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 			panelCount := len(pg.PanelIDs)
 			provenance := map[string]interface{}{"c2pa": true}
 			exportPages = append(exportPages, gen.PageExportItem{
-				PageNumber:         pg.PageNumber,
+				PageNumber:         len(exportPages) + 1,
 				ImageURL:           imgURL,
 				PanelCount:         optionalInt(panelCount),
 				ProvenanceMetadata: &provenance,

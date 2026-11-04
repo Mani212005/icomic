@@ -88,12 +88,17 @@
 			creditUsage = credits || { remaining_credits: 0 };
 
 			if (chapters.length > 0) {
-				const [pnlList, pgList] = await Promise.all([
-					apiClient.getPanels(chapters[0].id),
-					apiClient.getPages(chapters[0].id)
-				]);
-				panels = Array.isArray(pnlList) ? pnlList : (pnlList?.panels || []);
-				pages = Array.isArray(pgList) ? pgList : (pgList?.pages || []);
+				const chapterData = await Promise.all(chapters.map(async (chapter) => {
+					const [pnlList, pgList] = await Promise.all([
+						apiClient.getPanels(chapter.id), apiClient.getPages(chapter.id)
+					]);
+					return {
+						panels: (Array.isArray(pnlList) ? pnlList : (pnlList?.panels || [])).map((panel) => ({ ...panel, chapter_number: chapter.chapter_number })),
+						pages: (Array.isArray(pgList) ? pgList : (pgList?.pages || [])).map((page) => ({ ...page, chapter_number: chapter.chapter_number }))
+					};
+				}));
+				panels = chapterData.flatMap((chapter) => chapter.panels);
+				pages = chapterData.flatMap((chapter) => chapter.pages);
 
 				if (pages.length > 0) {
 					const pal = await apiClient.getColourPalette(pages[0].id);
@@ -208,6 +213,37 @@
 			await reloadProjectData();
 		} catch (err) {
 			jobError = formatApiError(err);
+		}
+	}
+
+	async function generateChapters() {
+		jobError = null;
+		isJobActive = true;
+		try {
+			await apiClient.createChapters(project.id, { chapter_count: project.chapter_count });
+			await reloadProjectData();
+		} catch (err) {
+			jobError = formatApiError(err);
+		} finally {
+			isJobActive = false;
+		}
+	}
+
+	async function generatePanels() {
+		jobError = null;
+		isJobActive = true;
+		try {
+			for (const chapter of chapters) {
+				const existing = await apiClient.getPanels(chapter.id);
+				if ((Array.isArray(existing) ? existing : (existing?.panels || [])).length === 0) {
+					await apiClient.createPanels(chapter.id, {});
+				}
+			}
+			await reloadProjectData();
+		} catch (err) {
+			jobError = formatApiError(err);
+		} finally {
+			isJobActive = false;
 		}
 	}
 
@@ -433,7 +469,7 @@
 
 				<div class="form-group">
 					<label for="chapter-count">Chapters</label>
-					<input id="chapter-count" type="number" min="1" max="10" bind:value={project.chapter_count} />
+					<input id="chapter-count" type="number" min="1" bind:value={project.chapter_count} />
 				</div>
 			</div>
 
@@ -571,6 +607,9 @@
 				</div>
 			{/if}
 
+			{#if chapters.length === 0}
+				<button class="primary-btn" on:click={generateChapters} disabled={isJobActive || !allCharactersApproved}>Generate outline</button>
+			{/if}
 			<div class="chapters-list">
 				{#each chapters as chap}
 					<div class="chapter-card" class:card-stale={isApprovalStale(chap.approved_at, chap.updated_at)}>
@@ -629,11 +668,15 @@
 				<h3>Panels</h3>
 			</header>
 
+			<p class="section-desc">{panels.length} panels across {pages.length} pages</p>
+			{#if chapters.some((chapter) => !panels.some((panel) => panel.chapter_id === chapter.id))}
+				<button class="primary-btn" on:click={generatePanels} disabled={isJobActive || !allChaptersApproved}>Generate panels</button>
+			{/if}
 			<div class="panels-list">
 				{#each panels as panel}
 					<div class="panel-card">
 						<div class="panel-header-row">
-							<span class="panel-num">Panel {panel.panel_number}</span>
+							<span class="panel-num">Chapter {panel.chapter_number}, Panel {panel.panel_number}</span>
 							{#if editingPanelId === panel.id}
 								<div class="panel-edit-btns">
 									<button class="primary-btn small" on:click={() => saveEditPanel(panel.id)}>Save</button>
@@ -694,7 +737,7 @@
 			<div class="page-grid">
 				{#each pages as page}
 					<div class="page-preview-card" class:card-stale={isApprovalStale(page.draft_approved_at, page.updated_at)}>
-						<h4>Page {page.page_number}</h4>
+						<h4>Chapter {page.chapter_number}, Page {page.page_number}</h4>
 						<div class="img-container">
 							{#if page.draft_image_url}
 								<img src={page.draft_image_url} alt="Draft {page.page_number}" />
@@ -762,7 +805,7 @@
 			<div class="page-grid">
 				{#each pages as page}
 					<div class="page-preview-card" class:card-stale={isApprovalStale(page.line_art_approved_at, page.updated_at)}>
-						<h4>Page {page.page_number}</h4>
+						<h4>Chapter {page.chapter_number}, Page {page.page_number}</h4>
 						<div class="img-container">
 							{#if page.line_art_image_url || page.line_art_url}
 								<img src={page.line_art_image_url || page.line_art_url} alt="Page {page.page_number}" />

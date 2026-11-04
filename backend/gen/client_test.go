@@ -363,7 +363,7 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GeneratePanelText failed: %v", err)
 	}
-	if len(panelResp.Panels) != 4 || panelResp.Panels[0].Dialogue == "" {
+	if len(panelResp.Panels) != 4 || panelResp.Panels[0].SceneDescription == "" {
 		t.Fatalf("unexpected panel response: %+v", panelResp)
 	}
 

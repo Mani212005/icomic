@@ -1,12 +1,17 @@
-"""Panel text and chapter outline generation service."""
+"""Bounded chapter outlines and page-sized panel generation."""
 
-from ..adapters.language.port import LanguagePort, Message
-from ..costs import WORST_CASE_TEXT_OUTPUT_TOKENS
+import math
+
+from pydantic import TypeAdapter
+
+from ..adapters.language.port import LanguagePort
 from ..gen.models import ChapterOutlineItem, CharacterProfile, PanelTextItem
+from .pacing import PANELS_PER_PAGE, SOURCE_WORDS_PER_CALL, split_text
+from .structured import complete_json
 
 
 class PanelService:
-    """Service handling chapter outlines and panel text generation."""
+    """Generate every chapter and panel without a single large model response."""
 
     def __init__(self, language_adapter: LanguagePort, model_id: str = ""):
         self.language_adapter = language_adapter
@@ -15,35 +20,35 @@ class PanelService:
     def generate_chapter_outline(
         self, script: str, chapter_count: int, approved_characters: list[CharacterProfile]
     ) -> list[ChapterOutlineItem]:
-        """Generate structured chapter outlines from script honoring approved character profiles."""
         if chapter_count < 1:
             raise ValueError("Chapter count must be at least 1.")
-
-        _ = self.language_adapter.complete(
-            self.model_id,
-            [
-                Message(
-                    role="system",
-                    content=f"Divide script into {chapter_count} chapters honoring approved characters.",
-                ),
-                Message(role="user", content=script),
-            ],
-            max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
-        )
-
-        char_names = [c.name for c in approved_characters] or ["Protagonist"]
-        chapters: list[ChapterOutlineItem] = []
-        for i in range(1, chapter_count + 1):
-            chapters.append(
-                ChapterOutlineItem(
-                    chapter_number=i,
-                    title=f"Chapter {i}: The Journey Begins",
-                    summary=f"Narrative arc and story developments for chapter {i}.",
-                    important_events=[f"Inciting event {i}.1", f"Key confrontation {i}.2"],
-                    character_names=char_names,
-                    ending=f"Dramatic transition hook at end of chapter {i}.",
+        chapters = []
+        for number, source in enumerate(split_text(script, chapter_count), 1):
+            # Large user-selected chapters receive several bounded outline calls.
+            # Combine all their summaries instead of dropping late story events.
+            parts = []
+            for chunk in split_text(
+                source, max(1, math.ceil(len(source.split()) / SOURCE_WORDS_PER_CALL))
+            ):
+                item = complete_json(
+                    self.language_adapter,
+                    self.model_id,
+                    "outline",
+                    {
+                        "source": chunk,
+                        "chapter_number": number,
+                        "characters": [c.name for c in approved_characters],
+                    },
+                    ChapterOutlineItem.model_json_schema(),
                 )
-            )
+                parts.append(ChapterOutlineItem.model_validate(item))
+            first = parts[0]
+            first.chapter_number = number
+            first.summary = "\n".join(p.summary for p in parts)
+            first.important_events = [event for p in parts for event in p.important_events]
+            first.ending = parts[-1].ending
+            first.character_names = [c.name for c in approved_characters]
+            chapters.append(first)
         return chapters
 
     def generate_panel_text(
@@ -52,36 +57,40 @@ class PanelService:
         chapter_title: str,
         chapter_summary: str,
         characters: list[str],
+        panel_count: int = 4,
+        chapter_script: str = "",
     ) -> list[PanelTextItem]:
-        """Generate panel text and visual prompts for a chapter."""
-        _ = self.language_adapter.complete(
-            self.model_id,
-            [
-                Message(
-                    role="system",
-                    content="Generate four comic panels with scene descriptions and dialogue.",
-                ),
-                Message(
-                    role="user",
-                    content=f"Chapter {chapter_number}, {chapter_title}: {chapter_summary}. Characters: {', '.join(characters)}",
-                ),
-            ],
-            max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
-        )
-
-        char_list = ", ".join(characters) if characters else "Protagonist"
-        panels: list[PanelTextItem] = []
-        for p in range(1, 5):
-            panels.append(
-                PanelTextItem(
-                    panel_number=p,
-                    scene_description=f"Scene description for panel {p} of chapter {chapter_number} featuring {char_list}",
-                    character_actions="Character steps forward with decisive motion",
-                    camera_angle="Dynamic establishing angle",
-                    background="Atmospheric urban environment with dramatic shadows",
-                    dialogue="We must move forward.",
-                    narration="The storm gathered on the horizon.",
-                    image_prompt=f"Comic panel {p}: high contrast graphic novel framing, expressive composition for {char_list}",
-                )
+        if panel_count < 1:
+            raise ValueError("Panel count must be at least 1.")
+        page_count = math.ceil(panel_count / PANELS_PER_PAGE)
+        sources = split_text(chapter_script or chapter_summary, page_count)
+        panels = []
+        schema = TypeAdapter(list[PanelTextItem])
+        for page_index, source in enumerate(sources):
+            count = (
+                page_index + 1
+            ) * panel_count // page_count - page_index * panel_count // page_count
+            result = complete_json(
+                self.language_adapter,
+                self.model_id,
+                "panels",
+                {
+                    "source": source,
+                    "chapter_number": chapter_number,
+                    "chapter_title": chapter_title,
+                    "approved_outline": chapter_summary,
+                    "page_number": page_index + 1,
+                    "panel_count": count,
+                    "characters": characters,
+                },
+                schema.json_schema(),
             )
+            page_panels = schema.validate_python(result)
+            if len(page_panels) != count:
+                raise ValueError(
+                    f"Expected {count} panels on page {page_index + 1}, received {len(page_panels)}"
+                )
+            for item in page_panels:
+                item.panel_number = len(panels) + 1
+                panels.append(item)
         return panels
