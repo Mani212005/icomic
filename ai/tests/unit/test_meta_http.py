@@ -15,6 +15,9 @@ from app.adapters.meta_http import (
     DEFAULT_IMAGE_COST_USD,
     DEFAULT_META_LANGUAGE_MODEL,
     DEFAULT_META_USER_FIELD,
+    DEFAULT_REASONING_EFFORT,
+    DEFAULT_REASONING_RESERVE_TOKENS,
+    META_REASONING_ALLOWED,
     MetaConfigurationError,
     MetaContentPolicyError,
     MetaEmptyResponseError,
@@ -25,9 +28,11 @@ from app.adapters.meta_http import (
     build_responses_image_request,
     detect_c2pa_markers,
     detect_image_media_type,
+    load_reasoning_config,
     parse_chat_completion_response,
     parse_palette_json,
     parse_responses_image_response,
+    validate_reasoning_effort,
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "meta"
@@ -449,3 +454,39 @@ def test_strict_network_blocker_in_test_transport():
             real_client.get("/test")
     finally:
         socket.socket.connect = orig_connect
+
+
+@pytest.mark.parametrize("effort", META_REASONING_ALLOWED)
+def test_reasoning_configuration_defaults_and_allowed_values(effort, monkeypatch):
+    monkeypatch.delenv("META_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("META_REASONING_RESERVE_TOKENS", raising=False)
+    assert load_reasoning_config() == (DEFAULT_REASONING_EFFORT, DEFAULT_REASONING_RESERVE_TOKENS)
+    monkeypatch.setenv("META_REASONING_EFFORT", effort)
+    assert load_reasoning_config()[0] == effort
+    assert validate_reasoning_effort(effort) == effort
+
+
+@pytest.mark.parametrize("max_tokens", [-1, 1.5, True, "32"])
+def test_chat_request_rejects_invalid_answer_cap(max_tokens):
+    with pytest.raises(MetaConfigurationError, match="max_tokens"):
+        build_chat_completion_request("model", [], max_tokens=max_tokens, reserve_tokens=1024)
+
+
+def test_invalid_reasoning_environment_does_not_fail_import(monkeypatch):
+    import subprocess
+    import sys
+
+    monkeypatch.setenv("META_REASONING_EFFORT", "none")
+    monkeypatch.setenv("META_REASONING_RESERVE_TOKENS", "invalid")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import app.adapters.language.meta; import app.adapters.vision.meta",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

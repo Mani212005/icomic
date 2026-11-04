@@ -16,9 +16,11 @@ from ..meta_http import (
     MetaHttpClient,
     build_chat_completion_request,
     detect_image_media_type,
+    load_reasoning_config,
     parse_chat_completion_response,
     parse_palette_json,
     validate_model_id_tier,
+    validate_reasoning_effort,
 )
 from .port import PaletteSuggestion, VisionPort
 
@@ -40,6 +42,8 @@ class MetaVisionAdapter(VisionPort):
         )
         validate_model_id_tier(self.default_model)
         self.user_field = os.getenv("META_USER_FIELD", DEFAULT_META_USER_FIELD)
+
+        self._reasoning_effort, self._reasoning_reserve = load_reasoning_config()
 
         if http_client is not None:
             self._client = http_client
@@ -69,6 +73,11 @@ class MetaVisionAdapter(VisionPort):
 
         user = kwargs.pop("hashed_user_id", None) or kwargs.pop("user", None)
 
+        call_reasoning_effort = kwargs.pop("reasoning_effort", self._reasoning_effort)
+        call_reasoning_effort = validate_reasoning_effort(
+            call_reasoning_effort, source="reasoning_effort kwarg"
+        )
+
         content_parts = [
             {"type": "text", "text": prompt},
             {
@@ -83,6 +92,8 @@ class MetaVisionAdapter(VisionPort):
             messages=messages,
             user=user,
             user_field=self.user_field,
+            reasoning_effort=call_reasoning_effort,
+            reserve_tokens=self._reasoning_reserve,
             **kwargs,
         )
 
@@ -113,6 +124,11 @@ class MetaVisionAdapter(VisionPort):
 
         user = kwargs.pop("hashed_user_id", None) or kwargs.pop("user", None)
 
+        call_reasoning_effort = kwargs.pop("reasoning_effort", self._reasoning_effort)
+        call_reasoning_effort = validate_reasoning_effort(
+            call_reasoning_effort, source="reasoning_effort kwarg"
+        )
+
         instruction = (
             "Analyze this comic panel line art and context. Suggest a cohesive, harmonious "
             "color palette for the key visual regions. Respond strictly in valid JSON with this format:\n"
@@ -136,6 +152,8 @@ class MetaVisionAdapter(VisionPort):
             messages=messages,
             user=user,
             user_field=self.user_field,
+            reasoning_effort=call_reasoning_effort,
+            reserve_tokens=self._reasoning_reserve,
             **kwargs,
         )
 

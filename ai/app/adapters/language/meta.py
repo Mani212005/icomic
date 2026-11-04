@@ -14,8 +14,10 @@ from ..meta_http import (
     MetaEmptyResponseError,
     MetaHttpClient,
     build_chat_completion_request,
+    load_reasoning_config,
     parse_chat_completion_response,
     validate_model_id_tier,
+    validate_reasoning_effort,
 )
 from .port import LanguagePort, Message, TokenUsage
 
@@ -38,6 +40,8 @@ class MetaLanguageAdapter(LanguagePort):
         validate_model_id_tier(self.default_model)
         self.user_field = os.getenv("META_USER_FIELD", DEFAULT_META_USER_FIELD)
 
+        self._reasoning_effort, self._reasoning_reserve = load_reasoning_config()
+
         if http_client is not None:
             self._client = http_client
         else:
@@ -59,18 +63,28 @@ class MetaLanguageAdapter(LanguagePort):
         self.last_response_keys: list[str] = []
 
     def complete(self, model: str, messages: list[Message], **kwargs: Any) -> str:
-        """Execute text completion via Meta chat completions endpoint."""
+        """Complete text; max_tokens specifies intended answer length, with headroom added on the wire.
+
+        reasoning_effort may override the configured default for this call.
+        """
         target_model = model or self.default_model
         validate_model_id_tier(target_model)
 
         # Forward hashed_user_id under the configured user field
         user = kwargs.pop("hashed_user_id", None) or kwargs.pop("user", None)
 
+        call_reasoning_effort = kwargs.pop("reasoning_effort", self._reasoning_effort)
+        call_reasoning_effort = validate_reasoning_effort(
+            call_reasoning_effort, source="reasoning_effort kwarg"
+        )
+
         payload = build_chat_completion_request(
             model=target_model,
             messages=messages,
             user=user,
             user_field=self.user_field,
+            reasoning_effort=call_reasoning_effort,
+            reserve_tokens=self._reasoning_reserve,
             **kwargs,
         )
 
@@ -100,6 +114,7 @@ class MetaLanguageAdapter(LanguagePort):
         est_tokens = max(1, chars // 4)
         return TokenUsage(
             input_tokens=est_tokens,
-            output_tokens=50,
-            total_tokens=est_tokens + 50,
+            output_tokens=50 + self._reasoning_reserve,
+            total_tokens=est_tokens + 50 + self._reasoning_reserve,
+            reasoning_tokens=self._reasoning_reserve,
         )

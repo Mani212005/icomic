@@ -20,7 +20,9 @@ if str(SCRIPTS_PATH) not in sys.path:
 from manual.meta_live_check import (
     LiveCheckRunner,
     SpendLedger,
+    calculate_checklist_worst_case,
     calculate_token_cost,
+    estimate_call_worst_case,
     main,
     validate_budget,
 )
@@ -28,6 +30,20 @@ from manual.meta_live_check import (
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "meta"
 MOCK_BASE_URL = "http://mock.meta.internal/v1"
 TEST_SECRET_KEY = "super-secret-test-key-val-789"
+
+
+@pytest.fixture(autouse=True)
+def reasoning_defaults(monkeypatch):
+    monkeypatch.delenv("META_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("META_REASONING_RESERVE_TOKENS", raising=False)
+    monkeypatch.delenv("META_ALLOW_CONTRIBUTOR_TIER", raising=False)
+
+
+def request_stage(request):
+    if request.url.path.endswith("/responses"):
+        return "image"
+    body = json.loads(request.content)
+    return "vision" if isinstance(body["messages"][0]["content"], list) else "language"
 
 
 def load_fixture(name: str) -> dict[str, Any]:
@@ -112,12 +128,11 @@ def test_budget_aborts_before_call_when_ceiling_exceeded(tmp_path: Path):
     ledger_file = tmp_path / "spend_abort.jsonl"
     ledger = SpendLedger(ledger_path=ledger_file)
 
-    # Set budget to $0.005, which is enough for language and vision (~$0.0006)
-    # but NOT enough for image generation ($0.01)
+    # Both chat caps include reasoning headroom; $0.01 still refuses the image stage.
     runner = LiveCheckRunner(
         api_key=TEST_SECRET_KEY,
         base_url=MOCK_BASE_URL,
-        budget_usd=0.005,
+        budget_usd=0.01,
         ledger=ledger,
         diagnostics_path=tmp_path / "diagnostics_abort.json",
         transport=create_success_transport(),
@@ -163,30 +178,42 @@ def test_cumulative_spend_across_runs_triggers_budget_abort(tmp_path: Path):
     assert "budget_exceeded" in summary
 
 
-def test_stop_at_first_failure(tmp_path: Path):
-    ledger_file = tmp_path / "spend_fail.jsonl"
-    ledger = SpendLedger(ledger_path=ledger_file)
-    attempts: list[str] = []
+@pytest.mark.parametrize("failed_stage", ["language", "vision", "image", "all"])
+def test_stages_continue_independently_after_failure(tmp_path: Path, failed_stage):
+    ledger = SpendLedger(tmp_path / "spend.jsonl")
+    attempts = []
+    diag_file = tmp_path / "diagnostics.json"
+    success_transport = create_success_transport()
 
-    def failing_handler(request: httpx.Request) -> httpx.Response:
-        attempts.append(str(request.url))
-        # Fail immediately on first call (language)
-        return httpx.Response(500, text="Internal Server Error")
+    def handler(request):
+        stage = request_stage(request)
+        attempts.append(stage)
+        if failed_stage in (stage, "all"):
+            return httpx.Response(500, text="Internal Server Error")
+        return success_transport.handle_request(request)
 
     runner = LiveCheckRunner(
         api_key=TEST_SECRET_KEY,
         base_url=MOCK_BASE_URL,
-        budget_usd=5.00,
         ledger=ledger,
-        diagnostics_path=tmp_path / "diagnostics_fail.json",
-        transport=httpx.MockTransport(failing_handler),
+        diagnostics_path=diag_file,
+        transport=httpx.MockTransport(handler),
     )
-
     success, summary = runner.run()
     assert success is False
-    assert "stage=language" in summary
-    assert len(attempts) == 1  # Exactly one call attempted; vision & image never called
-    assert "calls=0/3" in summary
+    assert summary.startswith("STATUS: FAIL " if failed_stage == "all" else "STATUS: PARTIAL ")
+    assert attempts == ["language", "vision", "image"]
+    assert "calls=3/3" in summary
+    stages = json.loads(diag_file.read_text())["stages"]
+    _, records = ledger.read_cumulative_spend()
+    assert len(records) == 3
+    for stage, record in zip(attempts, records):
+        failed = failed_stage in (stage, "all")
+        assert stages[stage]["stage_status"] == ("FAILED" if failed else "SUCCESS")
+        assert record["failed"] is failed
+        assert f"{stage}={'FAILED' if failed else 'SUCCESS'}" in summary
+        if failed:
+            assert record["estimated_cost_usd"] == pytest.approx(estimate_call_worst_case(stage))
 
 
 def test_key_never_printed_or_logged(tmp_path: Path, monkeypatch):
@@ -260,6 +287,13 @@ def test_successful_run_order_and_summary_line(tmp_path: Path):
 
 def test_safety_gate_main_refuses_without_live_check_env(monkeypatch):
     """main() must immediately refuse without META_LIVE_CHECK=1 and build zero clients."""
+    import manual.meta_live_check as live_check
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("main safety gate accessed credentials or constructed a client")
+
+    monkeypatch.setattr(live_check, "resolve_api_key", forbidden)
+    monkeypatch.setattr(live_check, "MetaHttpClient", forbidden)
     monkeypatch.delenv("META_LIVE_CHECK", raising=False)
     stderr_capture = io.StringIO()
     monkeypatch.setattr(sys, "stderr", stderr_capture)
@@ -271,18 +305,14 @@ def test_safety_gate_main_refuses_without_live_check_env(monkeypatch):
     assert "META_LIVE_CHECK is not set to '1'" in err
 
 
-def test_budget_validation_refuses_above_5_without_permission(monkeypatch):
-    """Budget above $5.00 must refuse unless owner explicitly allows it."""
+def test_budget_validation_refuses_above_5_even_with_legacy_override(monkeypatch):
+    """The hard cap applies even if the old override flag remains in the environment."""
     monkeypatch.delenv("META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT", raising=False)
-
-    with pytest.raises(PermissionError) as exc_info:
+    with pytest.raises(PermissionError, match=r"hard \$5.00 limit"):
         validate_budget("5.01")
-    assert "exceeds default $5.00 limit" in str(exc_info.value)
-    assert "owner's word" in str(exc_info.value)
-
-    # With permission flag set, it should succeed
     monkeypatch.setenv("META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT", "1")
-    assert validate_budget("10.00") == 10.00
+    with pytest.raises(PermissionError, match=r"hard \$5.00 limit"):
+        validate_budget("10.00")
 
 
 def test_budget_validation_refuses_invalid_or_non_positive():
@@ -323,16 +353,16 @@ def test_failed_call_records_worst_case_cost_in_ledger_with_failed_flag(tmp_path
 
     success, summary = runner.run()
     assert success is False
-    assert "stage=language" in summary
+    assert summary.startswith("STATUS: FAIL ")
 
     # Verify that ledger has recorded the failed call with worst-case cost and failed=True
     cumulative, records = ledger.read_cumulative_spend()
-    assert len(records) == 1
+    assert len(records) == 3
     record = records[0]
     assert record["adapter"] == "language"
     assert record["failed"] is True
     assert record["estimated_cost_usd"] > 0
-    assert cumulative == record["estimated_cost_usd"]
+    assert cumulative == pytest.approx(calculate_checklist_worst_case())
     assert "spend_usd=" in summary
     assert "0.000000" not in summary.split("spend_usd=")[1][:8]  # Recorded positive spend
 
@@ -424,3 +454,267 @@ def test_diagnostics_file_sanitization_and_keys(tmp_path: Path):
     assert img_stage["image_dimensions"] == {"width": 1, "height": 1}
     assert isinstance(img_stage["provenance_keys"], list)
     assert img_stage["content_length"] > 0
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+@pytest.mark.parametrize("auth_stage", ["language", "vision", "image"])
+def test_authentication_error_stops_all_remaining_stages(tmp_path, status_code, auth_stage):
+    attempts = []
+    success_transport = create_success_transport()
+    diag_file = tmp_path / "diagnostics.json"
+    ledger = SpendLedger(tmp_path / "spend.jsonl")
+
+    def handler(request):
+        stage = request_stage(request)
+        attempts.append(stage)
+        if stage == auth_stage:
+            return httpx.Response(status_code, text="denied")
+        return success_transport.handle_request(request)
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        ledger=ledger,
+        diagnostics_path=diag_file,
+        transport=httpx.MockTransport(handler),
+    )
+    success, summary = runner.run()
+    expected = ["language", "vision", "image"]
+    expected = expected[: expected.index(auth_stage) + 1]
+    assert success is False
+    assert attempts == expected
+    assert f"stage={auth_stage} reason=configuration_error" in summary
+    assert f"calls={len(expected)}/3" in summary
+    stages = json.loads(diag_file.read_text())["stages"]
+    assert stages[auth_stage]["status_code"] == status_code
+    assert stages[auth_stage]["stage_status"] == "FAILED"
+    _, records = ledger.read_cumulative_spend()
+    assert len(records) == len(expected)
+    assert records[-1]["failed"] is True
+    assert records[-1]["estimated_cost_usd"] == pytest.approx(estimate_call_worst_case(auth_stage))
+    for stage in set(stages) - set(expected):
+        assert stages[stage]["stage_status"] == "SKIPPED"
+        assert f"{stage}=SKIPPED" in summary
+
+
+def test_empty_reasoning_response_continues_and_preserves_diagnostics(tmp_path):
+    attempts = []
+    success_transport = create_success_transport()
+    diag_file = tmp_path / "diagnostics.json"
+
+    def handler(request):
+        stage = request_stage(request)
+        attempts.append(stage)
+        if stage == "language":
+            return httpx.Response(200, json=load_fixture("chat_completion_reasoning_length.json"))
+        return success_transport.handle_request(request)
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        ledger=SpendLedger(tmp_path / "spend.jsonl"),
+        diagnostics_path=diag_file,
+        transport=httpx.MockTransport(handler),
+    )
+    success, summary = runner.run()
+    assert success is False
+    assert attempts == ["language", "vision", "image"]
+    assert summary.startswith("STATUS: PARTIAL ")
+    language = json.loads(diag_file.read_text())["stages"]["language"]
+    assert language["status_code"] == 200
+    assert language["finish_reason"] == "length"
+    assert language["usage"] == {
+        "prompt_tokens": 17,
+        "completion_tokens": 64,
+        "total_tokens": 81,
+        "reasoning_tokens": 62,
+    }
+
+
+@pytest.mark.parametrize("reserve", [0, 1024, 2048])
+def test_wire_caps_and_budget_estimates_include_reserve(tmp_path, monkeypatch, reserve):
+    monkeypatch.setenv("META_REASONING_RESERVE_TOKENS", str(reserve))
+    captured = {}
+    success_transport = create_success_transport()
+
+    def handler(request):
+        captured[request_stage(request)] = json.loads(request.content)
+        return success_transport.handle_request(request)
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        ledger=SpendLedger(tmp_path / "spend.jsonl"),
+        diagnostics_path=tmp_path / "diag.json",
+        transport=httpx.MockTransport(handler),
+    )
+    success, _ = runner.run()
+    assert success is True
+    assert captured["language"]["messages"] == [{"role": "user", "content": "Say hi."}]
+    assert captured["language"]["max_tokens"] == 32 + reserve
+    assert captured["vision"]["max_tokens"] == 64 + reserve
+    assert captured["language"]["reasoning_effort"] == "minimal"
+    assert captured["vision"]["reasoning_effort"] == "minimal"
+    assert estimate_call_worst_case("language", reserve) == calculate_token_cost(60, 32 + reserve)
+    assert estimate_call_worst_case("vision", reserve) == calculate_token_cost(350, 64 + reserve)
+    assert calculate_checklist_worst_case(reserve) < 0.05
+
+
+def test_reasoning_tokens_billed_as_output_without_double_counting(tmp_path):
+    fixture = load_fixture("chat_completion_reasoning_length.json")
+    fixture["choices"][0] = {"message": {"content": "Hi"}, "finish_reason": "stop"}
+    success_transport = create_success_transport()
+    ledger = SpendLedger(tmp_path / "spend.jsonl")
+
+    def handler(request):
+        if request_stage(request) == "language":
+            return httpx.Response(200, json=fixture)
+        return success_transport.handle_request(request)
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        ledger=ledger,
+        diagnostics_path=tmp_path / "diag.json",
+        transport=httpx.MockTransport(handler),
+    )
+    assert runner.run()[0] is True
+    _, records = ledger.read_cumulative_spend()
+    assert records[0]["output_tokens"] == 64  # Includes the 62 hidden reasoning tokens.
+    assert records[0]["estimated_cost_usd"] == pytest.approx(calculate_token_cost(17, 64))
+    assert records[0]["estimated_cost_usd"] != pytest.approx(calculate_token_cost(17, 64 + 62))
+
+
+def test_failed_call_reserve_is_charged_before_next_budget_check(tmp_path):
+    attempts = []
+
+    def handler(request):
+        attempts.append(request_stage(request))
+        return httpx.Response(500)
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        budget_usd=0.006,
+        ledger=SpendLedger(tmp_path / "spend.jsonl"),
+        diagnostics_path=tmp_path / "diag.json",
+        transport=httpx.MockTransport(handler),
+    )
+    success, summary = runner.run()
+    assert success is False
+    assert attempts == ["language"]
+    assert "stage=vision reason=budget_exceeded" in summary
+    stages = json.loads((tmp_path / "diag.json").read_text())["stages"]
+    assert stages["language"]["stage_status"] == "FAILED"
+    assert stages["vision"]["stage_status"] == "ABORTED"
+    assert stages["image"]["stage_status"] == "SKIPPED"
+
+
+@pytest.mark.parametrize(
+    "variable,value",
+    [
+        ("META_REASONING_EFFORT", "none"),
+        ("META_REASONING_RESERVE_TOKENS", "-1"),
+        ("META_REASONING_RESERVE_TOKENS", "100000"),
+        ("META_LANGUAGE_MODEL", "muse-spark-1.3-contributor"),
+        ("META_VISION_MODEL", "muse-spark-1.3-contributor"),
+        ("META_IMAGE_MODEL", "muse-image-1.0-contributor"),
+    ],
+)
+def test_configuration_failure_stops_before_any_call(tmp_path, monkeypatch, variable, value):
+    monkeypatch.setenv(variable, value)
+
+    def forbidden(request):
+        pytest.fail("configuration error reached HTTP transport")
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        ledger=SpendLedger(tmp_path / "spend.jsonl"),
+        diagnostics_path=tmp_path / "diag.json",
+        transport=httpx.MockTransport(forbidden),
+    )
+    success, summary = runner.run()
+    assert success is False
+    assert "stage=configuration" in summary
+    assert "calls=0/3" in summary
+    stages = json.loads((tmp_path / "diag.json").read_text())["stages"]
+    assert all(stage["stage_status"] == "SKIPPED" for stage in stages.values())
+
+
+@pytest.mark.parametrize("budget", ["NaN", "inf", "-inf"])
+def test_nonfinite_budget_refused(budget):
+    with pytest.raises(ValueError, match="finite"):
+        validate_budget(budget)
+
+
+def test_failure_diagnostics_and_console_exclude_echoed_response(tmp_path, capsys):
+    echoed = f"private prompt or response {TEST_SECRET_KEY}"
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        ledger=SpendLedger(tmp_path / "spend.jsonl"),
+        diagnostics_path=tmp_path / "diag.json",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                400,
+                json={"error": {"message": echoed}},
+            )
+        ),
+    )
+    assert runner.run()[0] is False
+    captured = capsys.readouterr()
+    diagnostics = (tmp_path / "diag.json").read_text()
+    assert TEST_SECRET_KEY not in captured.out + captured.err + diagnostics
+    assert "private prompt or response" not in captured.out + captured.err + diagnostics
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not-json",
+        '{"estimated_cost_usd": -1}',
+        '{"estimated_cost_usd": "NaN"}',
+        '{"estimated_cost_usd": "inf"}',
+        "{}",
+    ],
+)
+def test_invalid_ledger_aborts_without_http(tmp_path, content):
+    ledger_path = tmp_path / "spend.jsonl"
+    ledger_path.write_text(content + "\n")
+
+    def forbidden(request):
+        pytest.fail("invalid spend ledger reached HTTP transport")
+
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        ledger=SpendLedger(ledger_path),
+        diagnostics_path=tmp_path / "diag.json",
+        transport=httpx.MockTransport(forbidden),
+    )
+    success, summary = runner.run()
+    assert success is False
+    assert "stage=ledger reason=ledger_unavailable" in summary
+    assert "calls=0/3" in summary
+    assert (tmp_path / "diag.json").is_file()
+
+
+def test_runner_safety_gate_without_injected_transport(tmp_path, monkeypatch):
+    import manual.meta_live_check as live_check
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("runner safety gate constructed a client")
+
+    monkeypatch.delenv("META_LIVE_CHECK", raising=False)
+    monkeypatch.setattr(live_check, "MetaHttpClient", forbidden)
+    runner = LiveCheckRunner(
+        api_key=TEST_SECRET_KEY,
+        base_url=MOCK_BASE_URL,
+        ledger=SpendLedger(tmp_path / "spend.jsonl"),
+        diagnostics_path=tmp_path / "diag.json",
+    )
+    success, summary = runner.run()
+    assert success is False
+    assert "reason=safety_gate_active" in summary
+    assert "calls=0/3" in summary

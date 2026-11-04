@@ -21,7 +21,7 @@ from app.adapters.image.port import ImagePort, ImageResult
 from app.adapters.language.fake import FakeLanguageAdapter
 from app.adapters.language.meta import MetaLanguageAdapter
 from app.adapters.language.port import LanguagePort, Message, TokenUsage
-from app.adapters.meta_http import MetaEmptyResponseError
+from app.adapters.meta_http import MetaConfigurationError, MetaEmptyResponseError
 from app.adapters.vision.fake import FakeVisionAdapter
 from app.adapters.vision.meta import MetaVisionAdapter
 from app.adapters.vision.port import PaletteSuggestion, VisionPort
@@ -31,6 +31,12 @@ MOCK_BASE_URL = "http://mock.meta.internal/v1"
 
 # Dynamically constructed to prevent hermetic guard false-positives on static source inspection
 API_KEY_ENV_NAME = "META_" + "API_KEY"
+
+
+@pytest.fixture(autouse=True)
+def reasoning_defaults(monkeypatch):
+    monkeypatch.delenv("META_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("META_REASONING_RESERVE_TOKENS", raising=False)
 
 
 def load_fixture(name: str) -> dict[str, Any]:
@@ -107,7 +113,9 @@ def test_meta_language_adapter_empty_length_raises():
     assert len(captured_payloads) == 1
     req = captured_payloads[0]
     assert req["model"] == "muse-spark-1.3"
-    assert req["max_tokens"] == 10
+    # max_tokens on the wire = caller's 10 + default reserve 1024
+    assert req["max_tokens"] == 10 + 1024
+    assert req["reasoning_effort"] == "low"
     assert len(req["messages"]) == 1
     assert req["messages"][0]["content"] == "Ping"
 
@@ -121,8 +129,9 @@ def test_meta_language_adapter_estimate_tokens():
     messages = [Message(role="user", content="A" * 80)]
     usage = adapter.estimate_tokens(messages)
     assert usage.input_tokens == 20
-    assert usage.output_tokens == 50
-    assert usage.total_tokens == 70
+    assert usage.output_tokens == 50 + 1024
+    assert usage.reasoning_tokens == 1024
+    assert usage.total_tokens == 70 + 1024
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +170,9 @@ def test_meta_vision_adapter_review_payload_and_response():
     # Verify content parts and forwarded max_tokens / temperature
     assert len(captured_payloads) == 1
     req = captured_payloads[0]
-    assert req["max_tokens"] == 25
+    # max_tokens on the wire = caller's 25 + default reserve 1024
+    assert req["max_tokens"] == 25 + 1024
+    assert req["reasoning_effort"] == "low"
     assert req["temperature"] == 0.3
     parts = req["messages"][0]["content"]
     assert parts[0]["type"] == "text"
@@ -200,7 +211,9 @@ def test_meta_vision_adapter_suggest_palette():
     # Verify payload forwards max_tokens and temperature
     assert len(captured_payloads) == 1
     req = captured_payloads[0]
-    assert req["max_tokens"] == 150
+    # max_tokens on the wire = caller's 150 + default reserve 1024
+    assert req["max_tokens"] == 150 + 1024
+    assert req["reasoning_effort"] == "low"
     assert req["temperature"] == 0.1
     for item in suggestion.palette:
         assert item.hex_color.startswith("#")
@@ -587,3 +600,122 @@ def test_image_adapter_refuses_contributor_tier_unless_permitted(monkeypatch):
         style="anime",
     )
     assert isinstance(res, ImageResult)
+
+
+@pytest.mark.parametrize("adapter_class", [MetaLanguageAdapter, MetaVisionAdapter])
+@pytest.mark.parametrize("effort", ["none", "invalid", ""])
+def test_reasoning_effort_rejected_at_construction(adapter_class, effort, monkeypatch):
+    monkeypatch.setenv("META_REASONING_EFFORT", effort)
+    with pytest.raises(MetaConfigurationError, match="META_REASONING_EFFORT"):
+        adapter_class(http_client=object())
+
+
+@pytest.mark.parametrize("adapter_class", [MetaLanguageAdapter, MetaVisionAdapter])
+@pytest.mark.parametrize("reserve", ["-1", "1.5", "NaN", "bad", ""])
+def test_reasoning_reserve_rejected_at_construction(adapter_class, reserve, monkeypatch):
+    monkeypatch.setenv("META_REASONING_RESERVE_TOKENS", reserve)
+    with pytest.raises(MetaConfigurationError, match="META_REASONING_RESERVE_TOKENS"):
+        adapter_class(http_client=object())
+
+
+def call_chat_method(adapter, method, **kwargs):
+    if method == "complete":
+        return adapter.complete("", [Message(role="user", content="Hi")], **kwargs)
+    if method == "review":
+        return adapter.review("", b"image", "Hi", **kwargs)
+    return adapter.suggest_palette("", b"image", "Hi", **kwargs)
+
+
+@pytest.mark.parametrize("method", ["complete", "review", "suggest_palette"])
+@pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high", "xhigh"])
+def test_reasoning_config_and_per_call_override(method, effort, monkeypatch):
+    monkeypatch.setenv("META_REASONING_EFFORT", "high")
+    monkeypatch.setenv("META_REASONING_RESERVE_TOKENS", "7")
+    captured = []
+
+    def handler(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json=load_fixture(
+                "vision_palette.json" if method == "suggest_palette" else "chat_completion.json"
+            ),
+        )
+
+    cls = MetaLanguageAdapter if method == "complete" else MetaVisionAdapter
+    adapter = cls(
+        api_key="mock-key", base_url=MOCK_BASE_URL, transport=httpx.MockTransport(handler)
+    )
+    # Configuration is captured at construction, including for injected clients.
+    monkeypatch.setenv("META_REASONING_EFFORT", "none")
+    monkeypatch.setenv("META_REASONING_RESERVE_TOKENS", "invalid")
+    call_chat_method(adapter, method, max_tokens=32, reasoning_effort=effort)
+    call_chat_method(adapter, method, max_tokens=32)
+    assert captured[0]["reasoning_effort"] == effort
+    assert captured[1]["reasoning_effort"] == "high"
+    assert captured[0]["max_tokens"] == captured[1]["max_tokens"] == 39
+    assert "reserve_tokens" not in captured[0]
+
+
+@pytest.mark.parametrize("method", ["complete", "review", "suggest_palette"])
+@pytest.mark.parametrize("effort", ["none", "invalid", None, 5])
+def test_invalid_reasoning_override_refuses_before_http(method, effort):
+    def forbidden(request):
+        pytest.fail("invalid override sent a request")
+
+    cls = MetaLanguageAdapter if method == "complete" else MetaVisionAdapter
+    adapter = cls(
+        api_key="mock-key", base_url=MOCK_BASE_URL, transport=httpx.MockTransport(forbidden)
+    )
+    with pytest.raises(MetaConfigurationError, match="reasoning_effort"):
+        call_chat_method(adapter, method, reasoning_effort=effort)
+
+
+@pytest.mark.parametrize("method", ["complete", "review", "suggest_palette"])
+@pytest.mark.parametrize("reserve", [0, 1024])
+def test_reasoning_reserve_only_applies_to_explicit_max_tokens(method, reserve, monkeypatch):
+    monkeypatch.setenv("META_REASONING_RESERVE_TOKENS", str(reserve))
+    captured = []
+
+    def handler(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json=load_fixture(
+                "vision_palette.json" if method == "suggest_palette" else "chat_completion.json"
+            ),
+        )
+
+    cls = MetaLanguageAdapter if method == "complete" else MetaVisionAdapter
+    adapter = cls(
+        api_key="mock-key", base_url=MOCK_BASE_URL, transport=httpx.MockTransport(handler)
+    )
+    call_chat_method(adapter, method)
+    call_chat_method(adapter, method, max_tokens=None)
+    call_chat_method(adapter, method, max_tokens=64)
+    assert "max_tokens" not in captured[0]
+    assert "max_tokens" not in captured[1]
+    assert captured[2]["max_tokens"] == 64 + reserve
+    if method == "complete":
+        estimate = adapter.estimate_tokens([Message(role="user", content="Hi")])
+        assert estimate.output_tokens == 50 + reserve
+        assert estimate.reasoning_tokens == reserve
+        assert estimate.total_tokens == estimate.input_tokens + estimate.output_tokens
+
+
+@pytest.mark.parametrize("method", ["complete", "review", "suggest_palette"])
+def test_reasoning_empty_length_error_preserves_billed_usage(method):
+    fixture = load_fixture("chat_completion_reasoning_length.json")
+    cls = MetaLanguageAdapter if method == "complete" else MetaVisionAdapter
+    adapter = cls(
+        api_key="mock-key",
+        base_url=MOCK_BASE_URL,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=fixture)),
+    )
+    with pytest.raises(MetaEmptyResponseError) as caught:
+        call_chat_method(adapter, method, max_tokens=32)
+    assert caught.value.finish_reason == "length"
+    assert caught.value.reasoning_tokens == 62
+    assert caught.value.token_usage.output_tokens == 64
+    assert caught.value.token_usage.total_tokens == 81
+    assert adapter.last_usage == caught.value.token_usage

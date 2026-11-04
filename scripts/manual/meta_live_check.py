@@ -15,7 +15,8 @@ Budget and Pricing Rules (Owner Decisions 2026-11-02):
   * muse-spark-1.3 output tokens: $4.25 per 1,000,000 tokens ($0.00000425 / token)
   * muse-image-1.0 image calls:   $0.01 flat per image generated (docs/META_SWAP.md Section 4.5)
 - Cheapest path first: Text call -> Vision call -> Image call.
-- No loops, no retries (max_retries=0), no fallback calls; stops at the first failure.
+- One call per stage, no retries (max_retries=0) or fallback calls.
+- Stages continue independently after failures; auth/configuration and budget aborts stop all calls.
 - NEVER prints API keys or full model prompts/responses.
 - Outputs a single machine-readable status summary line for the supervisor.
 """
@@ -23,6 +24,7 @@ Budget and Pricing Rules (Owner Decisions 2026-11-02):
 from __future__ import annotations
 
 import json
+import math
 import os
 import struct
 import sys
@@ -40,29 +42,34 @@ AI_PATH = REPO_ROOT / "ai"
 if str(AI_PATH) not in sys.path:
     sys.path.insert(0, str(AI_PATH))
 
-from app.adapters.image.meta import MetaImageAdapter  # noqa: E402
-from app.adapters.language.meta import MetaLanguageAdapter  # noqa: E402
-from app.adapters.language.port import Message  # noqa: E402
-from app.adapters.meta_http import (  # noqa: E402
+from app.adapters.image.meta import MetaImageAdapter
+from app.adapters.language.meta import MetaLanguageAdapter
+from app.adapters.language.port import Message
+from app.adapters.meta_http import (
+    DEFAULT_REASONING_RESERVE_TOKENS,
+    MetaConfigurationError,
     MetaHttpClient,
     detect_image_media_type,
+    load_reasoning_config,
+    validate_model_id_tier,
 )
-from app.adapters.vision.meta import MetaVisionAdapter  # noqa: E402
+from app.adapters.vision.meta import MetaVisionAdapter
 
 # ---------------------------------------------------------------------------
 # Pricing & Budget Constants
 # ---------------------------------------------------------------------------
 
-PRICE_INPUT_TOKEN_PER_M: float = 1.25     # $1.25 per 1,000,000 input tokens
-PRICE_OUTPUT_TOKEN_PER_M: float = 4.25    # $4.25 per 1,000,000 output tokens
-PRICE_PER_IMAGE_FLAT_USD: float = 0.01    # $0.01 per muse-image-1.0 call
+PRICE_INPUT_TOKEN_PER_M: float = 1.25  # $1.25 per 1,000,000 input tokens
+PRICE_OUTPUT_TOKEN_PER_M: float = 4.25  # $4.25 per 1,000,000 output tokens
+PRICE_PER_IMAGE_FLAT_USD: float = 0.01  # $0.01 per muse-image-1.0 call
 DEFAULT_BUDGET_USD: float = 5.00
+MAX_CHECKLIST_COST_USD: float = 0.05
 
-# Worst-case token estimates for capped calls (64 output tokens for reasoning models)
+# Intended answer caps. Wire output caps also include the configured reasoning reserve.
 WORST_CASE_TEXT_INPUT_TOKENS = 60
-WORST_CASE_TEXT_OUTPUT_TOKENS = 64
+WORST_CASE_TEXT_OUTPUT_TOKENS = 32
 WORST_CASE_VISION_INPUT_TOKENS = 350
-WORST_CASE_VISION_OUTPUT_TOKENS = 20
+WORST_CASE_VISION_OUTPUT_TOKENS = 64
 
 DEFAULT_LEDGER_PATH = REPO_ROOT / ".live-spend.jsonl"
 DEFAULT_DIAGNOSTICS_PATH = REPO_ROOT / ".live-diagnostics.json"
@@ -139,22 +146,30 @@ def calculate_token_cost(input_tokens: int, output_tokens: int) -> float:
     return in_cost + out_cost
 
 
-def estimate_call_worst_case(stage: str) -> float:
+def estimate_call_worst_case(
+    stage: str, reserve_tokens: int = DEFAULT_REASONING_RESERVE_TOKENS
+) -> float:
     """Return conservative worst-case cost estimate for a single checklist step."""
     if stage == "language":
-        return calculate_token_cost(WORST_CASE_TEXT_INPUT_TOKENS, WORST_CASE_TEXT_OUTPUT_TOKENS)
+        return calculate_token_cost(
+            WORST_CASE_TEXT_INPUT_TOKENS, WORST_CASE_TEXT_OUTPUT_TOKENS + reserve_tokens
+        )
     if stage == "vision":
-        return calculate_token_cost(WORST_CASE_VISION_INPUT_TOKENS, WORST_CASE_VISION_OUTPUT_TOKENS)
+        return calculate_token_cost(
+            WORST_CASE_VISION_INPUT_TOKENS, WORST_CASE_VISION_OUTPUT_TOKENS + reserve_tokens
+        )
     if stage == "image":
         return PRICE_PER_IMAGE_FLAT_USD
     return 0.0
 
 
-def calculate_checklist_worst_case() -> float:
+def calculate_checklist_worst_case(
+    reserve_tokens: int = DEFAULT_REASONING_RESERVE_TOKENS,
+) -> float:
     """Return total worst-case cost estimate for entire 3-step checklist."""
     return (
-        estimate_call_worst_case("language")
-        + estimate_call_worst_case("vision")
+        estimate_call_worst_case("language", reserve_tokens)
+        + estimate_call_worst_case("vision", reserve_tokens)
         + estimate_call_worst_case("image")
     )
 
@@ -199,17 +214,18 @@ class SpendLedger:
         try:
             with open(self.ledger_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    line = line.strip()
-                    if not line:
+                    if not line.strip():
                         continue
-                    try:
-                        record = json.loads(line)
-                        records.append(record)
-                        total_spend += float(record.get("estimated_cost_usd", 0.0))
-                    except Exception:
-                        continue
-        except Exception as exc:
-            raise PermissionError(f"Failed to read spend ledger: {exc}") from exc
+                    record = json.loads(line)
+                    cost = float(record["estimated_cost_usd"])
+                    if not math.isfinite(cost) or cost < 0:
+                        raise ValueError("Invalid ledger cost")
+                    records.append(record)
+                    total_spend += cost
+            if not math.isfinite(total_spend):
+                raise ValueError("Invalid cumulative ledger spend")
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise PermissionError("Cannot safely read cumulative spend ledger") from exc
 
         return total_spend, records
 
@@ -226,11 +242,7 @@ class SpendLedger:
     ) -> dict[str, Any]:
         """Append a call record to the ledger."""
         self.verify_accessible()
-        ts = (
-            timestamp_fn()
-            if timestamp_fn
-            else datetime.now(timezone.utc).isoformat()
-        )
+        ts = timestamp_fn() if timestamp_fn else datetime.now(timezone.utc).isoformat()
         record = {
             "timestamp": ts,
             "model": model,
@@ -254,8 +266,7 @@ class SpendLedger:
 def validate_budget(budget_env: str | None) -> float:
     """Validate META_LIVE_BUDGET_USD value.
 
-    Refuses non-numeric or non-positive values.
-    Refuses values above $5.00 unless META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT=1 is set.
+    Refuses non-finite, non-positive values and anything above the $5 hard cap.
     """
     if budget_env is None or budget_env.strip() == "":
         return DEFAULT_BUDGET_USD
@@ -263,19 +274,13 @@ def validate_budget(budget_env: str | None) -> float:
     try:
         val = float(budget_env.strip())
     except ValueError as exc:
-        raise ValueError(
-            f"Invalid META_LIVE_BUDGET_USD {budget_env!r}: must be a positive number."
-        ) from exc
+        raise ValueError("META_LIVE_BUDGET_USD must be a positive number.") from exc
 
-    if val <= 0.0:
-        raise ValueError(f"Invalid META_LIVE_BUDGET_USD {val}: must be positive.")
+    if not math.isfinite(val) or val <= 0.0:
+        raise ValueError("META_LIVE_BUDGET_USD must be positive and finite.")
 
-    if val > 5.0 and os.getenv("META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT") != "1":
-        raise PermissionError(
-            f"META_LIVE_BUDGET_USD of ${val:.2f} exceeds default $5.00 limit. "
-            "Increasing the live check budget above $5.00 requires the owner's word: "
-            "set META_LIVE_BUDGET_ALLOW_ABOVE_DEFAULT=1."
-        )
+    if val > DEFAULT_BUDGET_USD:
+        raise PermissionError("META_LIVE_BUDGET_USD exceeds the hard $5.00 limit.")
 
     return val
 
@@ -309,8 +314,8 @@ def resolve_api_key() -> str:
                                 raw_val = raw_val[1:-1]
                             if raw_val:
                                 return raw_val
-            except Exception:
-                continue
+            except (OSError, UnicodeError):
+                pass
 
     return ""
 
@@ -367,14 +372,19 @@ class LiveCheckRunner:
         self.img_model = os.getenv("META_IMAGE_MODEL", "muse-image-1.0")
 
     def run(self) -> tuple[bool, str]:
-        """Run cheapest-path verification sequence.
-
-        Returns (success: bool, machine_readable_summary: str).
-        """
+        """Run each stage once, stopping all calls only for config/auth or budget errors."""
         diagnostics: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "stages": {},
+            "stages": {
+                "language": {"stage_status": "SKIPPED"},
+                "vision": {"stage_status": "SKIPPED"},
+                "image": {"stage_status": "SKIPPED"},
+            },
         }
+        stages = diagnostics["stages"]
+        cumulative_spend = 0.0
+        session_spend = 0.0
+        attempted_calls = 0
 
         def save_diagnostics() -> None:
             try:
@@ -382,418 +392,302 @@ class LiveCheckRunner:
                 with open(self.diagnostics_path, "w", encoding="utf-8") as f:
                     json.dump(diagnostics, f, indent=2)
                     f.write("\n")
-            except Exception as e:
-                print(
-                    f"Warning: Failed to write diagnostics file {self.diagnostics_path}: {e}",
-                    file=sys.stderr,
+            except OSError:
+                print("Warning: Failed to write diagnostics file.", file=sys.stderr)
+
+        def finish(stage: str | None = None, reason: str | None = None) -> tuple[bool, str]:
+            save_diagnostics()
+            language = stages["language"]["stage_status"]
+            vision = stages["vision"]["stage_status"]
+            image = stages["image"]["stage_status"]
+            results = (language, vision, image)
+            success = results == ("SUCCESS", "SUCCESS", "SUCCESS") and reason is None
+            status = "PASS" if success else "PARTIAL" if "SUCCESS" in results else "FAIL"
+            stopped = f" stage={stage} reason={reason}" if reason else ""
+            summary = (
+                f"STATUS: {status} language={language} vision={vision} image={image}{stopped} "
+                f"spend_usd={session_spend:.6f} "
+                f"cumulative_spend_usd={cumulative_spend + session_spend:.6f} "
+                f"calls={attempted_calls}/3 budget_usd={self.budget_usd:.2f}"
+            )
+            print(summary)
+            return success, summary
+
+        def budget_allows(stage: str, worst_case: float) -> bool:
+            if cumulative_spend + session_spend + worst_case > self.budget_usd:
+                stages[stage] = {"stage_status": "ABORTED", "reason": "budget_exceeded"}
+                return False
+            return True
+
+        def record_text_success(stage: str, adapter: Any, text: str, worst_case: float) -> None:
+            nonlocal session_spend
+            usage = adapter.last_usage
+            # If usage is missing, conservatively account for the entire wire cap.
+            call_cost = (
+                calculate_token_cost(usage.input_tokens, usage.output_tokens)
+                if usage
+                else worst_case
+            )
+            self.ledger.record_call(
+                model=adapter.default_model,
+                adapter=stage,
+                cost_usd=call_cost,
+                input_tokens=usage.input_tokens if usage else 0,
+                output_tokens=usage.output_tokens if usage else 0,
+            )
+            session_spend += call_cost
+            stages[stage] = {
+                "status_code": adapter.last_status_code,
+                "stage_status": "SUCCESS",
+                "top_level_keys": adapter.last_response_keys,
+                "finish_reason": adapter.last_finish_reason,
+                "usage": {
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "prompt_tokens": usage.input_tokens,
+                    "completion_tokens": usage.output_tokens,
+                    "total_tokens": usage.total_tokens,
+                    "reasoning_tokens": usage.reasoning_tokens,
+                }
+                if usage
+                else None,
+                "content_length": len(text),
+            }
+            save_diagnostics()
+            print(f"  - {stage}: SUCCESS cost_usd={call_cost:.6f}")
+
+        def record_failure(
+            stage: str,
+            model: str,
+            exc: Exception,
+            worst_case: float,
+            sent: bool,
+            adapter: Any = None,
+        ) -> None:
+            nonlocal session_spend
+            if sent:
+                input_tokens = (
+                    WORST_CASE_TEXT_INPUT_TOKENS
+                    if stage == "language"
+                    else WORST_CASE_VISION_INPUT_TOKENS
+                    if stage == "vision"
+                    else 0
                 )
-
-        # Ensure ledger accessibility
-        try:
-            self.ledger.verify_accessible()
-        except Exception as exc:
-            err_msg = f"Spend ledger error: {exc}"
-            print(f"[ABORTED] {err_msg}", file=sys.stderr)
+                output_tokens = (
+                    WORST_CASE_TEXT_OUTPUT_TOKENS + reserve_tokens
+                    if stage == "language"
+                    else WORST_CASE_VISION_OUTPUT_TOKENS + reserve_tokens
+                    if stage == "vision"
+                    else 0
+                )
+                self.ledger.record_call(
+                    model=model,
+                    adapter=stage,
+                    cost_usd=worst_case,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    image_count=int(stage == "image"),
+                    failed=True,
+                )
+                session_spend += worst_case
+            usage = getattr(exc, "token_usage", None)
+            details = getattr(exc, "details", None)
+            response_keys = (
+                sorted(details)
+                if isinstance(details, dict) and details
+                else (adapter.last_response_keys if adapter else [])
+            )
+            stages[stage] = {
+                "status_code": getattr(exc, "status_code", None)
+                or (adapter.last_status_code if adapter else None),
+                "stage_status": "FAILED",
+                "error_type": type(exc).__name__,
+                "top_level_keys": response_keys,
+                "finish_reason": getattr(exc, "finish_reason", None),
+                "usage": {
+                    "prompt_tokens": usage.input_tokens,
+                    "completion_tokens": usage.output_tokens,
+                    "total_tokens": usage.total_tokens,
+                    "reasoning_tokens": usage.reasoning_tokens,
+                }
+                if usage
+                else None,
+                "content_length": 0,
+            }
             save_diagnostics()
-            summary = f"STATUS: FAIL stage=ledger reason={json.dumps(str(exc))} spend_usd=0.000000 cumulative_spend_usd=0.000000 calls=0/3 budget_usd={self.budget_usd:.2f}"
-            print(summary)
-            return False, summary
+            # Exception text may contain echoed prompts, response text or credentials.
+            print(f"  - {stage}: FAILED ({type(exc).__name__})", file=sys.stderr)
 
-        cumulative_spend, prior_records = self.ledger.read_cumulative_spend()
-        checklist_worst_case = calculate_checklist_worst_case()
-        session_spend = 0.0
-        completed_calls = 0
-
-        print("=" * 65)
-        print("Meta AI Adapters - Manual Live Smoke Verification")
-        print("=" * 65)
-        print("Pricing & Budget Configuration:")
-        print(f"  Hard Budget (META_LIVE_BUDGET_USD): ${self.budget_usd:.2f} USD")
-        print(f"  Prior Cumulative Spend:             ${cumulative_spend:.6f} USD ({len(prior_records)} prior calls)")
-        print(f"  Checklist Worst-Case Spend:         ${checklist_worst_case:.6f} USD")
-        print(f"  Base URL:                           {self.base_url}")
-        print("  API Key:                            [FOUND]")
-        print("=" * 65)
-
-        # Safety gate for live network calls
+        # Keep this second gate even when the runner is invoked without main().
         if self.transport is None and os.getenv("META_LIVE_CHECK") != "1":
-            print(
-                "\n[ABORTED] Safety gate active: META_LIVE_CHECK must be '1' for live calls.\n",
-                file=sys.stderr,
-            )
-            save_diagnostics()
-            summary = "STATUS: FAIL reason=\"safety_gate_active\" calls=0/3"
-            print(summary)
-            return False, summary
+            return finish(reason="safety_gate_active")
 
-        # ---------------------------------------------------------------------
-        # Stage 1: Text Call (MetaLanguageAdapter) - Cheapest ($~0.0003)
-        # ---------------------------------------------------------------------
-        stage_worst_case = estimate_call_worst_case("language")
-        projected = cumulative_spend + session_spend + stage_worst_case
-        if projected > self.budget_usd:
-            print(
-                f"\n[BUDGET ABORT] Aborting before language call: projected total spend "
-                f"${projected:.6f} exceeds budget ceiling ${self.budget_usd:.2f}.",
-                file=sys.stderr,
-            )
-            save_diagnostics()
-            summary = f"STATUS: FAIL stage=language reason=\"budget_exceeded\" spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
-            print(summary)
-            return False, summary
-
-        print("\n[1/3] Step 1: MetaLanguageAdapter (Text Completion)...")
         try:
-            lang_client = MetaHttpClient(
+            self.budget_usd = validate_budget(str(self.budget_usd))
+            _, reserve_tokens = load_reasoning_config()
+            validate_model_id_tier(self.lang_model)
+            validate_model_id_tier(self.vis_model)
+            validate_model_id_tier(self.img_model)
+        except (MetaConfigurationError, ValueError, PermissionError) as exc:
+            return finish(stage="configuration", reason=type(exc).__name__)
+
+        checklist_worst_case = calculate_checklist_worst_case(reserve_tokens)
+        if checklist_worst_case >= MAX_CHECKLIST_COST_USD:
+            return finish(stage="configuration", reason="checklist_cost_limit_exceeded")
+        try:
+            cumulative_spend, prior_records = self.ledger.read_cumulative_spend()
+        except PermissionError:
+            return finish(stage="ledger", reason="ledger_unavailable")
+
+        print("Meta AI Adapters - Manual Live Smoke Verification")
+        print(f"  Hard Budget: ${self.budget_usd:.2f} USD")
+        print(
+            f"  Prior Cumulative Spend: ${cumulative_spend:.6f} USD ({len(prior_records)} prior calls)"
+        )
+        print(f"  Checklist Worst-Case Spend: ${checklist_worst_case:.6f} USD")
+        print("  API Key: [FOUND]")
+
+        # Stage 1: Text. One request with a tiny prompt and minimal reasoning.
+        worst_case = estimate_call_worst_case("language", reserve_tokens)
+        if not budget_allows("language", worst_case):
+            return finish(stage="language", reason="budget_exceeded")
+        sent = False
+        lang_adapter = None
+        try:
+            with MetaHttpClient(
                 api_key=self.api_key,
                 base_url=self.base_url,
                 transport=self.transport,
-                max_retries=0,  # Zero retries in live check mode
+                max_retries=0,
                 timeout=30.0,
-            )
-            lang_adapter = MetaLanguageAdapter(
-                api_key=self.api_key,
-                default_model=self.lang_model,
-                http_client=lang_client,
-            )
+            ) as client:
+                lang_adapter = MetaLanguageAdapter(
+                    default_model=self.lang_model,
+                    http_client=client,
+                )
+                sent = True
+                attempted_calls += 1
+                text = lang_adapter.complete(
+                    model=self.lang_model,
+                    messages=[Message(role="user", content="Say hi.")],
+                    max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
+                    reasoning_effort="minimal",
+                )
+        except Exception as exc:  # noqa: BLE001 - isolate stage failures, including parser bugs
+            record_failure("language", self.lang_model, exc, worst_case, sent, lang_adapter)
+            if isinstance(exc, MetaConfigurationError) or getattr(exc, "status_code", None) in (
+                401,
+                403,
+            ):
+                return finish(stage="language", reason="configuration_error")
+        else:
+            record_text_success("language", lang_adapter, text, worst_case)
 
-            messages = [Message(role="user", content="Reply with a short one-sentence greeting.")]
-            response_text = lang_adapter.complete(
-                model=self.lang_model,
-                messages=messages,
-                max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
-            )
-
-            in_tokens = lang_adapter.last_usage.input_tokens if lang_adapter.last_usage else 15
-            out_tokens = lang_adapter.last_usage.output_tokens if lang_adapter.last_usage else 5
-            call_cost = calculate_token_cost(in_tokens, out_tokens)
-            session_spend += call_cost
-            completed_calls += 1
-
-            self.ledger.record_call(
-                model=self.lang_model,
-                adapter="language",
-                cost_usd=call_cost,
-                input_tokens=in_tokens,
-                output_tokens=out_tokens,
-            )
-
-            diagnostics["stages"]["language"] = {
-                "status_code": lang_adapter.last_status_code,
-                "stage_status": "SUCCESS",
-                "top_level_keys": lang_adapter.last_response_keys,
-                "finish_reason": lang_adapter.last_finish_reason,
-                "usage": {
-                    "input_tokens": in_tokens,
-                    "output_tokens": out_tokens,
-                    "prompt_tokens": in_tokens,
-                    "completion_tokens": out_tokens,
-                    "total_tokens": in_tokens + out_tokens,
-                    "reasoning_tokens": lang_adapter.last_usage.reasoning_tokens
-                    if lang_adapter.last_usage
-                    else None,
-                },
-                "content_length": len(response_text),
-            }
-
-            print("  - Status: SUCCESS")
-            print(f"  - Response size:   {len(response_text)} chars")
-            print(f"  - Request ID:      {lang_adapter.last_request_id or 'none'}")
-            print(f"  - Tokens:          {in_tokens} input, {out_tokens} output")
-            print(f"  - Step Cost:       ${call_cost:.6f} USD")
-            print(f"  - Running Total:   ${(cumulative_spend + session_spend):.6f} USD")
-        except Exception as exc:
-            fail_cost = stage_worst_case
-            session_spend += fail_cost
-            self.ledger.record_call(
-                model=self.lang_model,
-                adapter="language",
-                cost_usd=fail_cost,
-                input_tokens=WORST_CASE_TEXT_INPUT_TOKENS,
-                output_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
-                failed=True,
-            )
-            top_keys = (
-                sorted(exc.details.keys())
-                if isinstance(getattr(exc, "details", None), dict)
-                else []
-            )
-            diagnostics["stages"]["language"] = {
-                "status_code": getattr(exc, "status_code", None),
-                "stage_status": "FAILED",
-                "top_level_keys": top_keys,
-                "finish_reason": getattr(exc, "finish_reason", None),
-                "usage": {
-                    "prompt_tokens": exc.token_usage.input_tokens
-                    if getattr(exc, "token_usage", None)
-                    else None,
-                    "completion_tokens": exc.token_usage.output_tokens
-                    if getattr(exc, "token_usage", None)
-                    else None,
-                    "total_tokens": exc.token_usage.total_tokens
-                    if getattr(exc, "token_usage", None)
-                    else None,
-                    "reasoning_tokens": exc.token_usage.reasoning_tokens
-                    if getattr(exc, "token_usage", None)
-                    else None,
-                }
-                if getattr(exc, "token_usage", None)
-                else None,
-                "content_length": 0,
-            }
-            save_diagnostics()
-            print(f"  - Status: FAILED ({type(exc).__name__}: {exc})", file=sys.stderr)
-            summary = f"STATUS: FAIL stage=language reason={json.dumps(str(exc))} spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
-            print(summary)
-            return False, summary
-
-        # ---------------------------------------------------------------------
-        # Stage 2: Vision Call (MetaVisionAdapter) - Medium ($~0.0005)
-        # ---------------------------------------------------------------------
-        stage_worst_case = estimate_call_worst_case("vision")
-        projected = cumulative_spend + session_spend + stage_worst_case
-        if projected > self.budget_usd:
-            print(
-                f"\n[BUDGET ABORT] Aborting before vision call: projected total spend "
-                f"${projected:.6f} exceeds budget ceiling ${self.budget_usd:.2f}.",
-                file=sys.stderr,
-            )
-            save_diagnostics()
-            summary = f"STATUS: FAIL stage=vision reason=\"budget_exceeded\" spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
-            print(summary)
-            return False, summary
-
-        print("\n[2/3] Step 2: MetaVisionAdapter (Multimodal Line Art Review)...")
+        # Stage 2: Vision, independent of the text result.
+        worst_case = estimate_call_worst_case("vision", reserve_tokens)
+        if not budget_allows("vision", worst_case):
+            return finish(stage="vision", reason="budget_exceeded")
+        sent = False
+        vis_adapter = None
         try:
-            vis_client = MetaHttpClient(
+            with MetaHttpClient(
                 api_key=self.api_key,
                 base_url=self.base_url,
                 transport=self.transport,
-                max_retries=0,  # Zero retries in live check mode
+                max_retries=0,
                 timeout=30.0,
-            )
-            vis_adapter = MetaVisionAdapter(
-                api_key=self.api_key,
-                default_model=self.vis_model,
-                http_client=vis_client,
-            )
+            ) as client:
+                vis_adapter = MetaVisionAdapter(
+                    default_model=self.vis_model,
+                    http_client=client,
+                )
+                sent = True
+                attempted_calls += 1
+                text = vis_adapter.review(
+                    model=self.vis_model,
+                    image_bytes=generate_tiny_png(),
+                    prompt="Describe briefly.",
+                    max_tokens=WORST_CASE_VISION_OUTPUT_TOKENS,
+                    reasoning_effort="minimal",
+                )
+        except Exception as exc:  # noqa: BLE001 - isolate stage failures, including parser bugs
+            record_failure("vision", self.vis_model, exc, worst_case, sent, vis_adapter)
+            if isinstance(exc, MetaConfigurationError) or getattr(exc, "status_code", None) in (
+                401,
+                403,
+            ):
+                return finish(stage="vision", reason="configuration_error")
+        else:
+            record_text_success("vision", vis_adapter, text, worst_case)
 
-            tiny_png = generate_tiny_png()
-            review_text = vis_adapter.review(
-                model=self.vis_model,
-                image_bytes=tiny_png,
-                prompt="Brief one-sentence review.",
-                max_tokens=WORST_CASE_VISION_OUTPUT_TOKENS,
-            )
-
-            in_tokens = vis_adapter.last_usage.input_tokens if vis_adapter.last_usage else 100
-            out_tokens = vis_adapter.last_usage.output_tokens if vis_adapter.last_usage else 15
-            call_cost = calculate_token_cost(in_tokens, out_tokens)
-            session_spend += call_cost
-            completed_calls += 1
-
-            self.ledger.record_call(
-                model=self.vis_model,
-                adapter="vision",
-                cost_usd=call_cost,
-                input_tokens=in_tokens,
-                output_tokens=out_tokens,
-            )
-
-            diagnostics["stages"]["vision"] = {
-                "status_code": vis_adapter.last_status_code,
-                "stage_status": "SUCCESS",
-                "top_level_keys": vis_adapter.last_response_keys,
-                "finish_reason": vis_adapter.last_finish_reason,
-                "usage": {
-                    "input_tokens": in_tokens,
-                    "output_tokens": out_tokens,
-                    "prompt_tokens": in_tokens,
-                    "completion_tokens": out_tokens,
-                    "total_tokens": in_tokens + out_tokens,
-                    "reasoning_tokens": vis_adapter.last_usage.reasoning_tokens
-                    if vis_adapter.last_usage
-                    else None,
-                },
-                "content_length": len(review_text),
-            }
-
-            print("  - Status: SUCCESS")
-            print(f"  - Review size:     {len(review_text)} chars")
-            print(f"  - Request ID:      {vis_adapter.last_request_id or 'none'}")
-            print(f"  - Tokens:          {in_tokens} input, {out_tokens} output")
-            print(f"  - Step Cost:       ${call_cost:.6f} USD")
-            print(f"  - Running Total:   ${(cumulative_spend + session_spend):.6f} USD")
-        except Exception as exc:
-            fail_cost = stage_worst_case
-            session_spend += fail_cost
-            self.ledger.record_call(
-                model=self.vis_model,
-                adapter="vision",
-                cost_usd=fail_cost,
-                input_tokens=WORST_CASE_VISION_INPUT_TOKENS,
-                output_tokens=WORST_CASE_VISION_OUTPUT_TOKENS,
-                failed=True,
-            )
-            top_keys = (
-                sorted(exc.details.keys())
-                if isinstance(getattr(exc, "details", None), dict)
-                else []
-            )
-            diagnostics["stages"]["vision"] = {
-                "status_code": getattr(exc, "status_code", None),
-                "stage_status": "FAILED",
-                "top_level_keys": top_keys,
-                "finish_reason": getattr(exc, "finish_reason", None),
-                "usage": {
-                    "prompt_tokens": exc.token_usage.input_tokens
-                    if getattr(exc, "token_usage", None)
-                    else None,
-                    "completion_tokens": exc.token_usage.output_tokens
-                    if getattr(exc, "token_usage", None)
-                    else None,
-                    "total_tokens": exc.token_usage.total_tokens
-                    if getattr(exc, "token_usage", None)
-                    else None,
-                    "reasoning_tokens": exc.token_usage.reasoning_tokens
-                    if getattr(exc, "token_usage", None)
-                    else None,
-                }
-                if getattr(exc, "token_usage", None)
-                else None,
-                "content_length": 0,
-            }
-            save_diagnostics()
-            print(f"  - Status: FAILED ({type(exc).__name__}: {exc})", file=sys.stderr)
-            summary = f"STATUS: FAIL stage=vision reason={json.dumps(str(exc))} spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
-            print(summary)
-            return False, summary
-
-        # ---------------------------------------------------------------------
-        # Stage 3: Image Call (MetaImageAdapter) - Flat $0.01 per image
-        # ---------------------------------------------------------------------
-        stage_worst_case = estimate_call_worst_case("image")
-        projected = cumulative_spend + session_spend + stage_worst_case
-        if projected > self.budget_usd:
-            print(
-                f"\n[BUDGET ABORT] Aborting before image call: projected total spend "
-                f"${projected:.6f} exceeds budget ceiling ${self.budget_usd:.2f}.",
-                file=sys.stderr,
-            )
-            save_diagnostics()
-            summary = f"STATUS: FAIL stage=image reason=\"budget_exceeded\" spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
-            print(summary)
-            return False, summary
-
-        print("\n[3/3] Step 3: MetaImageAdapter (Responses API muse-image-1.0)...")
+        # Stage 3: Image, independent of both chat results.
+        worst_case = estimate_call_worst_case("image")
+        if not budget_allows("image", worst_case):
+            return finish(stage="image", reason="budget_exceeded")
+        sent = False
+        img_adapter = None
         try:
-            img_client = MetaHttpClient(
+            with MetaHttpClient(
                 api_key=self.api_key,
                 base_url=self.base_url,
                 transport=self.transport,
-                max_retries=0,  # Zero retries in live check mode
+                max_retries=0,
                 timeout=45.0,
+            ) as client:
+                img_adapter = MetaImageAdapter(model_id=self.img_model, http_client=client)
+                sent = True
+                attempted_calls += 1
+                result = img_adapter.generate(
+                    prompt="Single white circle centered on solid black background",
+                    reference_images=[],
+                    hashed_user_id="manual-smoke-check-user-hash",
+                    style="minimalist",
+                )
+        except Exception as exc:  # noqa: BLE001 - isolate stage failures, including parser bugs
+            record_failure("image", self.img_model, exc, worst_case, sent, img_adapter)
+            stages["image"].update(
+                {
+                    "first_12_bytes_hex": None,
+                    "detected_media_type": None,
+                    "image_dimensions": None,
+                    "provenance_keys": [],
+                }
             )
-            img_adapter = MetaImageAdapter(
-                api_key=self.api_key,
-                model_id=self.img_model,
-                http_client=img_client,
-            )
-
-            result = img_adapter.generate(
-                prompt="Single white circle centered on solid black background",
-                reference_images=[],
-                hashed_user_id="manual-smoke-check-user-hash",
-                style="minimalist",
-            )
-
-            call_cost = PRICE_PER_IMAGE_FLAT_USD
-            session_spend += call_cost
-            completed_calls += 1
-
+            if isinstance(exc, MetaConfigurationError) or getattr(exc, "status_code", None) in (
+                401,
+                403,
+            ):
+                return finish(stage="image", reason="configuration_error")
+        else:
             self.ledger.record_call(
                 model=self.img_model,
                 adapter="image",
-                cost_usd=call_cost,
+                cost_usd=worst_case,
                 image_count=1,
             )
-
-            media_type = detect_image_media_type(result.image_bytes)
-            has_c2pa = result.provenance_metadata.get("c2pa", {}).get(
-                "manifest_marker_detected", False
-            )
-            dims = parse_image_dimensions(result.image_bytes)
+            session_spend += worst_case
             prov_signals = ("provenance", "c2pa", "watermark", "signature", "manifest")
-            prov_keys = [
-                k for k in img_adapter.last_response_keys if any(sig in k.lower() for sig in prov_signals)
-            ]
-
-            diagnostics["stages"]["image"] = {
+            stages["image"] = {
                 "status_code": img_adapter.last_status_code,
                 "stage_status": "SUCCESS",
                 "top_level_keys": img_adapter.last_response_keys,
                 "content_length": len(result.image_bytes),
-                "first_12_bytes_hex": result.image_bytes[:12].hex()
-                if len(result.image_bytes) >= 12
-                else result.image_bytes.hex(),
-                "detected_media_type": media_type,
-                "image_dimensions": dims,
-                "provenance_keys": prov_keys,
-            }
-
-            print("  - Status: SUCCESS")
-            print(f"  - Bytes received:  {len(result.image_bytes)} bytes")
-            print(f"  - Media type:      {media_type}")
-            print(f"  - C2PA Marker:     {'DETECTED' if has_c2pa else 'NOT DETECTED'}")
-            print(f"  - Request ID:      {result.request_id or 'none'}")
-            print(f"  - Step Cost:       ${call_cost:.6f} USD")
-            print(f"  - Running Total:   ${(cumulative_spend + session_spend):.6f} USD")
-        except Exception as exc:
-            fail_cost = stage_worst_case
-            session_spend += fail_cost
-            self.ledger.record_call(
-                model=self.img_model,
-                adapter="image",
-                cost_usd=fail_cost,
-                image_count=1,
-                failed=True,
-            )
-            top_keys = (
-                sorted(exc.details.keys())
-                if isinstance(getattr(exc, "details", None), dict)
-                else []
-            )
-            prov_signals = ("provenance", "c2pa", "watermark", "signature", "manifest")
-            prov_keys = [k for k in top_keys if any(sig in k.lower() for sig in prov_signals)]
-            diagnostics["stages"]["image"] = {
-                "status_code": getattr(exc, "status_code", None),
-                "stage_status": "FAILED",
-                "top_level_keys": top_keys,
-                "content_length": 0,
-                "first_12_bytes_hex": None,
-                "detected_media_type": None,
-                "image_dimensions": None,
-                "provenance_keys": prov_keys,
+                "first_12_bytes_hex": result.image_bytes[:12].hex(),
+                "detected_media_type": detect_image_media_type(result.image_bytes),
+                "image_dimensions": parse_image_dimensions(result.image_bytes),
+                "provenance_keys": [
+                    k
+                    for k in img_adapter.last_response_keys
+                    if any(sig in k.lower() for sig in prov_signals)
+                ],
+                "c2pa_marker_detected": result.provenance_metadata.get("c2pa", {}).get(
+                    "manifest_marker_detected", False
+                ),
             }
             save_diagnostics()
-            print(f"  - Status: FAILED ({type(exc).__name__}: {exc})", file=sys.stderr)
-            summary = f"STATUS: FAIL stage=image reason={json.dumps(str(exc))} spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls={completed_calls}/3 budget_usd={self.budget_usd:.2f}"
-            print(summary)
-            return False, summary
+            print(f"  - image: SUCCESS cost_usd={worst_case:.6f}")
 
-        # ---------------------------------------------------------------------
-        # Final Summary
-        # ---------------------------------------------------------------------
-        save_diagnostics()
-        print("\n" + "=" * 65)
-        print("[ALL CHECKS PASSED] Meta AI live integration confirmed working.")
-        print(f"Session spend:      ${session_spend:.6f} USD")
-        print(f"Cumulative spend:   ${(cumulative_spend + session_spend):.6f} USD")
-        print(f"Remaining budget:   ${(self.budget_usd - (cumulative_spend + session_spend)):.6f} USD")
-
-        summary = f"STATUS: PASS spend_usd={session_spend:.6f} cumulative_spend_usd={(cumulative_spend + session_spend):.6f} calls=3/3 budget_usd={self.budget_usd:.2f}"
-        print(f"\n{summary}")
-        return True, summary
+        return finish()
 
 
 def main() -> int:
