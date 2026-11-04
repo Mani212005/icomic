@@ -12,6 +12,9 @@ from .image.port import ImagePort
 from .language.fake import FakeLanguageAdapter
 from .language.meta import MetaLanguageAdapter
 from .language.port import LanguagePort
+from .media_fetch.fake import FakeMediaFetchAdapter
+from .media_fetch.http import HTTPMediaFetchAdapter
+from .media_fetch.port import MediaFetchPort
 from .queue.fake import FakeQueueAdapter
 from .queue.port import QueuePort
 from .queue.redis import RedisQueueAdapter
@@ -33,6 +36,22 @@ class AdapterSet:
     storage: StoragePort
     queue: QueuePort
     clock: ClockPort
+    media_fetch: MediaFetchPort | None = None
+
+
+def get_media_fetch_adapter(storage: StoragePort, selection: str | None = None) -> MediaFetchPort:
+    name = (selection or os.getenv("ADAPTER_MEDIA_FETCH", "fake")).strip().lower()
+    if name == "fake":
+        return FakeMediaFetchAdapter(storage)
+    if name == "http":
+        storage_base_url = os.getenv("STORAGE_BASE_URL", "")
+        if not storage_base_url:
+            raise RuntimeError("HTTP media fetch requires STORAGE_BASE_URL")
+        meta_hosts = {
+            host.strip() for host in os.getenv("META_IMAGE_HOSTS", "").split(",") if host.strip()
+        }
+        return HTTPMediaFetchAdapter(storage_base_url, meta_hosts)
+    raise ValueError(f"Unknown media fetch adapter: {name}. Supported: 'fake', 'http'.")
 
 
 def get_language_adapter(selection: str | None = None) -> LanguagePort:
@@ -110,11 +129,13 @@ def get_clock_adapter(selection: str | None = None) -> ClockPort:
 
 def build_adapters_from_env() -> AdapterSet:
     """Build AdapterSet with configuration selected via ADAPTER_* env vars."""
+    storage = get_storage_adapter()
     return AdapterSet(
         language=get_language_adapter(),
         vision=get_vision_adapter(),
         image=get_image_adapter(),
-        storage=get_storage_adapter(),
+        storage=storage,
         queue=get_queue_adapter(),
         clock=get_clock_adapter(),
+        media_fetch=get_media_fetch_adapter(storage),
     )
