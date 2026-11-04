@@ -14,6 +14,8 @@ var (
 	ErrEmptyScript                 = errors.New("script cannot be empty")
 	ErrKillSwitchActive            = errors.New("global image generation kill switch is active")
 	ErrQuotaExceeded               = errors.New("user image generation quota exceeded")
+	ErrBookBudgetExceeded          = fmt.Errorf("%w: book image budget reached", ErrQuotaExceeded)
+	ErrDailyImageLimitReached      = fmt.Errorf("%w: daily image limit reached", ErrQuotaExceeded)
 	ErrMissingPrerequisiteApproval = errors.New("prerequisite stage approvals missing")
 	ErrActiveJobExists             = errors.New("an active generation job already exists for this entity")
 	ErrStaleApproval               = errors.New("approval is stale due to subsequent edit or regeneration")
@@ -226,7 +228,7 @@ func CheckKillSwitchAndQuota(killSwitchEnabled bool, currentDailyUsage, maxDaily
 		return ErrKillSwitchActive
 	}
 	if maxDailyQuota > 0 && currentDailyUsage >= maxDailyQuota {
-		return fmt.Errorf("%w: daily image limit reached", ErrQuotaExceeded)
+		return ErrDailyImageLimitReached
 	}
 	if maxMonthlyQuota > 0 && currentMonthlyUsage >= maxMonthlyQuota {
 		return fmt.Errorf("%w: monthly image limit reached", ErrQuotaExceeded)

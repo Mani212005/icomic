@@ -137,9 +137,8 @@ def test_quota_exhaustion_blocks_generation(quota_server: httpx.Client) -> None:
     assert len(chars) > 0
     char_id = chars[0]["id"]
 
-    # DefaultUserQuota is 25.0 images.
-    # Generate up to quota limit (25 attempts)
-    quota_limit = 25
+    # The hermetic memory server shares the default rolling daily limit.
+    quota_limit = 80
     exhausted_res = None
     for i in range(1, quota_limit + 2):
         res = quota_server.post(f"/api/v1/characters/{char_id}/reference-image")

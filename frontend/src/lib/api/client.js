@@ -80,8 +80,10 @@ export class ApiClient {
 
 		if (!res.ok) {
 			let errorMessage = `API error ${res.status}`;
+			let errorCode;
 			try {
 				const errorJson = await res.json();
+				errorCode = errorJson?.code;
 				if (errorJson && (errorJson.message || errorJson.error)) {
 					errorMessage = errorJson.message || errorJson.error;
 				}
@@ -90,6 +92,7 @@ export class ApiClient {
 			}
 			const error = new Error(errorMessage);
 			error.status = res.status;
+			error.code = errorCode;
 			throw error;
 		}
 

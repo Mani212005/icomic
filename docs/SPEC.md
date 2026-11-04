@@ -550,7 +550,7 @@ The API has no hard spend cap. The system must therefore enforce spend limits in
 
 The system must support:
 
-- A configurable per-user daily and monthly image-generation quota.
+- A configurable lifetime per-book image budget (default 40), rolling per-user daily image cap (80) and monthly image cap (800). A 12-page book needs roughly 30 images, leaving room for revisions. Full refunds release image usage; new regenerations count, same-key replays do not.
 - A global budget kill switch: a single operator-set flag that halts all new image generation jobs for all users when the platform-wide spend reaches a configured threshold.
 - Operators must be able to update the kill-switch threshold and reset it without a code deployment.
 

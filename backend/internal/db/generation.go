@@ -42,7 +42,7 @@ func validAmount(amount float64) bool {
 }
 
 // CreateGeneration commits the approval, policy, quota, job and debit boundary.
-// Quota usage rows count image attempts, including failed/refunded/deleted jobs.
+// Quota usage counts image attempts until fully refunded, including deleted jobs.
 func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.GenerationJob, opts GenerationOptions, amount float64) (*domain.GenerationJob, bool, error) {
 	if !validAmount(amount) {
 		return nil, false, fmt.Errorf("invalid debit amount")
@@ -61,8 +61,8 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 	var spend float64
 	var active bool
 	var threshold float64
-	var dailyLimit, monthlyLimit int
-	if err := tx.QueryRowContext(ctx, `SELECT kill_switch_active, spend_threshold, max_daily_images, max_monthly_images FROM generation_policy WHERE singleton=TRUE FOR UPDATE`).Scan(&active, &threshold, &dailyLimit, &monthlyLimit); err != nil {
+	var dailyLimit, monthlyLimit, bookLimit int
+	if err := tx.QueryRowContext(ctx, `SELECT kill_switch_active, spend_threshold, max_daily_images, max_monthly_images, max_book_images FROM generation_policy WHERE singleton=TRUE FOR UPDATE`).Scan(&active, &threshold, &dailyLimit, &monthlyLimit, &bookLimit); err != nil {
 		return nil, false, err
 	}
 	var userID string
@@ -88,6 +88,13 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 	}
 	now := time.Now().UTC()
 	if imageJob(job.JobType) {
+		var book int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM image_quota_usage WHERE project_id=$1::uuid`, job.ProjectID).Scan(&book); err != nil {
+			return nil, false, err
+		}
+		if bookLimit > 0 && book >= bookLimit {
+			return nil, false, domain.ErrBookBudgetExceeded
+		}
 		var daily, monthly int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FILTER (WHERE created_at >= $2::timestamptz), COUNT(*)
 	        FROM image_quota_usage
@@ -140,7 +147,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 		}
 	}
 	if imageJob(job.JobType) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO image_quota_usage (user_id,generation_job_id,created_at) VALUES ($1::uuid,$2::uuid,$3::timestamptz)`, job.UserID, job.ID, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO image_quota_usage (user_id,generation_job_id,created_at,project_id) VALUES ($1::uuid,$2::uuid,$3::timestamptz,$4::uuid)`, job.UserID, job.ID, now, job.ProjectID); err != nil {
 			return nil, false, err
 		}
 	}

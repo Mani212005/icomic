@@ -68,7 +68,7 @@ func NewServer(
 		KillSwitchEnabled: false,
 		KillSwitch:        domain.NewInMemoryKillSwitchProvider(false, 0),
 		MaxPanelsPerPage:  maxPanelsPerPage,
-		DefaultUserQuota:  25.0,
+		DefaultUserQuota:  80.0,
 		AllowedOrigin:     allowedOrigin,
 	}
 }

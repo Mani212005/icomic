@@ -85,6 +85,11 @@ func (p *PostgresRepository) RefundGeneration(ctx context.Context, jobID string,
 	if err != nil {
 		return nil, err
 	}
+	if amount == debit {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM image_quota_usage WHERE generation_job_id=$1::uuid`, jobID); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}

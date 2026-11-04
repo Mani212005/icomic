@@ -470,7 +470,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 
 	// Kill switch and quota check (SPEC 5.5)
 	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
-		writeError(w, http.StatusTooManyRequests, err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -523,7 +523,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, generationErrorStatus(err), err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 	if existed {
@@ -678,7 +678,7 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, generationErrorStatus(err), err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -808,7 +808,7 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, generationErrorStatus(err), err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -1049,7 +1049,7 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, generationErrorStatus(err), err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -1321,7 +1321,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 
 	// Kill switch and quota check (SPEC 5.5)
 	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
-		writeError(w, http.StatusTooManyRequests, err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -1414,7 +1414,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, generationErrorStatus(err), err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 	if existed {
@@ -1545,7 +1545,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 
 	// Kill switch and quota check (SPEC 5.5)
 	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
-		writeError(w, http.StatusTooManyRequests, err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -1614,7 +1614,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, generationErrorStatus(err), err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 	if existed {
@@ -1762,7 +1762,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 
 	// Kill switch and quota check (SPEC 5.5)
 	if err := domain.CheckKillSwitchAndQuota(s.IsKillSwitchActive(), 0, 0, 0, 0); err != nil {
-		writeError(w, http.StatusTooManyRequests, err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -1802,7 +1802,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, generationErrorStatus(err), err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 	if existed {
@@ -2189,7 +2189,7 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, generationErrorStatus(err), err.Error())
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -2407,4 +2407,20 @@ func generationErrorStatus(err error) int {
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// Stable error codes let clients distinguish lifetime book and rolling daily caps.
+func writeGenerationError(w http.ResponseWriter, err error) {
+	code := ""
+	switch {
+	case errors.Is(err, domain.ErrBookBudgetExceeded):
+		code = "book_budget_reached"
+	case errors.Is(err, domain.ErrDailyImageLimitReached):
+		code = "daily_image_limit_reached"
+	}
+	if code == "" {
+		writeError(w, generationErrorStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, generationErrorStatus(err), map[string]string{"error": err.Error(), "code": code})
 }

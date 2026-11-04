@@ -264,8 +264,89 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/characters/{id}/reference-image:
+    post:
+      summary: Generate or regenerate a character reference
+      description: Public Go API image admission boundary. Each new idempotency key counts once against the book and user image budgets; replays do not count.
+      operationId: requestCharacterImage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Idempotency-Key
+          in: header
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Image generation accepted or replayed
+        '429':
+          $ref: '#/components/responses/ImageBudgetExceeded'
+
+  /api/v1/pages/{id}/draft:
+    post:
+      summary: Generate or regenerate a page draft
+      description: Public Go API image admission boundary. Each new idempotency key counts once against the book and user image budgets; replays do not count.
+      operationId: requestDraftImage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Idempotency-Key
+          in: header
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Image generation accepted or replayed
+        '429':
+          $ref: '#/components/responses/ImageBudgetExceeded'
+
+  /api/v1/pages/{id}/line-art:
+    post:
+      summary: Generate or regenerate final line art
+      description: Public Go API image admission boundary. Each new idempotency key counts once against the book and user image budgets; replays do not count.
+      operationId: requestLineArtImage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Idempotency-Key
+          in: header
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Image generation accepted or replayed
+        '429':
+          $ref: '#/components/responses/ImageBudgetExceeded'
+
 components:
   responses:
+    ImageBudgetExceeded:
+      description: Book budget (40), rolling daily cap (80), monthly cap (800), or global kill switch reached. Limits are configurable in generation_policy. Full refunds release usage; deleting projects does not restore daily capacity.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ImageBudgetError'
+          examples:
+            book:
+              value:
+                code: book_budget_reached
+                error: 'user image generation quota exceeded: book image budget reached'
+            daily:
+              value:
+                code: daily_image_limit_reached
+                error: 'user image generation quota exceeded: daily image limit reached'
     BadRequest:
       description: Invalid request parameters or body
       content:
@@ -286,6 +367,16 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    ImageBudgetError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          description: Present for book and daily limits; other quota and kill-switch errors retain their existing error-only response.
+          enum: [book_budget_reached, daily_image_limit_reached]
     HealthResponse:
       type: object
       required:

@@ -305,14 +305,18 @@ panel text ready (no separate approval gate) -> draft sketch approved -> line ar
 approved character references anchored across all subsequent page generations
 ```
 
-### 5.5 Per-User Quota and Global Kill Switch
+### 5.5 Book Budget, Per-User Quota and Global Kill Switch
 
 The Go API checks before creating any generation job:
 
 1. Is the global kill switch enabled? If yes, reject with a clear message.
-2. Has the user reached their daily or monthly image quota? If yes, reject.
+2. For image jobs, has the project reached its lifetime book budget (default **40**), or the user reached their rolling 24-hour cap (**80**) or rolling 30-day cap (**800**)? If yes, reject with HTTP 429. Public image endpoints return `code: book_budget_reached` or `code: daily_image_limit_reached` for the first two limits.
 
-Both checks read from PostgreSQL. Quota counters are incremented in the same transaction as the ledger debit.
+All limits live in the singleton PostgreSQL `generation_policy` row (`max_book_images`, `max_daily_images`, `max_monthly_images`); zero disables a limit. Forty images accommodates a 12-page, 51-panel book's roughly 30 images (12 drafts, 12 line art, main-character references) plus revisions. Eighty permits two books in a day, with 800 retaining a monthly guard. Deployment defaults use these limits; any elevated e2e profile belongs only to an isolated e2e database.
+
+`CreateGeneration` locks policy then user, checks indexed `image_quota_usage` rows, and inserts the job, ledger debit and project-attributed quota increment in the **same transaction**. Concurrent admissions cannot exceed a boundary. Same-key replays return the original job before quota checks and never increment, including retries after failure or refund. A new key for regeneration or an image edit counts as a new image. Character references, drafts and final line art count; approvals, colouring uploads, language, moderation, palettes and exports do not.
+
+Failure or cancellation alone retains usage. A full ledger refund deletes that job's quota row in the refund transaction and releases book, daily and monthly usage exactly once; a partial refund retains the image slot. Failed refunds roll back both changes. The ledger preserves the audit trail. Project deletion nulls quota project/job references while preserving user usage and its original timestamp, so it cannot restore daily or monthly capacity. Existing usage is backfilled by upgrade migration; already-deleted jobs have no surviving project attribution.
 
 ---
 
