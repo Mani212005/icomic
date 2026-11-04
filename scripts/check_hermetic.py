@@ -108,6 +108,14 @@ TEST_DB_CONNECT_PATTERNS = [
     re.compile(r"127\.0\.0\.1:(?:5432|6379)"),
 ]
 
+REALDB_TEST_FILE = "backend/internal/db/postgres_realdb_test.go"
+REALDB_CI_WORKFLOW = ".github/workflows/ci.yml"
+REALDB_BUILD_TAG = re.compile(r"^//go:build\s+realdb\s*$", re.MULTILINE)
+LOCAL_POSTGRES_URL = re.compile(
+    r"postgres(?:ql)?://(?:[^/@]+@)?(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?(?:/|\?|$)",
+    re.IGNORECASE,
+)
+
 
 class Violation:
     def __init__(self, path: Path, line_number: int, rule: str, snippet: str):
@@ -183,6 +191,11 @@ def check_file(path: Path) -> list[Violation]:
         print(f"Warning: Failed to read {path}: {e}", file=sys.stderr)
         return violations
 
+    is_designated_realdb_test = (
+        rel_path_str == REALDB_TEST_FILE
+        and bool(REALDB_BUILD_TAG.search("".join(lines)))
+    )
+
     # 1. Live pytest markers in test files or configs
     if is_test_file or is_config or is_workflow:
         for line_idx, line in enumerate(lines, 1):
@@ -219,18 +232,52 @@ def check_file(path: Path) -> list[Violation]:
 
     # 4. Postgres or Redis requirement in workflows
     if is_workflow:
-        for line_idx, line in enumerate(lines, 1):
-            for pattern in WORKFLOW_DB_SERVICE_PATTERNS:
-                if pattern.search(line):
-                    violations.append(
-                        Violation(path, line_idx, "NO_DB_SERVICES_IN_CI", line)
-                    )
+        jobs: list[tuple[str, list[str]]] = []
+        current_job: tuple[str, list[str]] | None = None
+        for line in lines:
+            match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+            if match:
+                if current_job:
+                    jobs.append(current_job)
+                current_job = (match.group(1), [line])
+            elif current_job:
+                current_job[1].append(line)
+        if current_job:
+            jobs.append(current_job)
+
+        realdb_job_is_narrow = (
+            rel_path_str == REALDB_CI_WORKFLOW
+            and sum(1 for job_name, _ in jobs if job_name == "backend-realdb") == 1
+            and all(
+                not any(pattern.search("".join(block)) for pattern in WORKFLOW_DB_SERVICE_PATTERNS)
+                or (
+                    job_name == "backend-realdb"
+                    and "image: postgres:16-alpine" in "".join(block)
+                    and "make test-backend-realdb" in "".join(block)
+                    and "TEST_DATABASE_URL:" in "".join(block)
+                )
+                for job_name, block in jobs
+            )
+        )
+        for job_name, block in jobs:
+            for line_idx, line in enumerate(block, 1):
+                if not any(pattern.search(line) for pattern in WORKFLOW_DB_SERVICE_PATTERNS):
+                    continue
+                if realdb_job_is_narrow and job_name == "backend-realdb":
+                    continue
+                violations.append(Violation(path, line_idx, "NO_DB_SERVICES_IN_CI", line))
 
     # 5. Live DB connections required in tests
     if is_test_file:
         for line_idx, line in enumerate(lines, 1):
+            if "TEST_DATABASE_URL" in line and not is_designated_realdb_test:
+                violations.append(
+                    Violation(path, line_idx, "NO_LIVE_DB_CONNECTIONS_IN_TESTS", line)
+                )
             for pattern in TEST_DB_CONNECT_PATTERNS:
                 if pattern.search(line):
+                    if is_designated_realdb_test and LOCAL_POSTGRES_URL.search(line):
+                        continue
                     violations.append(
                         Violation(path, line_idx, "NO_LIVE_DB_CONNECTIONS_IN_TESTS", line)
                     )
@@ -258,7 +305,7 @@ def run_checks(root: Path) -> int:
     print("  - Zero live pytest markers or -m live invocations")
     print("  - Zero unauthorized real Meta or third-party AI provider hosts")
     print("  - Zero unauthorized META_API_KEY reads outside factory/meta_http")
-    print("  - Zero Postgres/Redis dependencies in CI workflows or tests")
+    print("  - No database dependencies outside the tagged local-PostgreSQL test job")
     return 0
 
 

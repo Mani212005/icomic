@@ -3,9 +3,11 @@
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
+import check_hermetic
 from check_hermetic import check_file
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -124,6 +126,67 @@ class TestHermeticGuard(unittest.TestCase):
             self.assertTrue(
                 any(v.rule == "NO_LIVE_DB_CONNECTIONS_IN_TESTS" for v in violations)
             )
+
+    def test_only_tagged_realdb_test_may_use_loopback_postgres(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "backend" / "internal" / "db" / "postgres_realdb_test.go"
+            file_path.parent.mkdir(parents=True)
+            file_path.write_text(
+                '//go:build realdb\n'
+                'const local = "postgres://localhost:5432/test"\n'
+                'url := os.Getenv("TEST_DATABASE_URL")\n'
+            )
+            # The exception is bound to the repository path, so the same file in an
+            # arbitrary location stays subject to the default hermetic rule.
+            violations = check_file(file_path)
+            self.assertTrue(any(v.rule == "NO_LIVE_DB_CONNECTIONS_IN_TESTS" for v in violations))
+
+            with patch.object(check_hermetic, "REALDB_TEST_FILE", str(file_path)):
+                file_path.write_text(
+                    '//go:build realdb\n'
+                    'const local = "postgres://localhost:5432/test"\n'
+                    'url := os.Getenv("TEST_DATABASE_URL")\n'
+                )
+                self.assertEqual(check_file(file_path), [])
+                file_path.write_text(
+                    '//go:build realdb\n'
+                    'const external = "postgres://db.example.test:5432/test"\n'
+                )
+                self.assertTrue(
+                    any(v.rule == "NO_LIVE_DB_CONNECTIONS_IN_TESTS" for v in check_file(file_path))
+                )
+                file_path.write_text(
+                    '//go:build realdb\n'
+                    'const redis = "redis://localhost:6379/0"\n'
+                )
+                self.assertTrue(
+                    any(v.rule == "NO_LIVE_DB_CONNECTIONS_IN_TESTS" for v in check_file(file_path))
+                )
+
+    def test_designated_ci_realdb_job_is_the_only_workflow_exception(self):
+        workflow = (
+            "jobs:\n"
+            "  backend-realdb:\n"
+            "    services:\n"
+            "      postgres:\n"
+            "        image: postgres:16-alpine\n"
+            "    steps:\n"
+            "      - env:\n"
+            "          TEST_DATABASE_URL: postgres://icomic@127.0.0.1:5432/test\n"
+            "        run: make test-backend-realdb\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_dir = Path(tmpdir) / ".github" / "workflows"
+            wf_dir.mkdir(parents=True)
+            wf_file = wf_dir / "ci.yml"
+            wf_file.write_text(workflow)
+            self.assertTrue(any(v.rule == "NO_DB_SERVICES_IN_CI" for v in check_file(wf_file)))
+
+            with patch.object(check_hermetic, "REALDB_CI_WORKFLOW", str(wf_file)):
+                wf_file.write_text(workflow)
+                self.assertEqual(check_file(wf_file), [])
+                wf_file.write_text(workflow.replace("make test-backend-realdb", "go test ./..."))
+                self.assertTrue(any(v.rule == "NO_DB_SERVICES_IN_CI" for v in check_file(wf_file)))
 
     def test_allowed_meta_http_file_permits_host_and_key(self):
         with tempfile.TemporaryDirectory() as tmpdir:
