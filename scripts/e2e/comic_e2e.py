@@ -24,7 +24,6 @@ from urllib.request import Request, urlopen
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT_DIR = Path("/home/mani/icomic-artifacts/comic-e2e")
-PDF_PATH = ARTIFACT_DIR / "latest.pdf"
 CAP_USD = 2.0
 DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
 API_URL = "http://127.0.0.1:8080"
@@ -210,7 +209,7 @@ def verify_pdf(pdf: bytes, expected_comic_pages: int) -> None:
         )
 
 
-def run_flow(guard: CostGuard) -> tuple[int, str]:
+def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, str]:
     usage = json_request("/api/v1/me/credit-usage")
     if float(usage.get("balance", 0)) < 10:
         raise E2EError("dev account has insufficient starting credits")
@@ -303,11 +302,11 @@ def run_flow(guard: CostGuard) -> tuple[int, str]:
     if not isinstance(pdf, bytes):
         raise E2EError("download endpoint did not return PDF bytes")
     verify_pdf(pdf, len(pages))
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    staged = ARTIFACT_DIR / f"latest-{timestamp}.pdf"
+    staged = artifact_dir / f"latest-{timestamp}.pdf"
     staged.write_bytes(pdf)
-    shutil.copyfile(staged, PDF_PATH)
+    shutil.copyfile(staged, artifact_dir / "latest.pdf")
     print(f"PASS export and PDF verified: {len(pages)} generated page(s)")
     return len(pages), project_id
 
@@ -328,6 +327,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--skip-services",
         action="store_true",
         help="use already-running local services",
+    )
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=ARTIFACT_DIR,
+        help="directory for the verified PDF and cost report",
     )
     return parser.parse_args(argv)
 
@@ -393,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:
         ensure_services()
     guard = CostGuard(CAP_USD if live else float("inf"), live, reserve_tokens)
     try:
-        page_count, project_id = run_flow(guard)
+        page_count, project_id = run_flow(guard, args.artifact_dir)
     except (E2EError, subprocess.CalledProcessError) as exc:
         print(f"FAILED: {exc}", file=sys.stderr)
         return 1
@@ -406,9 +411,9 @@ def main(argv: list[str] | None = None) -> int:
         "generated_comic_pages": page_count,
         "stages": guard.stages,
     }
-    (ARTIFACT_DIR / "cost-report.json").write_text(json.dumps(report, indent=2) + "\n")
-    print(f"Cost report: {ARTIFACT_DIR / 'cost-report.json'}")
-    print(str(PDF_PATH))
+    (args.artifact_dir / "cost-report.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(f"Cost report: {args.artifact_dir / 'cost-report.json'}")
+    print(str(args.artifact_dir / "latest.pdf"))
     return 0
 
 

@@ -12,10 +12,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "ai"))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "e2e"))
 from app.costs import actual_stage_cost
-from comic_e2e import CostGuard, live_authorization_error
+from comic_e2e import CostGuard, live_authorization_error, parse_args
 
 
 class TestHermeticGuard(unittest.TestCase):
+    def test_comic_artifact_directory_is_configurable(self):
+        args = parse_args(["--artifact-dir", "/tmp/icomic-fake-proof"])
+        self.assertEqual(args.artifact_dir, Path("/tmp/icomic-fake-proof"))
+        self.assertFalse(args.live)
+
     def test_comic_live_guard_requires_flag_environment_and_cap(self):
         self.assertIsNotNone(live_authorization_error(False, {}, None))
         self.assertIsNotNone(live_authorization_error(True, {}, 2.0))

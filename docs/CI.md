@@ -93,7 +93,11 @@ uv run --with-requirements contracts/requirements.txt python3 contracts/validate
 
 ### 4. Database Migrations Validation
 
-Validates PostgreSQL migrations and seeds hermetically:
+Validates PostgreSQL migrations and seeds hermetically. The suite also compares columns named by repository SQL with the schema after upgrade migrations, including panel scene fields. Removing the scene-field upgrade is covered by a negative test. This structural check catches column drift without starting PostgreSQL; it does not validate SQL execution, foreign keys, or service wiring.
+
+The backend unit tests and `make test-e2e` use in-memory repositories. Consequently, they could pass while the Compose comic flow failed on PostgreSQL schema drift or missing persisted generation jobs. Repository failure-injection tests now require HTTP 500 from generation, editing, and approval handlers when a write fails. A missing or invalid stored line-art URL returns HTTP 409 before a palette job or debit.
+
+Run the structural checks with:
 
 ```bash
 make test-migrations
@@ -211,5 +215,6 @@ make e2e-comic
 
 The target starts PostgreSQL, Redis, the AI service, and the Go API with Docker Compose, using fake adapters by default.
 It creates a project, analyzes the script, generates and colours pages, exports and verifies the PDF, then writes `/home/mani/icomic-artifacts/comic-e2e/latest.pdf`, a timestamped PDF copy, and a cost report.
+Use `E2E_ARGS="--artifact-dir /tmp/comic-e2e"` to isolate PDF and report output.
 Use `make e2e-comic E2E_ARGS="--skip-services"` when the local Compose services are already running.
 The runner supports an explicitly gated live mode for later manual use; CI and hermetic tests exercise only the refusal guards and never start live adapters.

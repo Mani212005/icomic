@@ -197,6 +197,50 @@ def parse_create_tables(sql: str) -> dict[str, dict]:
     return tables
 
 
+def migrated_columns(sql: str) -> dict[str, set[str]]:
+    """Collect CREATE columns and subsequent ADD/DROP COLUMN upgrades in order."""
+    tables = {name: set(meta["columns"]) for name, meta in parse_create_tables(sql).items()}
+    for table, changes in re.findall(r"ALTER\s+TABLE\s+(\w+)\s+([^;]+);", strip_sql_comments(sql), re.I):
+        for change in split_sql_tokens(changes):
+            match = re.match(r"(ADD|DROP)\s+COLUMN\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(\w+)", change, re.I)
+            if match:
+                action, column = match.groups()
+                if action.upper() == "ADD":
+                    tables[table.lower()].add(column.lower())
+                else:
+                    tables[table.lower()].discard(column.lower())
+    return tables
+
+
+def repository_column_errors(source: str, columns: dict[str, set[str]]) -> list[str]:
+    """Check the repository's single-table SQL, including filters and upsert columns.
+
+    Unsupported SQL identifiers fail closed so new query syntax needs explicit coverage.
+    This checks schema drift only, not PostgreSQL types, constraints or transactions.
+    """
+    keywords = set("""select from where insert into values update set delete on conflict
+        do excluded returning as and or not null is exists order by asc desc limit
+        for count sum coalesce now true false distinct in between case when then else end""".split())
+    errors = []
+    statements = re.findall(r"`([^`]+)`", source, re.S)
+    for sql in statements:
+        if not re.match(r"\s*(SELECT|INSERT|UPDATE|DELETE)\b", sql, re.I):
+            continue
+        sql = re.sub(r"'([^']|'')*'", "", sql.lower())
+        table_names = set(re.findall(r"(?:from|into|update)\s+(\w+)", sql)) - {"set"}
+        if len(table_names) != 1:
+            errors.append(f"Add structural coverage for query: {sql}")
+            continue
+        table = table_names.pop()
+        if table not in columns:
+            errors.append(f"Unknown repository table: {table}")
+            continue
+        identifiers = set(re.findall(r"\b[a-z_][a-z_0-9]*\b", sql))
+        for column in sorted(identifiers - keywords - {table} - columns[table]):
+            errors.append(f"{table}.{column} is referenced by repository SQL but absent from migrations")
+    return errors
+
+
 def parse_create_indexes(sql: str) -> list[dict]:
     """Parses CREATE INDEX statements."""
     indexes = []
@@ -259,6 +303,33 @@ class TestMigrationsStructural(unittest.TestCase):
         cls.tables = parse_create_tables(cls.all_up_sql)
         cls.indexes = parse_create_indexes(cls.all_up_sql)
         cls.drops = parse_drop_tables(cls.all_down_sql)
+
+    def test_repository_columns_exist_in_migrated_schema(self):
+        sources = list((REPO_ROOT / "backend" / "internal" / "db").glob("*.go"))
+        sources = [path for path in sources if not path.name.endswith("_test.go") and path.name != "migrate.go"]
+        errors = []
+        for path in sources:
+            errors.extend(repository_column_errors(path.read_text(), migrated_columns(self.all_up_sql)))
+        self.assertEqual(errors, [], "\n".join(errors))
+
+    def test_repository_check_detects_missing_upgrade_and_filter_columns(self):
+        initial = self.up_files[0].read_text()
+        source = (REPO_ROOT / "backend/internal/db/postgres.go").read_text()
+        errors = repository_column_errors(source, migrated_columns(initial))
+        for column in ("character_actions", "camera_angle", "background"):
+            self.assertTrue(any(f"panels.{column} " in error for error in errors), errors)
+        self.assertEqual(
+            repository_column_errors("`SELECT id FROM panels WHERE missing_column = $1`", migrated_columns(initial)),
+            ["panels.missing_column is referenced by repository SQL but absent from migrations"],
+        )
+
+    def test_panel_scene_upgrade_reverses_columns(self):
+        upgraded = migrated_columns(self.all_up_sql)
+        for column in ("character_actions", "camera_angle", "background"):
+            self.assertIn(column, upgraded["panels"])
+        rolled_back = migrated_columns(self.all_up_sql + "\n" + self.all_down_sql)
+        for column in ("character_actions", "camera_angle", "background"):
+            self.assertNotIn(column, rolled_back["panels"])
 
     def test_migration_files_pairing_and_ordering(self):
         """Assert up/down files are strictly paired, numbered from 1, and sequential."""
