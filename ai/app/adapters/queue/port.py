@@ -11,11 +11,22 @@ class JobEnvelope:
     payload: dict[str, Any]
     idempotency_key: str
     retry_count: int = 0
+    delivery_id: str = ""
 
 
 @runtime_checkable
 class QueuePort(Protocol):
     """Protocol defining asynchronous background job distribution."""
+
+    synchronous: bool
+
+    def get_job(self, queue: str, idempotency_key: str) -> dict[str, Any] | None:
+        """Read saved request, status and terminal result, including after redelivery."""
+        ...
+
+    def finish(self, envelope: JobEnvelope, result: dict[str, Any]) -> None:
+        """Save a terminal result before acknowledging delivery."""
+        ...
 
     def enqueue(self, queue: str, payload: dict[str, Any], idempotency_key: str) -> str:
         """Enqueue job with an idempotency key. Returns job ID."""

@@ -2,7 +2,8 @@
 
 import mimetypes
 import posixpath
-from typing import Any
+from contextlib import asynccontextmanager
+from functools import wraps
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -42,11 +43,22 @@ from .services.moderation import ModerationService
 from .services.panel import PanelService
 from .services.pdf import PdfAssemblyService
 from .services.script import ScriptService
+from .services.worker import QUEUE, GenerationWorker
 
 
 def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     """Create and configure the FastAPI application with injected adapters."""
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        worker.start()
+        try:
+            yield
+        finally:
+            worker.close()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="Icomic AI Service Internal API",
         version="1.0.0",
         description="Internal HTTP contract between Go API and Python AI service.",
@@ -75,9 +87,31 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     moderation_service = ModerationService(wired_adapters.language)
     pdf_service = PdfAssemblyService(wired_adapters.storage)
 
-    # In-memory job status map for development and test
-    job_statuses: dict[str, dict[str, Any]] = {}
-    app.state.job_statuses = job_statuses
+    worker = GenerationWorker(wired_adapters.queue)
+    app.state.worker = worker
+
+    def queued(operation: str, adapter=None):
+        """Keep the HTTP result contract while the consumer owns service execution."""
+
+        def decorate(handler):
+            request_type = handler.__annotations__["req"]
+
+            def execute(payload):
+                result = handler(request_type.model_validate(payload))
+                cost = 0.0
+                if adapter is not None:
+                    cost = actual_stage_cost(operation, adapter, getattr(result, "model_id", None))
+                return result.model_dump(mode="json"), cost
+
+            worker.register(handler.__name__, execute)
+
+            @wraps(handler)
+            def submit(req):
+                return worker.submit(handler.__name__, req)
+
+            return submit
+
+        return decorate
 
     # Pluggable image hosting policy seam
     app.state.image_hosting_policy = DirectStoragePolicy()
@@ -124,14 +158,11 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         return HealthResponse(status="ok")
 
     @app.post("/internal/v1/analyze-script", response_model=AnalyzeScriptResponse)
+    @queued("language", wired_adapters.language)
     def analyze_script(req: AnalyzeScriptRequest):
         profiles, chapters, word_count, warnings = script_service.analyze_script(
             req.script, req.target_chapter_count
         )
-        job_statuses[str(req.job_id)] = {
-            "status": "done",
-            "actual_cost": actual_stage_cost("language", wired_adapters.language),
-        }
         return AnalyzeScriptResponse(
             job_id=str(req.job_id),
             character_profiles=profiles,
@@ -144,6 +175,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         "/internal/v1/generate-character-reference",
         response_model=GenerateCharacterReferenceResponse,
     )
+    @queued("image", wired_adapters.image)
     def generate_character_reference(req: GenerateCharacterReferenceRequest):
         url, model_id, provenance = character_service.generate_reference_image(
             character_id=str(req.character_id),
@@ -152,10 +184,6 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             hashed_user_id=req.hashed_user_id,
             style=req.style,
         )
-        job_statuses[str(req.job_id)] = {
-            "status": "done",
-            "actual_cost": actual_stage_cost("image", wired_adapters.image, model_id),
-        }
         return GenerateCharacterReferenceResponse(
             job_id=str(req.job_id),
             image_url=url,
@@ -167,16 +195,13 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         "/internal/v1/generate-chapter-outline",
         response_model=GenerateChapterOutlineResponse,
     )
+    @queued("language", wired_adapters.language)
     def generate_chapter_outline(req: GenerateChapterOutlineRequest):
         chapters = panel_service.generate_chapter_outline(
             script=req.script,
             chapter_count=req.chapter_count,
             approved_characters=req.approved_characters,
         )
-        job_statuses[str(req.job_id)] = {
-            "status": "done",
-            "actual_cost": actual_stage_cost("language", wired_adapters.language),
-        }
         return GenerateChapterOutlineResponse(
             job_id=str(req.job_id),
             chapters=chapters,
@@ -186,6 +211,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         "/internal/v1/generate-panel-text",
         response_model=GeneratePanelTextResponse,
     )
+    @queued("language", wired_adapters.language)
     def generate_panel_text(req: GeneratePanelTextRequest):
         panels = panel_service.generate_panel_text(
             chapter_number=req.chapter_number,
@@ -193,10 +219,6 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             chapter_summary=req.chapter_summary,
             characters=req.characters,
         )
-        job_statuses[str(req.job_id)] = {
-            "status": "done",
-            "actual_cost": actual_stage_cost("language", wired_adapters.language),
-        }
         return GeneratePanelTextResponse(
             job_id=str(req.job_id),
             panels=panels,
@@ -206,6 +228,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         "/internal/v1/generate-draft-sketch",
         response_model=GenerateDraftSketchResponse,
     )
+    @queued("image", wired_adapters.image)
     def generate_draft_sketch(req: GenerateDraftSketchRequest):
         url, model_id, provenance = draft_service.generate_draft_sketch(
             page_id=str(req.page_id),
@@ -215,10 +238,6 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             hashed_user_id=req.hashed_user_id,
             character_reference_image_urls=req.character_reference_image_urls,
         )
-        job_statuses[str(req.job_id)] = {
-            "status": "done",
-            "actual_cost": actual_stage_cost("image", wired_adapters.image, model_id),
-        }
         return GenerateDraftSketchResponse(
             job_id=str(req.job_id),
             image_url=url,
@@ -230,6 +249,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         "/internal/v1/generate-line-art",
         response_model=GenerateLineArtResponse,
     )
+    @queued("image", wired_adapters.image)
     def generate_line_art(req: GenerateLineArtRequest):
         url, model_id, provenance = line_art_service.generate_line_art(
             page_id=str(req.page_id),
@@ -240,10 +260,6 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             hashed_user_id=req.hashed_user_id,
             character_reference_image_urls=req.character_reference_image_urls,
         )
-        job_statuses[str(req.job_id)] = {
-            "status": "done",
-            "actual_cost": actual_stage_cost("image", wired_adapters.image, model_id),
-        }
         return GenerateLineArtResponse(
             job_id=str(req.job_id),
             image_url=url,
@@ -255,16 +271,13 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         "/internal/v1/suggest-colour-palette",
         response_model=SuggestColourPaletteResponse,
     )
+    @queued("vision", wired_adapters.vision)
     def suggest_colour_palette(req: SuggestColourPaletteRequest):
         line_art_image_bytes = app.state.media_fetch_adapter.fetch(req.line_art_image_url)
         theme, palette = colour_service.suggest_palette(
             line_art_image_bytes=line_art_image_bytes,
             panel_context=req.panel_context,
         )
-        job_statuses[str(req.job_id)] = {
-            "status": "done",
-            "actual_cost": actual_stage_cost("vision", wired_adapters.vision),
-        }
         return SuggestColourPaletteResponse(
             job_id=str(req.job_id),
             theme=theme,
@@ -275,9 +288,9 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         "/internal/v1/moderate-prompt",
         response_model=ModeratePromptResponse,
     )
+    @queued("moderation")
     def moderate_prompt(req: ModeratePromptRequest):
         blocked, reason = moderation_service.moderate_prompt(req.prompt)
-        job_statuses[str(req.job_id)] = {"status": "done", "actual_cost": 0.0}
         return ModeratePromptResponse(
             job_id=str(req.job_id),
             blocked=blocked,
@@ -288,6 +301,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         "/internal/v1/assemble-pdf",
         response_model=AssemblePdfResponse,
     )
+    @queued("pdf")
     def assemble_pdf(req: AssemblePdfRequest):
         url, preserved, count = pdf_service.assemble_pdf(
             project_id=str(req.project_id),
@@ -296,7 +310,6 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             include_ai_disclosure=req.include_ai_disclosure,
             pages=req.pages,
         )
-        job_statuses[str(req.job_id)] = {"status": "done", "actual_cost": 0.0}
         return AssemblePdfResponse(
             job_id=str(req.job_id),
             pdf_url=url,
@@ -309,9 +322,9 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         response_model=JobStatusResponse,
     )
     def get_job_status(id: str):
-        if id not in job_statuses:
+        data = wired_adapters.queue.get_job(QUEUE, id)
+        if data is None:
             raise HTTPException(status_code=404, detail=f"Job '{id}' not found.")
-        data = job_statuses[id]
         return JobStatusResponse(
             job_id=id,
             status=data.get("status", "pending"),

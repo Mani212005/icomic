@@ -313,7 +313,7 @@ func (s *InMemoryJobService) DispatchAsync(ctx context.Context, jobID string, ta
 		}
 
 		// If job was cancelled while task was running, do not overwrite status
-		if currentJob.Status == StatusCancelled {
+		if currentJob.Status != StatusRunning {
 			delete(s.cancelFuncs, jobID)
 			return
 		}

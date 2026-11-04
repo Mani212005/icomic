@@ -46,7 +46,7 @@ func main() {
 	aiURL := os.Getenv("PYTHON_AI_URL")
 	if aiURL != "" {
 		log.Printf("Connecting to Python AI service at %s", aiURL)
-		aiClient = gen.NewAIServiceClient(aiURL, 30*time.Second)
+		aiClient = gen.NewAIServiceClient(aiURL, 16*time.Minute)
 	} else {
 		log.Println("PYTHON_AI_URL not set; using fake AI service client")
 		aiClient = gen.NewFakeAIServiceClient()

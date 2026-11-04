@@ -274,6 +274,12 @@ The colour suggestion request carries `line_art_image_url` and `panel_context`; 
 - Re-enqueueing a job with the same key is a no-op: the worker checks the key, finds the existing record, and returns the existing result without generating a new image or charging credits.
 - This makes worker retries on queue delivery failures safe.
 
+The generation HTTP endpoints preserve their existing completed-result responses. After the PostgreSQL creation/debit transaction returns, Go calls `DispatchAsync` with the internal HTTP queue submission. Python serializes the operation and validated request into `QueuePort`; only the consumer invokes services. The fake queue drains synchronously, while `ADAPTER_QUEUE=redis` starts one consumer per AI service process during application startup. The HTTP request waits for the saved result, so frontend polling and existing response fields remain compatible. Paid Go endpoints accept an optional `Idempotency-Key` header scoped to the authenticated user, path and operation; omitting it creates a new attempt.
+
+The Redis adapter atomically saves the envelope and pending state, claims deliveries with a 15 minute lease, and saves terminal responses and costs before acknowledgement. Repeated submissions and redeliveries return that saved response without invoking a provider again. Redis must use persistent storage and AOF; the Compose stack enables AOF with synchronous fsync. Queue status and responses survive AI process restarts, while PostgreSQL remains the owner of the public job and credit state. Go saves image links before marking persistent jobs done, and failed-job polling retries an idempotent refund transaction if the original response was interrupted.
+
+A consumer that stops during a provider call leaves an uncertain outcome. When its lease expires the delivery becomes failed, rather than automatically repeating a potentially billed operation. A new generation requires a new key. Completed response records do not expire automatically. Shutdown stops accepting worker progress waits; pending envelopes remain available to the next consumer.
+
 ### 5.3 Approval Gate Invariant
 
 No image generation job is created unless the prerequisite approvals for that stage are recorded in `stage_approvals`.

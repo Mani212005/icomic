@@ -13,6 +13,7 @@ dependencies = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.3.0",
+    "redis>=5.0",
 ]
 
 [tool.pytest.ini_options]
@@ -24,3 +25,8 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[dependency-groups]
+dev = [
+    "fakeredis[lua]>=2.34",
+]

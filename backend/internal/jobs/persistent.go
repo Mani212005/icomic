@@ -84,10 +84,22 @@ func (s *PersistentJobService) FailJob(ctx context.Context, id, msg string, cost
 	return s.transition(ctx, id, StatusFailed, cost, &msg, []string{StatusPending, StatusRunning})
 }
 
-// Durable queue dispatch is provided by a separate worker integration. Do not run
-// a process-local goroutine that could silently lose production work on restart.
-func (s *PersistentJobService) DispatchAsync(context.Context, string, func(context.Context) (float64, error)) error {
-	return errors.New("durable dispatch is not configured")
+// DispatchAsync hands committed work to the AI queue through the supplied port
+// call. The HTTP compatibility facade waits for its saved result. The Python
+// consumer owns generation; no production work is held in a Go goroutine.
+func (s *PersistentJobService) DispatchAsync(ctx context.Context, id string, dispatch func(context.Context) (float64, error)) error {
+	if err := s.StartJob(ctx, id); err != nil {
+		return err
+	}
+	cost, err := dispatch(ctx)
+	if err != nil {
+		if failErr := s.FailJob(ctx, id, err.Error(), &cost); failErr != nil {
+			return errors.Join(err, failErr)
+		}
+		return err
+	}
+	// The handler persists the generated entity before completing the job.
+	return nil
 }
 
 var _ JobService = (*PersistentJobService)(nil)

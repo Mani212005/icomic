@@ -182,92 +182,34 @@ def test_storage_fake_route_serving():
     assert res_traversal2.status_code == 400
 
 
-class InjectedFakeRedisClient:
-    """Hermetic in-memory Redis client interface for testing RedisQueueAdapter."""
-
-    def __init__(self):
-        self.strings: dict[str, str] = {}
-        self.lists: dict[str, list[str]] = {}
-        self.sets: dict[str, set[str]] = {}
-
-    def get(self, key: str) -> str | None:
-        return self.strings.get(key)
-
-    def set(self, key: str, value: str) -> bool:
-        self.strings[key] = value
-        return True
-
-    def rpush(self, key: str, *values: str) -> int:
-        if key not in self.lists:
-            self.lists[key] = []
-        for val in values:
-            self.lists[key].append(val)
-        return len(self.lists[key])
-
-    def lpop(self, key: str) -> str | None:
-        items = self.lists.get(key)
-        if items and len(items) > 0:
-            return items.pop(0)
-        return None
-
-    def blpop(self, keys: list[str], timeout: int = 0):
-        for k in keys:
-            val = self.lpop(k)
-            if val is not None:
-                return (k, val)
-        return None
-
-    def sadd(self, key: str, *values: str) -> int:
-        if key not in self.sets:
-            self.sets[key] = set()
-        self.sets[key].update(values)
-        return len(values)
-
-
 def test_redis_queue_adapter_with_injected_client():
-    fake_client = InjectedFakeRedisClient()
-    adapter = RedisQueueAdapter(client=fake_client)
+    from fakeredis import FakeRedis
+
+    client = FakeRedis()
+    adapter = RedisQueueAdapter(client=client)
     assert isinstance(adapter, QueuePort)
-
-    # 1. Enqueue job
-    key = "idemp-redis-task-001"
-    payload = {"task": "generate_draft", "page_id": "page-123"}
-    job_id1 = adapter.enqueue("image-queue", payload, idempotency_key=key)
-    assert job_id1.startswith("job-redis-")
-
-    # 2. Idempotency: duplicate submission returns existing job_id
-    job_id2 = adapter.enqueue("image-queue", payload, idempotency_key=key)
-    assert job_id1 == job_id2
-    assert len(fake_client.lists["queue:image-queue"]) == 1
-
-    # 3. Dequeue pending envelope
-    envelope = adapter.dequeue("image-queue", timeout_s=1)
+    payload = {"task": "generate_draft", "page_id": "page-123", "panels": []}
+    first = adapter.enqueue("image-queue", payload, "retry-key")
+    assert first.startswith("job-redis-")
+    assert adapter.enqueue("image-queue", payload, "retry-key") == first
+    assert client.llen("icomic:{image-queue}:ready") == 1
+    envelope = adapter.dequeue("image-queue")
     assert envelope is not None
-    assert envelope.job_id == job_id1
-    assert envelope.queue == "image-queue"
     assert envelope.payload == payload
-    assert envelope.idempotency_key == key
     assert envelope.retry_count == 0
-
-    # 4. Dequeue on empty queue returns None
-    assert adapter.dequeue("image-queue", timeout_s=0) is None
-
-    # 5. Acknowledge envelope
-    adapter.ack(envelope)
-    assert job_id1 in adapter.acknowledged
-    assert job_id1 in fake_client.sets["queue:image-queue:ack"]
-
-    # 6. Nack envelope increments retry_count and re-enqueues
+    assert adapter.dequeue("image-queue") is None
     adapter.nack(envelope)
-    assert job_id1 in adapter.nacked
+    envelope = adapter.dequeue("image-queue")
     assert envelope.retry_count == 1
-    assert len(fake_client.lists["queue:image-queue"]) == 1
-
-    # 7. Dequeue re-queued envelope
-    requeued = adapter.dequeue("image-queue")
-    assert requeued is not None
-    assert requeued.job_id == job_id1
-    assert requeued.retry_count == 1
+    adapter.finish(envelope, {"status": "done", "response": {"items": []}})
+    adapter.ack(envelope)
+    restored = RedisQueueAdapter(client=client)
+    saved = restored.get_job("image-queue", "retry-key")
+    assert saved["status"] == "done"
+    assert saved["response"] == {"items": []}
+    assert saved["payload"] == payload
+    assert restored.enqueue("image-queue", payload, "retry-key") == first
+    assert restored.dequeue("image-queue") is None
 
 
 def test_redis_queue_adapter_unconfigured_raises(monkeypatch):
