@@ -4,7 +4,20 @@ package db_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"icomic/backend/gen"
+	"icomic/backend/internal/api"
+	"icomic/backend/internal/auth"
+	"icomic/backend/internal/credits"
+	"icomic/backend/internal/jobs"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,7 +60,11 @@ func TestRealDBBookAndDailyBudgets(t *testing.T) {
 			if replay {
 				t.Fatal("new image treated as replay")
 			}
-			must(t, repo.TransitionGeneration(ctx, job.ID, "done", nil, nil, []string{"pending"}))
+			status := "done"
+			if p == 1 && n == 39 {
+				status = "failed"
+			}
+			must(t, repo.TransitionGeneration(ctx, job.ID, status, nil, nil, []string{"pending"}))
 			last = job
 		}
 		_, _, err := repo.CreateGeneration(ctx, realJob(user, project, "character_reference", "reference", uuid.NewString()), db.GenerationOptions{EntityID: chars[p].ID}, .01)
@@ -55,6 +72,8 @@ func TestRealDBBookAndDailyBudgets(t *testing.T) {
 			t.Fatalf("41st book image: %v", err)
 		}
 	}
+	assertBudgetHTTP(t, repo, user, chars[0], "book_budget_reached")
+	assertBudgetHTTP(t, repo, user, chars[2], "daily_image_limit_reached")
 	// The 80th image succeeds; a fresh project cannot bypass the user's daily cap.
 	_, _, err := repo.CreateGeneration(ctx, realJob(user, third, "character_reference", "reference", uuid.NewString()), db.GenerationOptions{EntityID: chars[2].ID}, .01)
 	if !errors.Is(err, domain.ErrDailyImageLimitReached) {
@@ -72,7 +91,7 @@ func TestRealDBBookAndDailyBudgets(t *testing.T) {
 	}
 
 	// Failure alone holds the slot. Full refund and its replay release it once.
-	must(t, repo.TransitionGeneration(ctx, last.ID, "failed", nil, nil, []string{"done"}))
+
 	for n := 0; n < 2; n++ {
 		_, err = repo.RefundGeneration(ctx, last.ID, .01)
 		must(t, err)
@@ -168,4 +187,117 @@ func TestRealDBConcurrentBookBudgetBoundaries(t *testing.T) {
 			assertLedgerInvariants(t, pool)
 		})
 	}
+}
+
+func assertBudgetHTTP(t *testing.T, repo *db.PostgresRepository, user *domain.User, character *domain.Character, code string) {
+	t.Helper()
+	server := api.NewServer(repo, credits.NewPersistentCreditService(repo), jobs.NewPersistentJobService(repo), gen.NewFakeAIServiceClient(), auth.NewDevAuthenticator(true, user.ID), auth.NewDefaultImageHosting(""), 5)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+character.ID+"/reference-image", nil)
+	request.Header.Set("X-User-ID", user.ID)
+	server.NewRouter().ServeHTTP(response, request)
+	var body struct {
+		Code string `json:"code"`
+	}
+	must(t, json.Unmarshal(response.Body.Bytes(), &body))
+	if response.Code != http.StatusTooManyRequests || body.Code != code {
+		t.Fatalf("budget API response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRealDBBookBudgetUpgradePreservesOverridesAndBackfills(t *testing.T) {
+	for _, custom := range []bool{false, true} {
+		t.Run(fmt.Sprint(custom), func(t *testing.T) {
+			pool, repo, ctx := realDatabaseWithMigrations(t, false)
+			files, err := filepath.Glob(filepath.Join(migrationsDir, "*.up.sql"))
+			must(t, err)
+			sort.Strings(files)
+			for _, file := range files {
+				if strings.Contains(file, "000006_") {
+					continue
+				}
+				body, err := os.ReadFile(file)
+				must(t, err)
+				_, err = pool.ExecContext(ctx, string(body))
+				must(t, err)
+			}
+			user, project := realUserProject(t, repo, ctx)
+			jobID := uuid.NewString()
+			_, err = pool.ExecContext(ctx, `INSERT INTO generation_jobs(id,user_id,project_id,job_type,stage,model_id,status,idempotency_key,estimated_cost,hashed_user_id) VALUES ($1::uuid,$2::uuid,$3::uuid,'character_reference','reference','fake','failed',$1::text,.01,'hash')`, jobID, user.ID, project.ID)
+			must(t, err)
+			_, err = pool.ExecContext(ctx, `INSERT INTO image_quota_usage(user_id,generation_job_id) VALUES($1::uuid,$2::uuid),($1::uuid,NULL)`, user.ID, jobID)
+			must(t, err)
+			_, err = pool.ExecContext(ctx, `INSERT INTO credit_ledger(user_id,project_id,generation_job_id,transaction_type,amount,balance_after) VALUES($1::uuid,$2::uuid,$3::uuid,'debit',.01,0),($1::uuid,$2::uuid,$3::uuid,'refund',.01,.01)`, user.ID, project.ID, jobID)
+			must(t, err)
+			keptJob := uuid.NewString()
+			_, err = pool.ExecContext(ctx, `INSERT INTO generation_jobs(id,user_id,project_id,job_type,stage,model_id,status,idempotency_key,estimated_cost,hashed_user_id) VALUES ($1::uuid,$2::uuid,$3::uuid,'character_reference','reference','fake','done',$1::text,.01,'hash')`, keptJob, user.ID, project.ID)
+			must(t, err)
+			_, err = pool.ExecContext(ctx, `INSERT INTO image_quota_usage(user_id,generation_job_id) VALUES($1::uuid,$2::uuid)`, user.ID, keptJob)
+			must(t, err)
+			if custom {
+				_, err = pool.ExecContext(ctx, `UPDATE generation_policy SET max_daily_images=1234,max_monthly_images=5678`)
+				must(t, err)
+			}
+			body, err := os.ReadFile(filepath.Join(migrationsDir, "000006_book_image_budget.up.sql"))
+			must(t, err)
+			_, err = pool.ExecContext(ctx, string(body))
+			must(t, err)
+			var book, daily, monthly, usage int
+			must(t, pool.QueryRowContext(ctx, `SELECT max_book_images,max_daily_images,max_monthly_images FROM generation_policy`).Scan(&book, &daily, &monthly))
+			wantDaily, wantMonthly := 80, 800
+			if custom {
+				wantDaily, wantMonthly = 1234, 5678
+			}
+			if book != 40 || daily != wantDaily || monthly != wantMonthly {
+				t.Fatalf("upgrade policy: %d/%d/%d", book, daily, monthly)
+			}
+			must(t, pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM image_quota_usage WHERE user_id=$1::uuid`, user.ID).Scan(&usage))
+			if usage != 2 {
+				t.Fatalf("refund not released or deleted-job usage lost: %d", usage)
+			}
+			must(t, pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM image_quota_usage WHERE project_id=$1::uuid`, project.ID).Scan(&usage))
+			if usage != 1 {
+				t.Fatalf("existing image not attributed to its book: %d", usage)
+			}
+
+		})
+	}
+}
+
+func TestRealDBConcurrentImageReplayAndRefund(t *testing.T) {
+	pool, repo, ctx := realDatabase(t)
+	user, project := realUserProject(t, repo, ctx)
+	character := bookCharacter(t, repo, ctx, project)
+	must(t, repo.RecordAdjustment(ctx, user.ID, "", 10))
+	key := uuid.NewString()
+	replay := func(ctx context.Context, _ int) error {
+		_, _, err := repo.CreateGeneration(ctx, realJob(user, project, "character_reference", "reference", key), db.GenerationOptions{EntityID: character.ID}, .01)
+		return err
+	}
+	for _, err := range concurrentRun(t, concurrentCallers, replay) {
+		must(t, err)
+	}
+	var jobID string
+	must(t, pool.QueryRowContext(ctx, `SELECT id FROM generation_jobs WHERE idempotency_key=$1`, key).Scan(&jobID))
+	var count int
+	must(t, pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM image_quota_usage WHERE user_id=$1::uuid`, user.ID).Scan(&count))
+	if count != 1 {
+		t.Fatalf("concurrent replay counted %d images", count)
+	}
+	must(t, repo.TransitionGeneration(ctx, jobID, "failed", nil, nil, []string{"pending"}))
+	for _, err := range concurrentRun(t, concurrentCallers, func(ctx context.Context, _ int) error { _, err := repo.RefundGeneration(ctx, jobID, .01); return err }) {
+		must(t, err)
+	}
+	for _, err := range concurrentRun(t, concurrentCallers, replay) {
+		must(t, err)
+	}
+	must(t, pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM image_quota_usage WHERE user_id=$1::uuid`, user.ID).Scan(&count))
+	if count != 0 {
+		t.Fatalf("refund/replay retained or restored %d images", count)
+	}
+	must(t, pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_ledger WHERE generation_job_id=$1::uuid`, jobID).Scan(&count))
+	if count != 2 {
+		t.Fatalf("image charged/refunded more than once: %d", count)
+	}
+	assertLedgerInvariants(t, pool)
 }

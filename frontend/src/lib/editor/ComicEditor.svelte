@@ -494,7 +494,7 @@
 				<textarea
 					id="script-textarea"
 					rows="8"
-					placeholder="Scenes, dialogue…"
+					placeholder="Script…"
 					bind:value={project.script}
 				></textarea>
 			</div>
@@ -749,7 +749,6 @@
 				</div>
 			{/if}
 
-			<p class="section-desc">Approve drafts.</p>
 
 			{#if pages.length === 0}<div class="stage-empty"><Icon name="draft" size={48} /></div>{/if}
 			<div class="page-grid">
