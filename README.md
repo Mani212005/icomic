@@ -1,136 +1,68 @@
-# Icomic
+<p align="center">
+  <img src="docs/assets/icomics-watercolor-poster.png" alt="Watercolor comic poster for Icomic, with an open book revealing a moonlit city" width="360">
+</p>
+<p align="center">
+  <img src="docs/assets/icomics-mark.svg" alt="Icomic open-book logo mark" width="72">
+</p>
 
-AI-powered comic book generator built with a staged, approval-gated pipeline.
-A user provides a written script and the system converts it into a comic book through defined stages: character extraction, chapter outlining, rough draft sketches, final line art, colouring with paint-bucket fill, assembly, and PDF export.
-All AI features use Meta models only.
-Image generation requires explicit prior user approval and estimated cost confirmation.
+<h1 align="center">Icomic</h1>
 
-The full product specification is in [docs/SPEC.md](docs/SPEC.md).
-The system architecture and ports-and-adapters design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-The Meta adapter configuration and live swap guide is in [docs/META_SWAP.md](docs/META_SWAP.md).
+Turn a written story into a comic, one reviewable stage at a time.
 
-## Stage 1 Scope
+Icomic is an AI-powered comic creator with an approval-gated workflow. Writers can shape characters, plan chapters, review page compositions and line art, colour pages, then export a comic. Deterministic fake adapters keep the app usable and testable without credentials or network access.
 
-This first stage provides:
-- The versioned OpenAPI and JSON Schema contract between the Go API and Python AI service (`contracts/`).
-- The monorepo skeleton across all components (`frontend`, `backend`, `ai`, `deploy`, `contracts`).
-- Per-component minimal runnable stubs (Go HTTP server, FastAPI service, and Svelte app shell) with health check endpoints.
-- Hermetic unit and boundary contract tests.
-- CI workflows and local development environment setup.
+## The eight stages
 
-Later parallel streams (database and migrations, Go API domain and repository, Python service adapters, Svelte editor with bucket-fill tool, export) build on this stage.
+1. Script
+2. Characters and reference images
+3. Chapter outline
+4. Panel text and page layout
+5. Rough page sketches
+6. Final line art
+7. Colouring
+8. Comic assembly and PDF export
 
-## Monorepo Layout
+Image stages wait for explicit approval, and users can review generated work before moving forward.
 
-```
-icomic/
-├── contracts/                  # Shared source of truth for inter-service APIs
-│   ├── openapi/
-│   │   └── ai-service.yaml     # Go <-> Python OpenAPI spec (versioned)
-│   └── schemas/
-│       ├── job.schema.json     # Generation job event shape
-│       └── credit.schema.json  # Credit ledger event shape
-├── frontend/                   # Svelte single-page application skeleton
-│   ├── src/
-│   │   ├── routes/             # SvelteKit app shell
-│   │   ├── lib/
-│   │   │   └── api/            # API client (health check)
-│   │   └── app.html
-│   ├── package.json
-│   └── svelte.config.js
-├── backend/                    # Go API server skeleton
-│   ├── cmd/server/             # Entry point
-│   ├── internal/
-│   │   └── api/                # Health check handlers and routing
-│   ├── gen/                    # Types and client generated/validated from contracts
-│   └── go.mod
-├── ai/                         # Python FastAPI AI service skeleton
-│   ├── app/
-│   │   ├── main.py             # FastAPI entry point (health check stub)
-│   │   └── gen/                # Models generated/validated from contracts
-│   ├── tests/
-│   │   └── contract/           # Boundary contract tests
-│   ├── pyproject.toml
-│   └── requirements.txt
-├── deploy/
-│   ├── docker-compose.yml      # Local dev stack (Postgres, Redis, services)
-│   └── docker-compose.prod.yml # Production overrides
-├── docs/                       # Specifications and architecture docs
-└── .github/workflows/          # CI workflows
-```
+## Run locally
 
-## Running the Dev Environment
+Run the full hermetic test suite with fake adapters:
 
-The local development environment uses Docker Compose to run all services:
-
-```bash
-docker compose -f deploy/docker-compose.yml up --build
-```
-
-Services started:
-
-- Frontend: `http://localhost:5173`
-- Go Backend API: `http://localhost:8080`
-- Python AI Service: `http://localhost:8000`
-- PostgreSQL: `localhost:5432`
-- Redis: `localhost:6379`
-
-## Testing and Verification
-
-All unit and boundary-contract tests run hermetically with zero external dependencies and zero live network calls.
-
-Run all linters, tests, builds, and hermetic guards across the monorepo:
-
-```bash
-make check
-```
-
-Or run individual phases:
-
-```bash
-# 1. Run all tests and hermetic guard
+```sh
 make test
-
-# 2. Run all linters (Go vet, Ruff, svelte-check)
-make lint
-
-# 3. Build all components (Go backend, Svelte frontend)
-make build
 ```
 
-Individual service targets:
+Run the frontend in its deterministic mock mode without a backend:
 
-```bash
-# Hermetic guard validation
-make guard-hermetic
-
-# Contract and JSON Schema validation
-make test-contracts
-
-# Database migrations and schema structural validation
-make test-migrations
-
-# Go Backend checks, tests, and build
-make fmt-backend
-make lint-backend
-make test-backend
-make build-backend
-
-# Python AI service checks and tests
-make lint-ai
-make test-ai
-
-# Frontend checks, tests, and build
-make lint-frontend
-make test-frontend
-make build-frontend
+```sh
+npm --prefix frontend ci
+PUBLIC_USE_MOCK_API=true npm --prefix frontend run dev
 ```
 
-For full details on CI jobs, local execution, and toolchain configurations, see [docs/CI.md](docs/CI.md).
+Run the end-to-end comic flow against the fake adapters. This uses the local Compose services, including PostgreSQL:
 
-## Continuous Integration
+```sh
+make e2e-comic
+```
 
-GitHub Actions workflows run on every push to `main` and on pull requests:
+For CI checks and toolchain details, see [docs/CI.md](docs/CI.md).
 
-- `.github/workflows/ci.yml`: Complete CI pipeline running hermetic guard, contracts validation, database migrations validation, Go lint/tests/build, Python AI Ruff/pytest with locked dependencies, Svelte lint/tests/build, and aggregate `ci-success` gate check.
-- `.github/workflows/lint-openapi.yml`: Path-filtered workflow validating OpenAPI specifications and JSON schemas whenever `contracts/**` changes.
+## Architecture and project docs
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Product specification](docs/SPEC.md)
+- [Meta adapter configuration and deferred live swap](docs/META_SWAP.md)
+- [Multipage comic flow](docs/MULTIPAGE.md)
+- [Continuous integration guide](docs/CI.md)
+- [Frontend setup and configuration](frontend/README.md)
+
+## AI and age advisory
+
+Comics created with Icomic may contain AI-generated text and images; generated content must be disclosed in the editor and exported comic. An 18+ advisory is planned, but no age gate is enforced in the current build and the final age threshold remains to be confirmed.
+
+## Meta generation
+
+The live Meta adapter swap is deferred; development and automated tests use fake adapters. A live swap will follow the approval and verification steps in [docs/META_SWAP.md](docs/META_SWAP.md) after credentials and credits are explicitly provisioned.
+
+**Status:** In development.<br>
+**Licence:** No licence file is currently present.

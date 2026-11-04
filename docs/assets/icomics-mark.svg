@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Icomic mark</title>
+  <desc id="desc">An inked open comic book with a bright story spark, painted in indigo, teal and coral watercolor.</desc>
+  <defs>
+    <linearGradient id="ground" x2=".2" y2="1">
+      <stop stop-color="#fff8e8"/>
+      <stop offset="1" stop-color="#e9d6b4"/>
+    </linearGradient>
+    <linearGradient id="leftwash" x2=".2" y2="1">
+      <stop stop-color="#73a9a0"/>
+      <stop offset="1" stop-color="#315c6b"/>
+    </linearGradient>
+    <linearGradient id="rightwash" x2=".8" y2="1">
+      <stop stop-color="#e7a276"/>
+      <stop offset="1" stop-color="#ce715f"/>
+    </linearGradient>
+    <filter id="paper-grain" x="-.08" y="-.08" width="1.16" height="1.16">
+      <feTurbulence type="fractalNoise" baseFrequency=".7" numOctaves="3" seed="8" result="noise"/>
+      <feColorMatrix in="noise" type="saturate" values="0"/>
+      <feComponentTransfer><feFuncA type="table" tableValues="0 .12"/></feComponentTransfer>
+      <feBlend in="SourceGraphic" mode="multiply"/>
+    </filter>
+    <filter id="wash-edge" x="-.1" y="-.1" width="1.2" height="1.2">
+      <feTurbulence type="fractalNoise" baseFrequency=".035" numOctaves="2" seed="17" result="paper"/>
+      <feDisplacementMap in="SourceGraphic" in2="paper" scale="7" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <clipPath id="shield">
+      <path d="M256 28 Q378 65 465 83 L447 294 Q420 405 256 484 Q92 405 65 294 L47 83Q134 65 256 28Z"/>
+    </clipPath>
+  </defs>
+  <path d="M256 18 Q380 53 475 74 L456 300 Q425 421 256 493 Q87 421 56 300 L37 74Q132 53 256 18Z" fill="#26354a"/>
+  <path d="M256 34 Q376 69 457 88 L440 292 Q412 399 256 467 Q100 399 72 292 L55 88Q136 69 256 34Z" fill="url(#ground)" stroke="#26354a" stroke-width="7"/>
+  <g clip-path="url(#shield)">
+    <path d="M34 105 Q135 62 252 112 L250 384 Q134 340 57 386Z" fill="url(#leftwash)" filter="url(#wash-edge)"/>
+    <path d="M258 112 Q379 62 478 105 L455 386 Q377 340 262 384Z" fill="url(#rightwash)" filter="url(#wash-edge)"/>
+    <path d="M77 275 Q164 233 250 281 L248 392 Q164 354 81 390Z" fill="#f8ebd0" stroke="#25354a" stroke-width="12" stroke-linejoin="round"/>
+    <path d="M435 275 Q348 233 262 281 L264 392 Q348 354 431 390Z" fill="#fff8e8" stroke="#25354a" stroke-width="12" stroke-linejoin="round"/>
+    <path d="M256 273 Q246 337 256 411 Q267 337 256 273Z" fill="#25354a"/>
+    <path d="M96 300 Q166 273 229 302 M95 325 Q164 302 228 329 M283 302 Q346 273 416 300 M284 329 Q347 302 417 325" fill="none" stroke="#526175" stroke-width="7" stroke-linecap="round" opacity=".52"/>
+    <path d="M256 104 L275 169 L340 185 L277 203 L256 267 L237 203 L172 185 L237 169Z" fill="#fff2cf" stroke="#26354a" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M256 130 L267 176 L311 185 L267 196 L256 241 L245 196 L201 185 L245 176Z" fill="#d57c66"/>
+    <path d="M105 150 Q153 113 191 144 M320 131 Q361 101 401 142" fill="none" stroke="#fff2d2" stroke-width="8" stroke-linecap="round" opacity=".68"/>
+    <g fill="#fff4d6"><circle cx="120" cy="212" r="7"/><circle cx="383" cy="218" r="6"/><circle cx="360" cy="158" r="5"/></g>
+  </g>
+  <path d="M256 34 Q376 69 457 88 L440 292 Q412 399 256 467 Q100 399 72 292 L55 88Q136 69 256 34Z" fill="none" stroke="#26354a" stroke-width="8"/>
+  <path d="M76 96 Q166 70 246 112 M266 112 Q351 70 436 96" fill="none" stroke="#fff9e9" stroke-width="4" opacity=".85"/>
+</svg>

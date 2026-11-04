@@ -15,6 +15,7 @@ all: check
 
 guard-hermetic:
 	python3 scripts/check_hermetic_test.py
+	python3 scripts/check_readme_test.py
 	python3 scripts/check_hermetic.py
 	python3 scripts/check_generated_test.py
 

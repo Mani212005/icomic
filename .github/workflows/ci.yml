@@ -28,6 +28,7 @@ jobs:
       - name: Run Hermetic Guard Unit Tests
         run: |
           python scripts/check_hermetic_test.py
+          python scripts/check_readme_test.py
           python scripts/check_generated_test.py
 
       - name: Run Hermetic Guard Repository Verification
