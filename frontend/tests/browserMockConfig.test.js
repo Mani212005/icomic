@@ -30,7 +30,9 @@ test('browser build exposes PUBLIC_USE_MOCK_API and selects MockApiClient', asyn
 		});
 
 		assert.ok(output.length > 0);
-		assert.ok(output.some((code) => code.includes('PUBLIC_USE_MOCK_API')));
+		assert.ok(output.some((code) => code.includes('MockApiClient')));
+		assert.ok(output.every((code) => !code.includes('localhost:8080')));
+		assert.ok(output.every((code) => !code.includes('PUBLIC_AUTH_TOKEN')));
 
 		const configModule = await import('../src/lib/api/index.js?browser-mock-test');
 		assert.ok(configModule.createDefaultClient({ useMock: configModule.getApiConfig().useMock }) instanceof MockApiClient);
