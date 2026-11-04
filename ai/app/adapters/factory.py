@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..provider_costs import ProviderCostLedger
+from ..provider_diagnostics import ProviderDiagnostics
 from .clock.fake import FakeClockAdapter
 from .clock.port import ClockPort
 from .clock.system import SystemClockAdapter
@@ -41,6 +42,7 @@ class AdapterSet:
     clock: ClockPort
     media_fetch: MediaFetchPort | None = None
     cost_ledger: ProviderCostLedger | None = None
+    diagnostics: ProviderDiagnostics | None = None
 
 
 def get_media_fetch_adapter(storage: StoragePort, selection: str | None = None) -> MediaFetchPort:
@@ -58,7 +60,9 @@ def get_media_fetch_adapter(storage: StoragePort, selection: str | None = None) 
     raise ValueError(f"Unknown media fetch adapter: {name}. Supported: 'fake', 'http'.")
 
 
-def get_language_adapter(selection: str | None = None, cost_ledger=None) -> LanguagePort:
+def get_language_adapter(
+    selection: str | None = None, cost_ledger=None, diagnostics=None
+) -> LanguagePort:
     name = (selection or os.getenv("ADAPTER_LANGUAGE", "fake")).strip().lower()
     if name == "fake":
         return FakeLanguageAdapter()
@@ -69,11 +73,15 @@ def get_language_adapter(selection: str | None = None, cost_ledger=None) -> Lang
                 "MetaLanguageAdapter is not configured: META_API_KEY environment variable is not set. "
                 "Set META_API_KEY or use ADAPTER_LANGUAGE=fake."
             )
-        return MetaLanguageAdapter(api_key=api_key, cost_ledger=cost_ledger, cost_stage="language")
+        return MetaLanguageAdapter(
+            api_key=api_key, cost_ledger=cost_ledger, cost_stage="language", diagnostics=diagnostics
+        )
     raise ValueError(f"Unknown language adapter: {name}. Supported: 'fake', 'meta'.")
 
 
-def get_vision_adapter(selection: str | None = None, cost_ledger=None) -> VisionPort:
+def get_vision_adapter(
+    selection: str | None = None, cost_ledger=None, diagnostics=None
+) -> VisionPort:
     name = (selection or os.getenv("ADAPTER_VISION", "fake")).strip().lower()
     if name == "fake":
         return FakeVisionAdapter()
@@ -84,11 +92,15 @@ def get_vision_adapter(selection: str | None = None, cost_ledger=None) -> Vision
                 "MetaVisionAdapter is not configured: META_API_KEY environment variable is not set. "
                 "Set META_API_KEY or use ADAPTER_VISION=fake."
             )
-        return MetaVisionAdapter(api_key=api_key, cost_ledger=cost_ledger, cost_stage="vision")
+        return MetaVisionAdapter(
+            api_key=api_key, cost_ledger=cost_ledger, cost_stage="vision", diagnostics=diagnostics
+        )
     raise ValueError(f"Unknown vision adapter: {name}. Supported: 'fake', 'meta'.")
 
 
-def get_image_adapter(selection: str | None = None, cost_ledger=None) -> ImagePort:
+def get_image_adapter(
+    selection: str | None = None, cost_ledger=None, diagnostics=None
+) -> ImagePort:
     name = (selection or os.getenv("ADAPTER_IMAGE", "fake")).strip().lower()
     if name == "fake":
         return FakeImageAdapter()
@@ -99,7 +111,9 @@ def get_image_adapter(selection: str | None = None, cost_ledger=None) -> ImagePo
                 "MetaImageAdapter is not configured: META_API_KEY environment variable is not set. "
                 "Set META_API_KEY or use ADAPTER_IMAGE=fake."
             )
-        return MetaImageAdapter(api_key=api_key, cost_ledger=cost_ledger, cost_stage="image")
+        return MetaImageAdapter(
+            api_key=api_key, cost_ledger=cost_ledger, cost_stage="image", diagnostics=diagnostics
+        )
     raise ValueError(f"Unknown image adapter: {name}. Supported: 'fake', 'meta'.")
 
 
@@ -134,6 +148,8 @@ def get_clock_adapter(selection: str | None = None) -> ClockPort:
 def build_adapters_from_env() -> AdapterSet:
     """Build AdapterSet with configuration selected via ADAPTER_* env vars."""
     storage = get_storage_adapter()
+    diagnostics_path = os.getenv("ICOMIC_E2E_DIAGNOSTICS_DIR")
+    diagnostics = ProviderDiagnostics(Path(diagnostics_path)) if diagnostics_path else None
     cost_ledger = None
     if os.getenv("ICOMIC_E2E_LIVE") == "1":
         run_id = os.getenv("ICOMIC_E2E_RUN_ID", "")
@@ -147,12 +163,13 @@ def build_adapters_from_env() -> AdapterSet:
             run_id=run_id,
         )
     return AdapterSet(
-        language=get_language_adapter(cost_ledger=cost_ledger),
-        vision=get_vision_adapter(cost_ledger=cost_ledger),
-        image=get_image_adapter(cost_ledger=cost_ledger),
+        language=get_language_adapter(cost_ledger=cost_ledger, diagnostics=diagnostics),
+        vision=get_vision_adapter(cost_ledger=cost_ledger, diagnostics=diagnostics),
+        image=get_image_adapter(cost_ledger=cost_ledger, diagnostics=diagnostics),
         storage=storage,
         queue=get_queue_adapter(),
         clock=get_clock_adapter(),
         media_fetch=get_media_fetch_adapter(storage),
         cost_ledger=cost_ledger,
+        diagnostics=diagnostics,
     )

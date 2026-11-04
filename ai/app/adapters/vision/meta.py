@@ -108,9 +108,13 @@ class MetaVisionAdapter(VisionPort):
             self.last_finish_reason = token_usage.finish_reason
             return content
         except MetaEmptyResponseError as exc:
+            self._client.record_invalid_response(type(exc).__name__)
             self.last_request_id = exc.request_id or ""
             self.last_usage = exc.token_usage
             self.last_finish_reason = exc.finish_reason
+            raise
+        except Exception as exc:
+            self._client.record_invalid_response(type(exc).__name__)
             raise
 
     def suggest_palette(
@@ -168,7 +172,11 @@ class MetaVisionAdapter(VisionPort):
             self.last_finish_reason = token_usage.finish_reason
             return parse_palette_json(content)
         except MetaEmptyResponseError as exc:
+            self._client.record_invalid_response(type(exc).__name__)
             self.last_request_id = exc.request_id or ""
             self.last_usage = exc.token_usage
             self.last_finish_reason = exc.finish_reason
+            raise
+        except Exception as exc:
+            self._client.record_invalid_response(type(exc).__name__)
             raise

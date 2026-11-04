@@ -1,0 +1,9 @@
+{
+  "status": 404,
+  "body": {
+    "error": {
+      "message": "Model not found",
+      "type": "model_not_found"
+    }
+  }
+}

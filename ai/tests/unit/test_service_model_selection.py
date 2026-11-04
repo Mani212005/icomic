@@ -34,7 +34,7 @@ def test_services_honor_adapter_model_selection(monkeypatch, operation, configur
         if payload["model"] != expected_model:
             return httpx.Response(404, json={"error": {"message": "Unknown model"}})
         content = (
-            '{"theme":"Ocean","palette":[]}'
+            '{"theme":"Ocean","palette":[{"region_name":"sea","hex_color":"#123456","label":"Sea"}]}'
             if operation == "palette"
             else FakeLanguageAdapter().complete(
                 "fake", [Message(role=m["role"], content=m["content"]) for m in payload["messages"]]

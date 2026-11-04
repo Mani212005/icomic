@@ -43,6 +43,7 @@ from .gen.models import (
 )
 from .policies import DirectStoragePolicy
 from .provider_costs import provider_operation
+from .provider_diagnostics import last_response
 from .services.character import CharacterService
 from .services.colour import ColourService
 from .services.draft import DraftService
@@ -118,14 +119,20 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
                 if adapter is not None and hasattr(adapter, "last_usage"):
                     adapter.last_usage = None
                 token = provider_operation.set((handler.__name__, str(payload["job_id"])))
+                diagnostic_token = last_response.set(None)
                 try:
                     result = handler(request_type.model_validate(payload))
                 except Exception as exc:
                     usage = getattr(adapter, "last_usage", None)
-                    if usage is not None:
-                        exc.actual_cost = observed_cost(cost_from_usage(operation, usage))
+                    if wired_adapters.cost_ledger is not None or usage is not None:
+                        exc.actual_cost = observed_cost(
+                            cost_from_usage(operation, usage) if usage is not None else 0.0
+                        )
+                    if wired_adapters.diagnostics is not None:
+                        wired_adapters.diagnostics.failure(type(exc).__name__)
                     raise
                 finally:
+                    last_response.reset(diagnostic_token)
                     provider_operation.reset(token)
                 cost = 0.0
                 if adapter is not None:

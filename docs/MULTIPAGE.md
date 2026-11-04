@@ -48,6 +48,14 @@ schema overhead is included before reserving provider cost. Failed generation
 jobs retain observed provider costs even when output validation fails and user
 credits are refunded.
 
+Character, outline, panel and palette parsing reject schema documents, incorrect
+root types and incomplete JSON with a non-retryable `ProviderOutputError`.
+Palettes require a nonempty theme and valid named hex colours; invalid output no
+longer silently becomes a default palette. A `length` finish reason fails even
+when its partial text happens to parse as JSON. Corrupt PNGs fail PDF export
+instead of becoming placeholder artwork. Successful image responses are stored
+using their actual byte format, including WebP with a misleading PNG label.
+
 ## Fixture and repeatable proof
 
 `tests/fixtures/the_tide_clock.txt` is an original 3,130-word story. Its default

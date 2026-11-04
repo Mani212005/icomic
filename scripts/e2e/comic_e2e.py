@@ -638,7 +638,19 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     run_id = uuid.uuid4().hex
     args.artifact_dir = args.artifact_dir.resolve()
+    if args.artifact_dir == REPO_ROOT:
+        print("REFUSED: use a dedicated artifact directory, not the repository root", file=sys.stderr)
+        return 2
     args.artifact_dir.mkdir(parents=True, exist_ok=True)
+    if args.artifact_dir.is_relative_to(REPO_ROOT):
+        # Provider outputs are local diagnostic artifacts, never source files.
+        ignore = args.artifact_dir / ".gitignore"
+        existing = ignore.read_text() if ignore.exists() else ""
+        ignore.write_text(existing + ("\n" if existing else "") + "*\n")
+    diagnostics_dir = args.artifact_dir / f"diagnostics-{run_id}"
+    if live:
+        # Create on the host so container-written evidence can retain this owner.
+        diagnostics_dir.mkdir(mode=0o700)
     ledger_path = args.artifact_dir / f"provider-costs-{run_id}.json" if live else None
     guard = CostGuard(
         args.cost_cap_usd if live else float("inf"),
@@ -655,6 +667,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ.update(
             {
                 "ICOMIC_E2E_RUN_ID": run_id,
+                "ICOMIC_E2E_DIAGNOSTICS_DIR": f"/var/lib/icomic-e2e/diagnostics-{run_id}",
                 "ICOMIC_E2E_COST_DIR": str(args.artifact_dir),
                 "ICOMIC_E2E_COST_CAP_USD": str(args.cost_cap_usd),
                 "ICOMIC_E2E_PRIOR_SPEND_USD": str(args.prior_spend_usd),
@@ -698,6 +711,8 @@ def main(argv: list[str] | None = None) -> int:
         "provider_cost_report": guard.provider_report,
         "cost_complete": not live
         or (guard.provider_report is not None and guard.provider_report["unpriced_calls"] == 0),
+        "diagnostics_dir": str(diagnostics_dir) if live else None,
+        "diagnostic_files": [str(p) for p in sorted(diagnostics_dir.glob("response-*.json"))],
         "pdf_path": str(args.artifact_dir / "latest.pdf") if not failure else None,
         "generated_comic_pages": page_count,
         "generated_panels": guard.panel_count,

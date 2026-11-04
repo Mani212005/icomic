@@ -9,10 +9,23 @@ from .port import LanguagePort, Message, TokenUsage
 class FakeLanguageAdapter(LanguagePort):
     """Deterministic in-memory language model adapter with no external calls."""
 
-    def __init__(self, default_response: str = "Deterministic test response"):
+    def __init__(
+        self,
+        default_response: str = "Deterministic test response",
+        replay_adapter: LanguagePort | None = None,
+    ):
         self.default_response = default_response
+        self.replay_adapter = replay_adapter
+        self.last_usage = None
 
     def complete(self, model: str, messages: list[Message], **kwargs) -> str:
+        if self.replay_adapter is not None:
+            if hasattr(self.replay_adapter, "last_usage"):
+                self.replay_adapter.last_usage = None
+            try:
+                return self.replay_adapter.complete(model, messages, **kwargs)
+            finally:
+                self.last_usage = getattr(self.replay_adapter, "last_usage", None)
         try:
             payload = json.loads(messages[-1].content)
         except (ValueError, IndexError):

@@ -207,7 +207,7 @@ def test_detect_c2pa_markers_in_jpeg_app11_and_webp():
     assert detect_c2pa_markers(clean_bytes) is False
 
 
-def test_parse_palette_json_valid_and_fallback():
+def test_parse_palette_json_valid_and_rejects_malformed_output():
     # Valid JSON inside code block
     raw_response = (
         "Here is the requested palette:\n```json\n"
@@ -223,10 +223,10 @@ def test_parse_palette_json_valid_and_fallback():
     assert suggestion.palette[0].hex_color == "#FF5733"
     assert suggestion.palette[1].region_name == "road"
 
-    # Malformed text falls back gracefully to structured default
-    fallback = parse_palette_json("Sorry, I cannot generate colours for this image.")
-    assert fallback.theme != ""
-    assert len(fallback.palette) >= 2
+    from app.provider_output import ProviderOutputError
+
+    with pytest.raises(ProviderOutputError, match="palette"):
+        parse_palette_json("Sorry, I cannot generate colours for this image.")
 
 
 # ---------------------------------------------------------------------------

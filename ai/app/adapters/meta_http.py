@@ -18,6 +18,8 @@ import httpx
 from typing_extensions import Self
 
 from ..provider_costs import ProviderBudgetError, ProviderCostLedger, token_output_bound
+from ..provider_diagnostics import ProviderDiagnostics, last_response
+from ..provider_output import ProviderOutputError, reject_schema_echo
 from .image.port import ImageResult
 from .language.port import Message, TokenUsage
 from .vision.port import ColourItem, PaletteSuggestion
@@ -573,9 +575,9 @@ def parse_chat_completion_response(
         "reasoning_tokens": reasoning_tokens,
     }
 
-    if not content or not content.strip():
+    if not content or not content.strip() or finish_reason == "length":
         raise MetaEmptyResponseError(
-            f"Meta API returned empty content (finish_reason={finish_reason!r}, request_id={request_id!r})",
+            f"Meta API returned empty content or incomplete output (finish_reason={finish_reason!r}, request_id={request_id!r})",
             status_code=200,
             details=data,
             request_id=request_id,
@@ -690,7 +692,7 @@ def parse_responses_image_response(
 
     # Decode raw image bytes - NEVER re-encode or modify
     try:
-        raw_bytes = base64.b64decode(image_b64)
+        raw_bytes = base64.b64decode(image_b64, validate=True)
     except Exception as exc:
         raise MetaAPIError(
             f"Failed to decode base64 image bytes: {exc}",
@@ -699,6 +701,8 @@ def parse_responses_image_response(
 
     provenance = extract_provenance(data, raw_bytes, model_id)
     media_type = detect_image_media_type(raw_bytes)
+    if media_type == "application/octet-stream":
+        raise ProviderOutputError("image", "unrecognized_image_bytes")
 
     return ImageResult(
         image_bytes=raw_bytes,
@@ -713,45 +717,47 @@ def parse_palette_json(content: str) -> PaletteSuggestion:
     """Parse JSON palette response from multimodal vision completion."""
     cleaned = content.strip()
     # Strip markdown fenced code blocks if present
-    if cleaned.startswith("```"):
+    if "```" in cleaned:
         match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
         if match:
             cleaned = match.group(1).strip()
 
     try:
         parsed = json.loads(cleaned)
-    except (json.JSONDecodeError, ValueError):
-        # Fallback to finding first JSON object
-        brace_start = cleaned.find("{")
-        brace_end = cleaned.rfind("}")
-        if brace_start != -1 and brace_end > brace_start:
-            try:
-                parsed = json.loads(cleaned[brace_start : brace_end + 1])
-            except (json.JSONDecodeError, ValueError):
-                parsed = {}
-        else:
-            parsed = {}
-
-    theme = str(parsed.get("theme", "Meta Harmonized Palette"))
-    palette_raw = parsed.get("palette", [])
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ProviderOutputError("palette", "invalid_or_incomplete_json") from exc
+    reject_schema_echo(parsed, "palette")
+    if (
+        not isinstance(parsed, dict)
+        or not isinstance(parsed.get("theme"), str)
+        or not parsed["theme"].strip()
+    ):
+        raise ProviderOutputError("palette", "schema_mismatch")
+    theme = parsed["theme"]
+    palette_raw = parsed.get("palette")
     items: list[ColourItem] = []
 
     if isinstance(palette_raw, list):
         for entry in palette_raw:
-            if isinstance(entry, dict):
-                reg = str(entry.get("region_name", "region"))
-                hex_c = str(entry.get("hex_color", "#FFFFFF")).upper()
-                if not re.match(r"^#[0-9A-F]{6}$", hex_c):
-                    hex_c = "#808080"
-                lbl = str(entry.get("label", reg.replace("_", " ").title()))
-                items.append(ColourItem(region_name=reg, hex_color=hex_c, label=lbl))
+            if (
+                not isinstance(entry, dict)
+                or not all(
+                    isinstance(entry.get(k), str) and entry[k].strip()
+                    for k in ("region_name", "hex_color", "label")
+                )
+                or not re.fullmatch(r"#[0-9a-fA-F]{6}", entry["hex_color"])
+            ):
+                raise ProviderOutputError("palette", "schema_mismatch")
+            items.append(
+                ColourItem(
+                    region_name=entry["region_name"],
+                    hex_color=entry["hex_color"].upper(),
+                    label=entry["label"],
+                )
+            )
 
     if not items:
-        items = [
-            ColourItem(region_name="primary", hex_color="#2B2D42", label="Primary"),
-            ColourItem(region_name="accent", hex_color="#D90429", label="Accent"),
-            ColourItem(region_name="background", hex_color="#EDF2F4", label="Background"),
-        ]
+        raise ProviderOutputError("palette", "empty_palette")
 
     return PaletteSuggestion(theme=theme, palette=items)
 
@@ -777,6 +783,7 @@ class MetaHttpClient:
         timeout: float = DEFAULT_HTTP_TIMEOUT,
         cost_ledger: ProviderCostLedger | None = None,
         cost_stage: str = "language",
+        diagnostics: ProviderDiagnostics | None = None,
     ) -> None:
         # Lazy read of key from environment if not explicitly passed
         resolved_key = api_key if api_key is not None else os.getenv("META_API_KEY")
@@ -798,6 +805,7 @@ class MetaHttpClient:
         self.max_retries = 0 if cost_ledger is not None else max_retries
         self.cost_ledger = cost_ledger
         self.cost_stage = cost_stage
+        self.diagnostics = diagnostics
         self.timeout = timeout
         self.rate_limiter = rate_limiter
 
@@ -818,6 +826,10 @@ class MetaHttpClient:
 
     def close(self) -> None:
         self._client.close()
+
+    def record_invalid_response(self, error_type: str) -> None:
+        if self.diagnostics is not None:
+            self.diagnostics.failure(error_type)
 
     def __enter__(self) -> Self:
         return self
@@ -927,12 +939,18 @@ class MetaHttpClient:
             f"{self.base_url}/responses/input_tokens",
             json=count_payload,
         )
+        if self.diagnostics is not None:
+            self.diagnostics.capture(
+                response.content, response.status_code, self.api_key, "preflight"
+            )
         try:
             response.raise_for_status()
             count = response.json()["input_tokens"]
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            self.record_invalid_response(type(exc).__name__)
             raise ProviderBudgetError("Input token preflight failed; refusing generation") from exc
         if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            self.record_invalid_response("InvalidInputTokenCount")
             raise ProviderBudgetError("Invalid input token preflight; refusing generation")
         return count
 
@@ -945,6 +963,8 @@ class MetaHttpClient:
 
         Never logs API keys or full prompt bodies.
         """
+        if self.diagnostics is not None:
+            last_response.set(None)
         input_tokens = None
         if self.cost_ledger is not None:
             # Freeze the same payload for preflight and transmission.
@@ -979,11 +999,19 @@ class MetaHttpClient:
             )
             try:
                 try:
+                    if self.diagnostics is not None:
+                        # A network failure has no response body. Never attribute
+                        # a previous call or successful preflight body to it.
+                        last_response.set(None)
                     response = self._client.post(url, json=json_body)
                 except Exception:
                     if reservation is not None:
                         self.cost_ledger.finish_call(reservation, None)
                     raise
+                if self.diagnostics is not None:
+                    self.diagnostics.capture(response.content, response.status_code, self.api_key)
+                    if not 200 <= response.status_code < 300:
+                        self.diagnostics.failure("HTTPError")
                 if reservation is not None:
                     try:
                         usage_data = response.json()
@@ -1092,3 +1120,6 @@ class MetaHttpClient:
                     f"Transient network failure connecting to Meta API: {net_err}",
                     request_id=request_id,
                 ) from net_err
+            except Exception as exc:
+                self.record_invalid_response(type(exc).__name__)
+                raise

@@ -352,9 +352,10 @@ class PdfWriter:
             if img_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
                 try:
                     img_w, img_h, rgb_data = parse_png_to_rgb(img_bytes)
-                except (KeyError, ValueError, OSError, struct.error, zlib.error):
-                    fallback = _generate_fallback_png()
-                    img_w, img_h, rgb_data = parse_png_to_rgb(fallback)
+                except (KeyError, ValueError, OSError, struct.error, zlib.error) as exc:
+                    raise UnsupportedImageMediaError(
+                        f"Invalid PNG image on page {p.get('page_number', idx)}."
+                    ) from exc
 
                 compressed_rgb = zlib.compress(rgb_data)
                 img_xobj_id = self._add_object(

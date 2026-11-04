@@ -1,0 +1,24 @@
+{
+  "status": 200,
+  "body": {
+    "id": "redacted-response",
+    "model": "muse-spark-1.3",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "[{\"name\":"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 3271,
+      "completion_tokens": 809,
+      "completion_tokens_details": {
+        "reasoning_tokens": 700
+      }
+    }
+  }
+}

@@ -84,7 +84,11 @@ class MetaImageAdapter(ImagePort):
         self.last_status_code = 200
         self.last_response_keys = sorted(data.keys()) if isinstance(data, dict) else []
         self.last_response_data = data
-        result = parse_responses_image_response(data, self.model_id, headers)
+        try:
+            result = parse_responses_image_response(data, self.model_id, headers)
+        except Exception as exc:
+            self._client.record_invalid_response(type(exc).__name__)
+            raise
 
         self.last_request_id = result.request_id
         return result

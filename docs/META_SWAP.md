@@ -221,6 +221,35 @@ Once keys and live adapters are configured in a local or staging environment, ex
    - Confirm that the user's credit ledger was debited exactly $0.01 for the generated image.
    - Test a prompt containing policy-violating keywords to confirm graceful error handling without unhandled crashes.
 
+## Failed-response evidence for capped comic runs
+
+The comic runner sets `ICOMIC_E2E_DIAGNOSTICS_DIR` to a unique directory inside
+its mounted artifact directory. `cost-report.json` links the host-side
+`diagnostics_dir` and every `diagnostic_files` entry. HTTP errors, malformed JSON,
+empty or length-limited completions, invalid images and model schema failures
+retain the failing provider response body. Capture happens before output parsing
+and accounting validation; successful calls do not produce diagnostic files.
+Token-count preflight failures are captured too.
+
+Each diagnostic contains the HTTP status, internal operation/job IDs, error type
+and the redacted body, capped at 256 KiB with an explicit truncation flag. It
+contains no request payload, request URL, or HTTP headers. The configured credential,
+credential-shaped strings, bearer tokens and JSON credential fields are redacted
+before truncation or writing. Files use mode 0600. Artifacts placed inside the
+repository receive a local `.gitignore`; keep production evidence outside the
+repository and review it before sharing. Provider output can still contain story
+content. Diagnostics are opt-in; no credential is read to enable capture.
+
+Historical shape fixtures and their evidence/reconstruction provenance live in
+`ai/tests/fixtures/meta/observed/README.md`. Some older failures retained only
+error text, not complete provider bodies; these fixtures explicitly reconstruct
+the shape rather than claim to reproduce missing raw content. Fake adapters
+accept an optional replay adapter; their default behavior remains deterministic.
+The long-flow failure matrix runs the real Go API and Python worker with mocked
+provider transports and checks every generation stage plus export. Failed output
+is not published, redelivery does not repeat provider calls, exact observed usage
+is retained, and unknown HTTP-error usage retains its budget reservation.
+
 ## 6. Rollback to Fake Adapters
 
 If live Meta endpoints fail, credentials expire, or rate limits are reached, roll back immediately to fake adapters:
