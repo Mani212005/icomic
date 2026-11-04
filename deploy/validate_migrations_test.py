@@ -227,6 +227,7 @@ def repository_column_errors(source: str, columns: dict[str, set[str]]) -> list[
         if not re.match(r"\s*(SELECT|INSERT|UPDATE|DELETE)\b", sql, re.I):
             continue
         sql = re.sub(r"'([^']|'')*'", "", sql.lower())
+        sql = re.sub(r"::\s*(?:uuid|timestamptz|varchar|numeric|text)\b", "", sql)
         table_names = set(re.findall(r"(?:from|into|update)\s+(\w+)", sql)) - {"set"}
         if len(table_names) != 1:
             errors.append(f"Add structural coverage for query: {sql}")
@@ -322,6 +323,20 @@ class TestMigrationsStructural(unittest.TestCase):
         self.assertEqual(
             repository_column_errors("`SELECT id FROM panels WHERE missing_column = $1`", migrated_columns(initial)),
             ["panels.missing_column is referenced by repository SQL but absent from migrations"],
+        )
+
+    def test_repository_check_distinguishes_parameter_casts_from_columns(self):
+        columns = migrated_columns(self.all_up_sql)
+        self.assertEqual(
+            repository_column_errors(
+                "`SELECT id FROM users WHERE id=$1::uuid AND created_at>=$2::timestamptz`",
+                columns,
+            ),
+            [],
+        )
+        self.assertEqual(
+            repository_column_errors("`SELECT uuid FROM users`", columns),
+            ["users.uuid is referenced by repository SQL but absent from migrations"],
         )
 
     def test_panel_scene_upgrade_reverses_columns(self):
