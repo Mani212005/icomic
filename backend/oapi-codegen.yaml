@@ -1,0 +1,19 @@
+package: gen
+generate:
+  models: true
+output-options:
+  skip-prune: true
+  name-normalizer: ToCamelCaseWithInitialisms
+  additional-initialisms:
+    - ID
+    - URL
+    - URLs
+    - AI
+  type-mapping:
+    number:
+      default:
+        type: float64
+    string:
+      formats:
+        uuid:
+          type: string

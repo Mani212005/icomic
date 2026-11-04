@@ -28,6 +28,20 @@ type JSONResponse struct {
 	Message string      `json:"message,omitempty"`
 }
 
+func optionalInt(value int) *int {
+	if value == 0 {
+		return nil
+	}
+	return &value
+}
+
+func optionalStringSlice(value []string) *[]string {
+	if len(value) == 0 {
+		return nil
+	}
+	return &value
+}
+
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -1329,7 +1343,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		PageNumber:                  pg.PageNumber,
 		Panels:                      panelItems,
 		Style:                       draftStyle,
-		CharacterReferenceImageURLs: charImageURLs,
+		CharacterReferenceImageURLs: optionalStringSlice(charImageURLs),
 	})
 	if err != nil {
 		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
@@ -1516,7 +1530,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		DraftImageURL:               pg.DraftImageURL,
 		Panels:                      panelItems,
 		Style:                       lineArtStyle,
-		CharacterReferenceImageURLs: charImageURLs,
+		CharacterReferenceImageURLs: optionalStringSlice(charImageURLs),
 	})
 	if err != nil {
 		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
@@ -1869,20 +1883,24 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 			if imgURL == "" {
 				imgURL = fmt.Sprintf("pages/%s.png", pg.ID)
 			}
+			panelCount := len(pg.PanelIDs)
+			provenance := map[string]interface{}{"c2pa": true}
 			exportPages = append(exportPages, gen.PageExportItem{
 				PageNumber:         pg.PageNumber,
 				ImageURL:           imgURL,
-				PanelCount:         len(pg.PanelIDs),
-				ProvenanceMetadata: map[string]interface{}{"c2pa": true},
+				PanelCount:         optionalInt(panelCount),
+				ProvenanceMetadata: &provenance,
 			})
 		}
 	}
 	if len(exportPages) == 0 {
+		panelCount := 1
+		provenance := map[string]interface{}{"c2pa": true}
 		exportPages = append(exportPages, gen.PageExportItem{
 			PageNumber:         1,
 			ImageURL:           fmt.Sprintf("projects/%s/page_1.png", proj.ID),
-			PanelCount:         1,
-			ProvenanceMetadata: map[string]interface{}{"c2pa": true},
+			PanelCount:         &panelCount,
+			ProvenanceMetadata: &provenance,
 		})
 	}
 
@@ -1909,7 +1927,7 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		HashedUserID:        hashedUID,
 		ProjectID:           proj.ID,
 		Title:               proj.Title,
-		PageSize:            "A4",
+		PageSize:            gen.A4,
 		IncludeAIDisclosure: true,
 		Pages:               exportPages,
 	})

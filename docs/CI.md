@@ -20,8 +20,9 @@ The primary CI pipeline is defined in `.github/workflows/ci.yml`. It runs on pus
 
 | Job ID | Job Name | Responsibility |
 | --- | --- | --- |
-| `hermetic-guard` | Hermetic Guard | Scans codebase and workflows to ensure zero live API markers, zero real Meta hosts, zero `META_API_KEY` reads in code/tests, and zero live Postgres/Redis dependencies. |
+| `hermetic-guard` | Hermetic Guard | Scans codebase and workflows to ensure zero live API markers, zero real Meta hosts, zero `META_API_KEY` reads in code/tests, and zero live Postgres/Redis dependencies; tests the generated-model drift comparator. |
 | `contracts` | Contracts & Schemas Validation | Validates OpenAPI 3.1 specifications and JSON schemas against test suites. |
+| `contract-models` | OpenAPI Generated Model Drift Check | Regenerates Go and Python contract models with pinned generator versions and fails if checked-in output differs. |
 | `database` | Database Migrations & Schema Validation | Runs hermetic PostgreSQL migration structural validation without live database dependencies. |
 | `backend` | Go Backend Checks & Tests | Runs Go format verification (`gofmt`), static analysis (`go vet`), unit and contract tests with race detection (`go test -race`), and binary compilation (`go build`). |
 | `ai-service` | Python AI Service Checks & Tests | Syncs locked dependencies via `uv`, runs Ruff linting and format checks, and executes pytest boundary contract tests. |
@@ -32,6 +33,18 @@ The primary CI pipeline is defined in `.github/workflows/ci.yml`. It runs on pus
 ## Running Checks Locally
 
 Developers can run all CI checks locally using `make` or the underlying native toolchains.
+
+### OpenAPI Contract Models
+
+The Go and Python service models are generated from `contracts/openapi/ai-service.yaml`. Generator options live in `backend/oapi-codegen.yaml`; generator and formatter versions are pinned in the Makefile. Install the pinned tools, regenerate after changing the contract, and check the checked-in output with:
+
+```bash
+make install-contract-codegen
+make generate-contract-models
+make check-contract-models
+```
+
+The check regenerates into a temporary directory, so it never overwrites a developer's working files. A mismatch points to `make generate-contract-models`. `frontend/src/lib/api/` is not included: its client and types are handwritten JavaScript modules, with no generated source or generator configuration in the repository.
 
 ### 1. Run Everything
 
