@@ -40,6 +40,8 @@ The following environment variables configure the Python AI service and backgrou
 | `ADAPTER_QUEUE` | `fake` | `redis` | Selects the job queue adapter for asynchronous background processing. |
 | `ADAPTER_CLOCK` | `fake` | `system` | Selects the real system wall-clock adapter. |
 | `META_API_KEY` | *(unset)* | `<real-api-key>` | Bearer token for authenticating requests against Meta API endpoints. |
+| `META_REASONING_EFFORT` | `low` (Meta only) | `minimal`, `low`, `medium`, `high`, `xhigh` | Text/vision reasoning effort, validated at construction; per-call `reasoning_effort` overrides it. `none` is rejected. |
+| `META_REASONING_RESERVE_TOKENS` | `1024` (Meta only) | non-negative integer | Extra shared output headroom added to explicit text/vision `max_tokens`; validated at construction. |
 | `IMAGE_WORKER_CONCURRENCY` | `2` | `2` | Number of concurrent image generation worker processes. |
 
 ### 2.2 Key Placement and Secrets Management
@@ -247,25 +249,31 @@ The following architectural and policy decisions remain reserved for the captain
 
 ## 8. Live Smoke Check Findings and Diagnostics
 
-The first owner-approved live smoke verification exposed operational insights across the adapter suite:
+The second owner-approved live check returned HTTP 200 from `muse-spark-1.3` with `finish_reason=length`, empty content, 17 prompt tokens, and 64 completion tokens including 62 hidden reasoning tokens. The run stopped at that first failure. Vision and image were not reached; the actual image media type and C2PA signals remain open questions for the next owner-approved live check. Hermetic JPEG/WebP fixtures demonstrate parser support, not a live endpoint finding.
 
-1. **Language Completion Reasoning Tokens**:
-   - Text calls targeting `muse-spark-1.3` with small token limits (`max_tokens=10`) consumed the budget entirely on reasoning tokens before emitting output text.
-   - The parser now checks for empty responses and raises a non-retryable domain error `MetaEmptyResponseError`.
-   - The live smoke check uses `max_tokens=64` to provide adequate headroom for reasoning models.
-   - Parsers extract reasoning tokens additively from `usage.completion_tokens_details.reasoning_tokens` and expose `finish_reason`.
+Third-party docs summarising Meta's API supply the following public facts; an owner-approved live check must confirm them:
 
-2. **Vision Adapter Parameter Forwarding**:
-   - The multimodal review endpoint did not forward `max_tokens` and `temperature` from port kwargs.
-   - `MetaVisionAdapter.review` and `suggest_palette` now explicitly forward `max_tokens` and `temperature` in request payloads.
+- Chat completions accept `reasoning_effort` values `minimal`, `low`, `medium`, `high`, `xhigh`; `none` returns HTTP 400.
+- Omitting reasoning effort leaves the amount of reasoning model-determined.
+- Reasoning text is not returned, only usage `reasoning_tokens`.
+- Reasoning tokens count against the output cap and are billed as output. They are already included in `completion_tokens`.
 
-3. **Image Format and Provenance Container Detection**:
-   - The `muse-image-1.0` endpoint returned valid image binary data in JPEG format rather than PNG.
-   - Image adapters now detect the real media type dynamically by inspecting header magic bytes.
-   - C2PA detection parses JPEG APP11 JUMBF boxes and WebP RIFF containers alongside standard PNG chunks.
-   - The PDF assembly service embeds JPEG binaries natively via DCTDecode to preserve original byte fidelity.
+Both text and vision adapters now read `META_REASONING_EFFORT` (default `low`) and `META_REASONING_RESERVE_TOKENS` (default `1024`) at construction, never at import. Invalid effort or reserve values raise `MetaConfigurationError` at construction. Both vision methods and the language method allow a validated per-call `reasoning_effort` override.
 
-4. **Sanitized Diagnostics Output**:
-   - Every execution of `scripts/manual/meta_live_check.py` writes a sanitized diagnostics record to `.live-diagnostics.json`.
-   - The diagnostics file records HTTP statuses, top-level response keys, token usage, finish reasons, detected media types, parseable dimensions, content lengths, and the first 12 bytes in hexadecimal.
-   - It strictly excludes API keys, authorization headers, prompts, and output text.
+A caller's `max_tokens` expresses the intended answer length. The wire request sends `max_tokens + reserve`, sharing that cap between reasoning and visible text. No cap is introduced when the caller omits `max_tokens`. This headroom reduces starvation but does not guarantee an answer or independently limit its visible length. An empty response, including `finish_reason=length`, raises `MetaEmptyResponseError` with `finish_reason`, `reasoning_tokens` and `token_usage`. `TokenUsage.output_tokens` copies the full completion count without adding reasoning again. The language token forecast includes the reserve in its output estimate.
+
+The reserve has a cost consequence: worst-case token spend becomes `input_tokens * input_price + (max_tokens + reserve) * output_price`. Every reserve token can be billed, including calls that return no visible answer. At the checklist's pricing basis ($1.25/M input, $4.25/M output), the default reserve adds up to **$0.004352 per capped call**. A larger reserve increases this exposure linearly.
+
+The manual checklist now makes these independent, single-attempt calls in order:
+
+| Stage | Intended answer cap | Effort | Default wire cap | Worst-case estimate |
+| --- | --- | --- | --- | --- |
+| Language, tiny greeting prompt | 32 | `minimal` | 1056 | $0.004563 (60 input tokens) |
+| Vision, tiny PNG and brief prompt | 64 | `minimal` | 1088 | $0.0050615 (350 input tokens) |
+| Image | one image | n/a | n/a | $0.01 |
+
+The full estimate is **$0.0196245**, below $0.05. Estimates use the configured reserve; a configuration that reaches $0.05 is refused before any calls. Input token counts are conservative estimates for these tiny inputs and must also be confirmed live.
+
+Ordinary failures, including empty completions, do not skip later stages. There are no retry or fallback calls. Authentication (401/403), configuration errors, contributor-tier refusal and budget aborts stop remaining calls. Before each stage, its worst-case cost is checked against the persistent cumulative spend and the hard $5 ceiling; the legacy above-default budget override cannot bypass that ceiling. Failed transmitted calls are recorded at worst-case cost, even if usage is available. Successful token calls count all completion tokens once. The main entrypoint still requires `META_LIVE_CHECK=1` before resolving credentials or constructing clients.
+
+Every stage has an outcome in the sanitized `.live-diagnostics.json`, including failures, budget aborts and skipped stages. It records HTTP status, response keys, token usage, finish reason, detected media type, dimensions, content length, the first 12 image bytes in hexadecimal, and image C2PA marker detection where available. It excludes keys, authorization headers, prompts, response text and exception messages. The final machine-readable `STATUS` line includes `language`, `vision`, `image`, attempted call count and spend; `PARTIAL` means some stages succeeded and others failed or were stopped. A full pass is still required for a successful exit code.

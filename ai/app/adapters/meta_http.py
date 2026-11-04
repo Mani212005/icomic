@@ -40,6 +40,12 @@ DEFAULT_MAX_RETRIES: int = 3
 DEFAULT_BASE_BACKOFF: float = 0.5
 DEFAULT_MAX_BACKOFF: float = 8.0
 
+# Third-party summaries of Meta's API describe these values; a live check must confirm them.
+META_REASONING_ALLOWED: tuple[str, ...] = ("minimal", "low", "medium", "high", "xhigh")
+DEFAULT_REASONING_EFFORT: str = "low"
+# Reasoning shares the output cap and price with visible answer tokens.
+DEFAULT_REASONING_RESERVE_TOKENS: int = 1024
+
 
 # ---------------------------------------------------------------------------
 # Exceptions & Error Mapping (docs/META_SWAP.md Section 4.2)
@@ -95,6 +101,7 @@ class MetaEmptyResponseError(MetaAPIError):
         super().__init__(message, status_code=status_code, details=details, request_id=request_id)
         self.finish_reason = finish_reason
         self.token_usage = token_usage
+        self.reasoning_tokens = token_usage.reasoning_tokens if token_usage else None
 
 
 class MetaRateLimitError(MetaAPIError):
@@ -134,6 +141,64 @@ class MetaTransientError(MetaAPIError):
         request_id: str | None = None,
     ) -> None:
         super().__init__(message, status_code=status_code, details=details, request_id=request_id)
+
+
+# ---------------------------------------------------------------------------
+# Reasoning configuration
+# ---------------------------------------------------------------------------
+
+
+def validate_reasoning_effort(effort: Any, *, source: str = "value") -> str:
+    """Validate a reasoning_effort string and return it normalised to lower-case.
+
+    Raises MetaConfigurationError for unknown values or the API-rejected ``none``.
+    ``source`` is used only in the error message to tell callers where the bad
+    value came from (e.g. the env-var name or ``reasoning_effort kwarg``).
+    """
+    normalised = effort.strip().lower() if isinstance(effort, str) else None
+    if normalised == "none":
+        raise MetaConfigurationError(
+            f"reasoning_effort='none' is rejected by Meta API (HTTP 400). "
+            f"Source: {source}. "
+            f"Allowed values: {', '.join(META_REASONING_ALLOWED)}."
+        )
+    if normalised not in META_REASONING_ALLOWED:
+        raise MetaConfigurationError(
+            f"Invalid reasoning_effort {effort!r} from {source}. "
+            f"Allowed values: {', '.join(META_REASONING_ALLOWED)}."
+        )
+    return normalised
+
+
+def load_reasoning_config() -> tuple[str, int]:
+    """Read and validate reasoning configuration from environment.
+
+    Called at *adapter construction time* (not at module import) so that
+    configuration errors surface early, with a clear message, rather than at
+    first request.
+
+    Returns:
+        (effort, reserve_tokens) - validated reasoning_effort string and
+        META_REASONING_RESERVE_TOKENS integer.
+
+    Raises:
+        MetaConfigurationError: If either env-var holds an invalid value.
+    """
+    raw_effort = os.getenv("META_REASONING_EFFORT", DEFAULT_REASONING_EFFORT)
+    effort = validate_reasoning_effort(raw_effort, source="META_REASONING_EFFORT env-var")
+
+    reserve_str = os.getenv("META_REASONING_RESERVE_TOKENS", str(DEFAULT_REASONING_RESERVE_TOKENS))
+    try:
+        reserve = int(reserve_str)
+    except ValueError as exc:
+        raise MetaConfigurationError(
+            f"META_REASONING_RESERVE_TOKENS must be a non-negative integer, got {reserve_str!r}."
+        ) from exc
+    if reserve < 0:
+        raise MetaConfigurationError(
+            f"META_REASONING_RESERVE_TOKENS must be non-negative, got {reserve}."
+        )
+    return effort, reserve
 
 
 # ---------------------------------------------------------------------------
@@ -328,9 +393,26 @@ def build_chat_completion_request(
     messages: list[Message] | list[dict[str, Any]],
     user: str | None = None,
     user_field: str = DEFAULT_META_USER_FIELD,
+    reasoning_effort: str | None = None,
+    reserve_tokens: int | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Pure function to build chat completion request payload."""
+    """Pure function to build chat completion request payload.
+
+    Args:
+        model: The model identifier.
+        messages: Conversation messages.
+        user: Optional hashed user ID.
+        user_field: Field name to use for the user ID in the payload.
+        reasoning_effort: If supplied, sent as ``reasoning_effort`` in the
+            payload.  Must be one of ``META_REASONING_ALLOWED``.  When
+            ``None`` the field is omitted (model-determined reasoning).
+        reserve_tokens: When a ``max_tokens`` kwarg is also provided, this
+            many extra tokens are added to the wire value to reduce answer
+            starvation by hidden reasoning.  The caller's ``max_tokens`` is the
+            *intended answer length*; ``reserve_tokens`` is transparent to them.
+        **kwargs: Additional payload fields (e.g. ``temperature``, ``max_tokens``).
+    """
     formatted_messages: list[dict[str, Any]] = []
     for m in messages:
         if isinstance(m, Message):
@@ -344,6 +426,21 @@ def build_chat_completion_request(
         "model": model,
         "messages": formatted_messages,
     }
+
+    # None deliberately omits reasoning_effort for model-determined reasoning.
+    if reasoning_effort is not None:
+        payload["reasoning_effort"] = reasoning_effort
+
+    # Add reasoning headroom to the shared output cap.
+    if "max_tokens" in kwargs and kwargs["max_tokens"] is not None:
+        caller_max = kwargs.pop("max_tokens")
+        if isinstance(caller_max, bool) or not isinstance(caller_max, int) or caller_max < 0:
+            raise MetaConfigurationError("max_tokens must be a non-negative integer.")
+        effective_reserve = reserve_tokens if reserve_tokens is not None else 0
+        payload["max_tokens"] = caller_max + effective_reserve
+    else:
+        kwargs.pop("max_tokens", None)  # Drop None value if present
+
     if user:
         payload[user_field] = user
     for k, v in kwargs.items():
@@ -393,6 +490,7 @@ def parse_chat_completion_response(
         usage_data = {}
 
     in_tokens = int(usage_data.get("prompt_tokens", 0))
+    # completion_tokens already includes hidden reasoning; never add reasoning_tokens again.
     out_tokens = int(usage_data.get("completion_tokens", 0))
     tot_tokens = int(usage_data.get("total_tokens", in_tokens + out_tokens))
 
