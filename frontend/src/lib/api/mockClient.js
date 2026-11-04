@@ -1,16 +1,3 @@
-/**
- * Mock API Client for Icomic.
- *
- * Implements the exact same interface as ApiClient, backed by deterministic in-memory state.
- * Used for development, component testing, and hermetic unit tests without any backend,
- * Postgres, or Redis dependencies.
- *
- * Mimics backend stale approval semantics (SPEC 3.2, 3.5, 3.6, 3.7; ARCHITECTURE 5.3):
- * - Editing or regenerating an entity updates updated_at without wiping approved_at to null.
- * - Stale approvals are detected when approved_at < updated_at.
- * - Editing a panel cascades to invalidate parent page draft approval.
- * - Regenerating draft sketch cascades to invalidate line art approval.
- */
 
 import { JOB_STATUS, STAGE_ESTIMATED_COSTS } from './types.js';
 
@@ -25,7 +12,6 @@ export class MockApiClient {
 		this.autoCompleteJobs = options.autoCompleteJobs ?? true;
 		this.failureRate = options.failureRate ?? 0;
 
-		// In-memory data store
 		this.projects = new Map();
 		this.characters = new Map();
 		this.chapters = new Map();
@@ -68,7 +54,6 @@ export class MockApiClient {
 			updated_at: now
 		});
 
-		// Characters
 		const char1 = {
 			id: 'char-1',
 			project_id: projId,
@@ -87,7 +72,6 @@ export class MockApiClient {
 		};
 		this.characters.set(char1.id, char1);
 
-		// Chapters
 		const chap1 = {
 			id: 'chap-1',
 			project_id: projId,
@@ -101,7 +85,6 @@ export class MockApiClient {
 		};
 		this.chapters.set(chap1.id, chap1);
 
-		// Panels
 		const panel1 = {
 			id: 'panel-1',
 			chapter_id: chap1.id,
@@ -115,7 +98,6 @@ export class MockApiClient {
 		};
 		this.panels.set(panel1.id, panel1);
 
-		// Pages
 		const page1 = {
 			id: 'page-1',
 			chapter_id: chap1.id,
@@ -135,7 +117,6 @@ export class MockApiClient {
 		};
 		this.pages.set(page1.id, page1);
 
-		// Initial suggested palette
 		this.palettes.set(page1.id, [
 			{ region_name: 'sky', hex_color: '#1E293B', label: 'Night Sky' },
 			{ region_name: 'neon', hex_color: '#38BDF8', label: 'Cyan Neon' },
@@ -166,12 +147,10 @@ export class MockApiClient {
 		return job;
 	}
 
-	// Health
 	async checkHealth() {
 		return { status: 'ok', service: 'mock-icomic-api' };
 	}
 
-	// Projects
 	async createProject(project) {
 		const id = genId('proj');
 		const now = new Date().toISOString();
@@ -219,7 +198,6 @@ export class MockApiClient {
 		return { success: true };
 	}
 
-	// Story Generation & Analysis
 	async analyzeScript(projectId, scriptText) {
 		const p = await this.getProject(projectId);
 		p.script = scriptText;
@@ -229,7 +207,6 @@ export class MockApiClient {
 		return { job, project_id: projectId };
 	}
 
-	// Characters
 	async getCharacters(projectId) {
 		return Array.from(this.characters.values()).filter((c) => c.project_id === projectId);
 	}
@@ -238,8 +215,6 @@ export class MockApiClient {
 		const char = this.characters.get(id);
 		if (!char) throw new Error(`Character ${id} not found`);
 
-		// Backend semantics: updates updated_at, leaving approved_at intact.
-		// Staleness is detected via approved_at < updated_at.
 		let now = new Date().toISOString();
 		if (char.approved_at && new Date(char.approved_at).getTime() >= new Date(now).getTime()) {
 			now = new Date(new Date(char.approved_at).getTime() + 1000).toISOString();
@@ -260,7 +235,6 @@ export class MockApiClient {
 		const job = this.createJob(char.project_id, 'character_reference', 'characters');
 		char.reference_image_url = `mock://storage/ref-${char.id}.png`;
 
-		// Backend semantics: bumps updated_at, making prior approval stale
 		let now = new Date().toISOString();
 		if (char.approved_at && new Date(char.approved_at).getTime() >= new Date(now).getTime()) {
 			now = new Date(new Date(char.approved_at).getTime() + 1000).toISOString();
@@ -279,7 +253,6 @@ export class MockApiClient {
 		return char;
 	}
 
-	// Chapters
 	async createChapters(projectId, data) {
 		const count = data.chapter_count || 1;
 		const created = [];
@@ -310,7 +283,6 @@ export class MockApiClient {
 		const chap = this.chapters.get(id);
 		if (!chap) throw new Error(`Chapter ${id} not found`);
 
-		// Backend semantics: updates updated_at, leaving approved_at intact
 		let now = new Date().toISOString();
 		if (chap.approved_at && new Date(chap.approved_at).getTime() >= new Date(now).getTime()) {
 			now = new Date(new Date(chap.approved_at).getTime() + 1000).toISOString();
@@ -330,7 +302,6 @@ export class MockApiClient {
 		return chap;
 	}
 
-	// Panels
 	async getPanels(chapterId) {
 		return Array.from(this.panels.values()).filter((p) => p.chapter_id === chapterId);
 	}
@@ -363,7 +334,6 @@ export class MockApiClient {
 		const updated = { ...p, ...data, updated_at: now };
 		this.panels.set(id, updated);
 
-		// Cascade: panel edit stales parent page draft approval (SPEC 3.5, 3.6, ARCHITECTURE 5.3)
 		for (const pg of this.pages.values()) {
 			if (pg.panel_ids && pg.panel_ids.includes(id)) {
 				pg.draft_approved_at = null;
@@ -373,7 +343,6 @@ export class MockApiClient {
 		return updated;
 	}
 
-	// Pages
 	async getPages(chapterId) {
 		return Array.from(this.pages.values()).filter((p) => p.chapter_id === chapterId);
 	}
@@ -387,14 +356,13 @@ export class MockApiClient {
 		return updated;
 	}
 
-	// Draft Stage
 	async generateDraft(pageId) {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		const job = this.createJob('proj-demo-1', 'draft_sketch', 'draft');
 		const now = new Date().toISOString();
 		page.draft_image_url = `mock://storage/draft-${pageId}.png`;
-		// Cascade: draft regeneration stales line art approval (SPEC 3.6, 3.7, ARCHITECTURE 5.3)
+
 		page.draft_approved_at = null;
 		page.line_art_approved_at = null;
 		page.updated_at = now;
@@ -410,7 +378,6 @@ export class MockApiClient {
 		return page;
 	}
 
-	// Line Art Stage
 	async generateLineArt(pageId) {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
@@ -432,7 +399,6 @@ export class MockApiClient {
 		return page;
 	}
 
-	// Colouring Stage
 	async getColourPalette(pageId) {
 		return this.palettes.get(pageId) || [];
 	}
@@ -463,7 +429,6 @@ export class MockApiClient {
 		return page;
 	}
 
-	// Jobs and Credits
 	async estimateCost(projectId, stage, imageCount = 1) {
 		const unitCost = STAGE_ESTIMATED_COSTS[stage] || 0.01;
 		const estimatedCost = unitCost * imageCount;
@@ -492,7 +457,6 @@ export class MockApiClient {
 		return this.creditUsage;
 	}
 
-	// Export
 	async exportProject(projectId, options = {}) {
 		const expId = genId('exp');
 		const job = this.createJob(projectId, 'pdf_assembly', 'export');

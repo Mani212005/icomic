@@ -8,8 +8,8 @@ test('formatApiError formats 400 stale approval errors with actionable guidance'
 	const formatted1 = formatApiError(err1);
 	assert.equal(formatted1.type, 'stale_approval');
 	assert.equal(formatted1.status, 400);
-	assert.match(formatted1.title, /Approval Gate \/ Stale Approval/);
-	assert.match(formatted1.action, /Re-approve/);
+	assert.match(formatted1.title, /Approval needed/);
+	assert.match(formatted1.action, /Re-approve.*continue/);
 
 	const err2 = new Error('character Jack Vance was modified after approval');
 	err2.status = 400;
@@ -28,8 +28,8 @@ test('formatApiError formats 503 kill switch and service unavailable errors', ()
 	const formatted1 = formatApiError(err1);
 	assert.equal(formatted1.type, 'kill_switch');
 	assert.equal(formatted1.status, 503);
-	assert.match(formatted1.title, /Global Kill Switch Active/);
-	assert.match(formatted1.action, /kill switch/);
+	assert.match(formatted1.title, /Service unavailable/);
+	assert.match(formatted1.action, /disable KILL_SWITCH/);
 
 	const err2 = new Error('AI service not available');
 	err2.status = 503;
@@ -43,8 +43,8 @@ test('formatApiError formats 402 and 429 quota and credit limit errors', () => {
 	const formatted1 = formatApiError(err1);
 	assert.equal(formatted1.type, 'quota_exceeded');
 	assert.equal(formatted1.status, 429);
-	assert.match(formatted1.title, /Usage Quota \/ Balance Exceeded/);
-	assert.match(formatted1.action, /quota has been reached/);
+	assert.match(formatted1.title, /Quota exceeded/);
+	assert.match(formatted1.action, /Check your quota or credits/);
 
 	const err2 = new Error('Debit failed: insufficient credits');
 	err2.status = 402;
@@ -59,8 +59,8 @@ test('formatApiError formats moderation rejections', () => {
 	const formatted1 = formatApiError(err1);
 	assert.equal(formatted1.type, 'moderation_rejected');
 	assert.equal(formatted1.status, 400);
-	assert.match(formatted1.title, /Content Policy Rejection/);
-	assert.match(formatted1.action, /safety moderation/);
+	assert.match(formatted1.title, /Content blocked/);
+	assert.match(formatted1.action, /Edit the prompt/);
 });
 
 test('formatApiError formats 401 unauthenticated errors', () => {
@@ -69,7 +69,7 @@ test('formatApiError formats 401 unauthenticated errors', () => {
 	const formatted1 = formatApiError(err1);
 	assert.equal(formatted1.type, 'unauthorized');
 	assert.equal(formatted1.status, 401);
-	assert.match(formatted1.title, /Authentication Required/);
+	assert.match(formatted1.title, /Sign-in required/);
 	assert.match(formatted1.action, /dev mode/);
 });
 

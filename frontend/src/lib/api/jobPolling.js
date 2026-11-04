@@ -1,10 +1,3 @@
-/**
- * Job polling utility for Icomic generation jobs.
- *
- * Implements polling against GET /api/v1/generation-jobs/:id until
- * job enters a terminal state (done, failed, cancelled) or times out.
- * Supports cancellation via AbortSignal and progress notification callbacks.
- */
 
 import { JOB_STATUS } from './types.js';
 
@@ -17,18 +10,6 @@ export class JobPollingError extends Error {
 	}
 }
 
-/**
- * Poll a generation job until completion, failure, timeout, or cancellation.
- *
- * @param {import('./client.js').ApiClient|import('./mockClient.js').MockApiClient} apiClient
- * @param {string} jobId
- * @param {Object} [options={}]
- * @param {number} [options.intervalMs=1000] Polling interval in milliseconds
- * @param {number} [options.timeoutMs=60000] Maximum poll duration before timeout
- * @param {(job: any) => void} [options.onProgress] Callback fired on each poll
- * @param {AbortSignal} [options.signal] AbortSignal for client-side cancellation
- * @returns {Promise<any>} Resolves with the completed job object
- */
 export async function pollJob(apiClient, jobId, options = {}) {
 	const {
 		intervalMs = 1000,
@@ -78,7 +59,6 @@ export async function pollJob(apiClient, jobId, options = {}) {
 			);
 		}
 
-		// Wait interval before next poll
 		await new Promise((resolve, reject) => {
 			const timer = setTimeout(resolve, intervalMs);
 			if (signal) {

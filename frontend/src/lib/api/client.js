@@ -1,19 +1,6 @@
-/**
- * Icomic Go API Client.
- *
- * Implements the full HTTP API contract specified in docs/SPEC.md Section 10 and ARCHITECTURE.md.
- * Connects to the Go API backend at PUBLIC_API_URL (default: http://localhost:8080).
- *
- * Identity Handling (SPEC 8.3, ARCHITECTURE 2, 8.3):
- * - If dev mode is configured (PUBLIC_DEV_MODE=true or devUserId provided), sends X-User-ID header.
- * - If a bearer token is provided, sends Authorization: Bearer <token>.
- * - If neither is configured, NEVER sends identity headers and exposes unauthenticated state.
- */
 
 export class ApiClient {
-	/**
-	 * @param {string|{ baseUrl?: string, devMode?: boolean, devUserId?: string|null, token?: string|null }} [options]
-	 */
+
 	constructor(options = {}) {
 		if (typeof options === 'string') {
 			this.baseUrl = options.replace(/\/+$/, '');
@@ -53,38 +40,21 @@ export class ApiClient {
 		}
 	}
 
-	/**
-	 * Reports whether the client has active credentials (dev mode identity or bearer token).
-	 * @returns {boolean}
-	 */
 	isAuthenticated() {
 		return Boolean((this.devMode && this.devUserId) || this.token);
 	}
 
-	/**
-	 * Returns current authentication mode.
-	 * @returns {'bearer'|'dev'|'unauthenticated'}
-	 */
 	getAuthMode() {
 		if (this.token) return 'bearer';
 		if (this.devMode && this.devUserId) return 'dev';
 		return 'unauthenticated';
 	}
 
-	/**
-	 * Configures or toggles local dev identity mode.
-	 * @param {boolean} enabled
-	 * @param {string} [userId='00000000-0000-0000-0000-000000000001']
-	 */
 	setDevMode(enabled, userId = '00000000-0000-0000-0000-000000000001') {
 		this.devMode = Boolean(enabled);
 		this.devUserId = enabled ? (userId || this.devUserId || '00000000-0000-0000-0000-000000000001') : null;
 	}
 
-	/**
-	 * Configures bearer token authentication.
-	 * @param {string|null} token
-	 */
 	setToken(token) {
 		this.token = token || null;
 	}
@@ -96,10 +66,6 @@ export class ApiClient {
 			...(options.headers || {})
 		};
 
-		// Identity handling matching Go API auth seam (SPEC 8.3, ARCHITECTURE 2, 8.3):
-		// 1. If dev mode is explicitly configured, send X-User-ID header.
-		// 2. If bearer token is present, send Authorization: Bearer <token>.
-		// 3. Otherwise NEVER send identity headers.
 		if (this.devMode && this.devUserId && !headers['X-User-ID']) {
 			headers['X-User-ID'] = this.devUserId;
 		}
@@ -120,14 +86,13 @@ export class ApiClient {
 					errorMessage = errorJson.message || errorJson.error;
 				}
 			} catch {
-				// Not JSON, ignore
+
 			}
 			const error = new Error(errorMessage);
 			error.status = res.status;
 			throw error;
 		}
 
-		// Check for empty body or return json
 		if (res.status === 204) return null;
 		if (typeof res.json === 'function') {
 			try {
@@ -139,12 +104,10 @@ export class ApiClient {
 		return res;
 	}
 
-	// Health
 	async checkHealth() {
 		return this.request('/healthz');
 	}
 
-	// Projects
 	async createProject(project) {
 		const payload = { ...project };
 		if (payload.script && !payload.original_script) {
@@ -185,7 +148,6 @@ export class ApiClient {
 		});
 	}
 
-	// Story Generation & Analysis
 	async analyzeScript(projectId, scriptText) {
 		return this.request(`/api/v1/projects/${projectId}/analyze`, {
 			method: 'POST',
@@ -193,7 +155,6 @@ export class ApiClient {
 		});
 	}
 
-	// Characters
 	async getCharacters(projectId) {
 		const res = await this.request(`/api/v1/projects/${projectId}/characters`);
 		return res && res.characters ? res.characters : res;
@@ -220,7 +181,6 @@ export class ApiClient {
 		return res && res.character ? res.character : res;
 	}
 
-	// Chapters
 	async createChapters(projectId, data) {
 		return this.request(`/api/v1/projects/${projectId}/chapters`, {
 			method: 'POST',
@@ -248,7 +208,6 @@ export class ApiClient {
 		return res && res.chapter ? res.chapter : res;
 	}
 
-	// Panels
 	async getPanels(chapterId) {
 		const res = await this.request(`/api/v1/chapters/${chapterId}/panels`);
 		return res && res.panels ? res.panels : res;
@@ -269,7 +228,6 @@ export class ApiClient {
 		return res && res.panel ? res.panel : res;
 	}
 
-	// Pages
 	async getPages(chapterId) {
 		const res = await this.request(`/api/v1/chapters/${chapterId}/pages`);
 		return res && res.pages ? res.pages : res;
@@ -283,7 +241,6 @@ export class ApiClient {
 		return res && res.page ? res.page : res;
 	}
 
-	// Draft Stage
 	async generateDraft(pageId) {
 		return this.request(`/api/v1/pages/${pageId}/draft`, {
 			method: 'POST'
@@ -297,7 +254,6 @@ export class ApiClient {
 		return res && res.page ? res.page : res;
 	}
 
-	// Line Art Stage
 	async generateLineArt(pageId) {
 		return this.request(`/api/v1/pages/${pageId}/line-art`, {
 			method: 'POST'
@@ -311,7 +267,6 @@ export class ApiClient {
 		return res && res.page ? res.page : res;
 	}
 
-	// Colouring Stage
 	async getColourPalette(pageId) {
 		const res = await this.request(`/api/v1/pages/${pageId}/colour-palette`);
 		return res && res.palette ? res.palette : res;
@@ -337,7 +292,6 @@ export class ApiClient {
 		return res && res.page ? res.page : res;
 	}
 
-	// Jobs and Credits
 	async estimateCost(projectId, stage, imageCount = 1) {
 		return this.request(`/api/v1/projects/${projectId}/estimate`, {
 			method: 'POST',
@@ -363,7 +317,6 @@ export class ApiClient {
 		return res;
 	}
 
-	// Export
 	async exportProject(projectId, options = {}) {
 		return this.request(`/api/v1/projects/${projectId}/export`, {
 			method: 'POST',

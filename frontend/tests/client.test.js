@@ -67,18 +67,15 @@ test('ApiClient sends correct HTTP request for projects and operations', async (
 
 		const client = new ApiClient('http://test-server:8080');
 
-		// 1. Create project
 		await client.createProject({ title: 'Test Comic' });
 		assert.equal(requests[0].url, 'http://test-server:8080/api/v1/projects');
 		assert.equal(requests[0].options.method, 'POST');
 		assert.equal(requests[0].options.body, JSON.stringify({ title: 'Test Comic' }));
 
-		// 2. Estimate cost
 		await client.estimateCost('proj-1', 'draft_sketch', 3);
 		assert.equal(requests[1].url, 'http://test-server:8080/api/v1/projects/proj-1/estimate');
 		assert.equal(requests[1].options.method, 'POST');
 
-		// 3. Draft generation and approval
 		await client.generateDraft('page-1');
 		assert.equal(requests[2].url, 'http://test-server:8080/api/v1/pages/page-1/draft');
 		assert.equal(requests[2].options.method, 'POST');
@@ -87,21 +84,18 @@ test('ApiClient sends correct HTTP request for projects and operations', async (
 		assert.equal(requests[3].url, 'http://test-server:8080/api/v1/pages/page-1/draft/approve');
 		assert.equal(requests[3].options.method, 'POST');
 
-		// 4. Colour palette and approval
 		await client.suggestColourPalette('page-1');
 		assert.equal(requests[4].url, 'http://test-server:8080/api/v1/pages/page-1/colour-palette/suggest');
 
 		await client.approveColour('page-1');
 		assert.equal(requests[5].url, 'http://test-server:8080/api/v1/pages/page-1/colour/approve');
 
-		// 5. Job inspection and cancel
 		await client.getJob('job-999');
 		assert.equal(requests[6].url, 'http://test-server:8080/api/v1/generation-jobs/job-999');
 
 		await client.cancelJob('job-999');
 		assert.equal(requests[7].url, 'http://test-server:8080/api/v1/generation-jobs/job-999/cancel');
 
-		// 6. Export
 		await client.exportProject('proj-1', { format: 'pdf', page_size: 'a4' });
 		assert.equal(requests[8].url, 'http://test-server:8080/api/v1/projects/proj-1/export');
 
@@ -126,7 +120,6 @@ test('ApiClient identity handling matches Go API authenticator contract', async 
 			};
 		};
 
-		// 1. Unauthenticated client (devMode: false, token: null) -> NEVER sends identity headers
 		const unauthClient = new ApiClient({
 			baseUrl: 'http://test-api:8080',
 			devMode: false,
@@ -141,7 +134,6 @@ test('ApiClient identity handling matches Go API authenticator contract', async 
 		assert.equal(unauthHeaders['X-User-ID'], undefined);
 		assert.equal(unauthHeaders['Authorization'], undefined);
 
-		// 2. Dev mode client -> sends X-User-ID header
 		const devClient = new ApiClient({
 			baseUrl: 'http://test-api:8080',
 			devMode: true,
@@ -155,7 +147,6 @@ test('ApiClient identity handling matches Go API authenticator contract', async 
 		assert.equal(devHeaders['X-User-ID'], '00000000-0000-0000-0000-000000000001');
 		assert.equal(devHeaders['Authorization'], undefined);
 
-		// 3. Bearer token client -> sends Authorization header
 		const bearerClient = new ApiClient({
 			baseUrl: 'http://test-api:8080',
 			token: 'test-session-token-xyz'
@@ -168,7 +159,6 @@ test('ApiClient identity handling matches Go API authenticator contract', async 
 		assert.equal(bearerHeaders['Authorization'], 'Bearer test-session-token-xyz');
 		assert.equal(bearerHeaders['X-User-ID'], undefined);
 
-		// 4. Dynamic toggling of dev mode
 		unauthClient.setDevMode(true, '00000000-0000-0000-0000-000000000002');
 		assert.equal(unauthClient.isAuthenticated(), true);
 		assert.equal(unauthClient.getAuthMode(), 'dev');
