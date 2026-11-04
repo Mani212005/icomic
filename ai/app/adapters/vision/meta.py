@@ -77,6 +77,9 @@ class MetaVisionAdapter(VisionPort):
         call_reasoning_effort = validate_reasoning_effort(
             call_reasoning_effort, source="reasoning_effort kwarg"
         )
+        call_reserve = kwargs.pop("reasoning_reserve_tokens", self._reasoning_reserve)
+        if isinstance(call_reserve, bool) or not isinstance(call_reserve, int) or call_reserve < 0:
+            raise MetaConfigurationError("reasoning_reserve_tokens must be a non-negative integer")
 
         content_parts = [
             {"type": "text", "text": prompt},
@@ -93,7 +96,7 @@ class MetaVisionAdapter(VisionPort):
             user=user,
             user_field=self.user_field,
             reasoning_effort=call_reasoning_effort,
-            reserve_tokens=self._reasoning_reserve,
+            reserve_tokens=call_reserve,
             **kwargs,
         )
 
@@ -132,6 +135,9 @@ class MetaVisionAdapter(VisionPort):
         call_reasoning_effort = validate_reasoning_effort(
             call_reasoning_effort, source="reasoning_effort kwarg"
         )
+        call_reserve = kwargs.pop("reasoning_reserve_tokens", self._reasoning_reserve)
+        if isinstance(call_reserve, bool) or not isinstance(call_reserve, int) or call_reserve < 0:
+            raise MetaConfigurationError("reasoning_reserve_tokens must be a non-negative integer")
 
         instruction = (
             "Analyze this comic panel line art and context. Suggest a cohesive, harmonious "
@@ -157,7 +163,7 @@ class MetaVisionAdapter(VisionPort):
             user=user,
             user_field=self.user_field,
             reasoning_effort=call_reasoning_effort,
-            reserve_tokens=self._reasoning_reserve,
+            reserve_tokens=call_reserve,
             **kwargs,
         )
 

@@ -54,6 +54,7 @@ from app.adapters.meta_http import (
 )
 from app.adapters.vision.meta import MetaVisionAdapter
 from app.costs import (
+    GENERATION_POLICIES,
     PRICE_PER_IMAGE_FLAT_USD,
     WORST_CASE_TEXT_INPUT_TOKENS,
     WORST_CASE_TEXT_OUTPUT_TOKENS,
@@ -439,9 +440,11 @@ class LiveCheckRunner:
                     else 0
                 )
                 output_tokens = (
-                    WORST_CASE_TEXT_OUTPUT_TOKENS + reserve_tokens
+                    WORST_CASE_TEXT_OUTPUT_TOKENS
+                    + max(GENERATION_POLICIES["check_language"].reasoning_reserve, reserve_tokens)
                     if stage == "language"
-                    else WORST_CASE_VISION_OUTPUT_TOKENS + reserve_tokens
+                    else WORST_CASE_VISION_OUTPUT_TOKENS
+                    + max(GENERATION_POLICIES["review"].reasoning_reserve, reserve_tokens)
                     if stage == "vision"
                     else 0
                 )
@@ -535,8 +538,7 @@ class LiveCheckRunner:
                 text = lang_adapter.complete(
                     model=self.lang_model,
                     messages=[Message(role="user", content="Say hi.")],
-                    max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
-                    reasoning_effort="minimal",
+                    **GENERATION_POLICIES["check_language"].options(reserve_tokens),
                 )
         except Exception as exc:  # noqa: BLE001 - isolate stage failures, including parser bugs
             record_failure("language", self.lang_model, exc, worst_case, sent, lang_adapter)
@@ -572,8 +574,7 @@ class LiveCheckRunner:
                     model=self.vis_model,
                     image_bytes=generate_tiny_png(),
                     prompt="Describe briefly.",
-                    max_tokens=WORST_CASE_VISION_OUTPUT_TOKENS,
-                    reasoning_effort="minimal",
+                    **GENERATION_POLICIES["review"].options(reserve_tokens),
                 )
         except Exception as exc:  # noqa: BLE001 - isolate stage failures, including parser bugs
             record_failure("vision", self.vis_model, exc, worst_case, sent, vis_adapter)

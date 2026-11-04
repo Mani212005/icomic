@@ -47,7 +47,7 @@ The following environment variables configure the Python AI service and backgrou
 | `META_IMAGE_MODEL` | `muse-image-1.0` (Meta only) | Optional override | Adapter default for image generation. |
 | `META_API_BASE_URL` | `https://api.meta.ai/v1` (Meta only) | Optional override | Base URL for chat completions and Responses requests. |
 | `META_REASONING_EFFORT` | `low` (Meta only) | `minimal`, `low`, `medium`, `high`, `xhigh` | Text/vision reasoning effort, validated at construction; per-call `reasoning_effort` overrides it. `none` is rejected. |
-| `META_REASONING_RESERVE_TOKENS` | `1024` (Meta only) | non-negative integer | Extra shared output headroom added to explicit text/vision `max_tokens`; validated at construction. |
+| `META_REASONING_RESERVE_TOKENS` | `1024` (Meta only) | non-negative integer | Generic adapter fallback; product stages explicitly select the answer/reserve/effort table in `docs/GENERATION_POLICY.md`. Manual checks use the larger of this value and their table reserve. |
 | `IMAGE_WORKER_CONCURRENCY` | `2` | `2` | Number of concurrent image generation worker processes. |
 
 The checked-in Compose files omit model and endpoint overrides so they use the adapter defaults defined in `ai/app/adapters/meta_http.py`. Services pass no model override unless explicitly configured at construction. Hermetic tests check Compose and env templates against those defaults and exercise service requests through mocked Meta transports. Language and vision use `/chat/completions`; image generation uses `/responses`.

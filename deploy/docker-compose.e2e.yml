@@ -1,0 +1,26 @@
+# Only the comic runner's unique -p icomic-e2e-<run-id> stack uses this overlay.
+# No fixed container names or host ports may reach the shared dev deployment.
+services:
+  postgres:
+    container_name: !reset null
+    ports: !reset []
+  redis:
+    container_name: !reset null
+    ports: !reset []
+  migration:
+    container_name: !reset null
+  ai:
+    container_name: !reset null
+    ports: !override
+      - "127.0.0.1::8000"
+  backend:
+    container_name: !reset null
+    ports: !override
+      - "127.0.0.1::8080"
+    environment:
+      ICOMIC_E2E_ISOLATED_STACK: "1"
+      ICOMIC_E2E_DAILY_IMAGES: "${ICOMIC_E2E_DAILY_IMAGES:-100}"
+      ICOMIC_E2E_MONTHLY_IMAGES: "${ICOMIC_E2E_MONTHLY_IMAGES:-1000}"
+  frontend:
+    container_name: !reset null
+    ports: !reset []

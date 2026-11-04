@@ -15,8 +15,9 @@ import (
 
 // PostgresRepository implements Repository backed by PostgreSQL.
 type PostgresRepository struct {
-	db           *sql.DB
-	transactions TransactionStarter
+	db            *sql.DB
+	transactions  TransactionStarter
+	E2EImageQuota *domain.ImageQuotaLimits
 }
 
 func NewPostgresRepository(connStr string) (*PostgresRepository, error) {

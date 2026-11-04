@@ -252,6 +252,16 @@ class ProviderCostLedger:
                         "output_tokens": outputs,
                         "cached_input_tokens": cached,
                     }
+                    details = usage.get("completion_tokens_details") or {}
+                    reasoning = (
+                        details.get("reasoning_tokens") if isinstance(details, dict) else None
+                    )
+                    if (
+                        isinstance(reasoning, int)
+                        and not isinstance(reasoning, bool)
+                        and 0 <= reasoning <= outputs
+                    ):
+                        call["usage"]["reasoning_tokens"] = reasoning
                     call["actual_cost_usd"] = float(
                         (
                             Decimal(inputs - cached) * Decimal(str(PRICE_INPUT_TOKEN_PER_M))

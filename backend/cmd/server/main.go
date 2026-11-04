@@ -12,10 +12,15 @@ import (
 	"icomic/backend/internal/auth"
 	"icomic/backend/internal/credits"
 	"icomic/backend/internal/db"
+	"icomic/backend/internal/domain"
 	"icomic/backend/internal/jobs"
 )
 
 func main() {
+	imageLimits, err := domain.E2EImageQuota(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -32,6 +37,7 @@ func main() {
 			log.Fatalf("Failed to initialize PostgreSQL repository: %v", err)
 		}
 		defer pgRepo.Close()
+		pgRepo.E2EImageQuota = imageLimits
 		repo = pgRepo
 		creditSvc = credits.NewPersistentCreditService(pgRepo)
 		jobSvc = jobs.NewPersistentJobService(pgRepo)
@@ -76,6 +82,11 @@ func main() {
 		imageHosting,
 		maxPanelsPerPage,
 	)
+	if imageLimits != nil {
+		server.DefaultUserQuota = float64(imageLimits.Daily)
+		server.MonthlyUserQuota = float64(imageLimits.Monthly)
+		log.Printf("Isolated E2E image limits: daily=%d monthly=%d; persisted policy and counters unchanged", imageLimits.Daily, imageLimits.Monthly)
+	}
 	if os.Getenv("KILL_SWITCH") == "true" || os.Getenv("KILL_SWITCH") == "1" {
 		server.KillSwitchEnabled = true
 	}

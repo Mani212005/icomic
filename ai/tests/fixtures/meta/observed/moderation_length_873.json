@@ -1,0 +1,33 @@
+{
+  "status": 200,
+  "body": {
+    "id": "chatcmpl-observed-moderation-length",
+    "choices": [
+      {
+        "finish_reason": "length",
+        "index": 0,
+        "message": {
+          "content": "Synthetic safety evaluation for a neutral fictional scene. No private prompt or original response text is retained. Synthetic safety evaluation for a neutral fictional scene. No private prompt or original response text is retained. Synthetic safety evaluation for a neutral fictional scene. No private prompt or original response text is retained. Synthetic safety evaluation for a neutral fictional scene. No private prompt or original response text is retained. Synthetic safety evaluation for a neutral fictional scene. No private prompt or original response text is retained. Synthetic safety evaluation for a neutral fictional scene. No private prompt or original response text is retained. Synthetic safety evaluation for a neutral fictional scene. No private prompt or original response tex",
+          "refusal": null,
+          "role": "assistant"
+        },
+        "logprobs": null
+      }
+    ],
+    "created": 1793817345,
+    "model": "muse-spark-1.3",
+    "service_tier": "default",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 1056,
+      "prompt_tokens": 34,
+      "total_tokens": 1090,
+      "completion_tokens_details": {
+        "reasoning_tokens": 873
+      },
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    }
+  }
+}

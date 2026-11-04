@@ -142,7 +142,7 @@ The profile must contain:
 - Personality
 - Important visual features
 
-The system must generate a character reference image for each character using the image adapter.
+The system must generate a character reference image for each main character using the image adapter. Automatic analysis selects at most six main characters by source-name mention frequency, with extraction order breaking ties. Other extracted profiles remain as extras in the story and require profile approval; their reference images are optional until explicitly needed. No extracted profile is discarded. See `docs/GENERATION_POLICY.md` for the default policy and its limitations.
 
 The user must be able to approve or regenerate the reference image.
 

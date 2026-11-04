@@ -27,6 +27,8 @@ from manual.meta_live_check import (
     validate_budget,
 )
 
+from app.costs import GENERATION_POLICIES
+
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "meta"
 MOCK_BASE_URL = "http://mock.meta.internal/v1"
 TEST_SECRET_KEY = "super-secret-test-key-val-789"
@@ -551,12 +553,24 @@ def test_wire_caps_and_budget_estimates_include_reserve(tmp_path, monkeypatch, r
     success, _ = runner.run()
     assert success is True
     assert captured["language"]["messages"] == [{"role": "user", "content": "Say hi."}]
-    assert captured["language"]["max_tokens"] == 32 + reserve
-    assert captured["vision"]["max_tokens"] == 64 + reserve
+    assert captured["language"]["max_tokens"] == GENERATION_POLICIES[
+        "check_language"
+    ].answer_tokens + max(GENERATION_POLICIES["check_language"].reasoning_reserve, reserve)
+    assert captured["vision"]["max_tokens"] == GENERATION_POLICIES["review"].answer_tokens + max(
+        GENERATION_POLICIES["review"].reasoning_reserve, reserve
+    )
     assert captured["language"]["reasoning_effort"] == "minimal"
     assert captured["vision"]["reasoning_effort"] == "minimal"
-    assert estimate_call_worst_case("language", reserve) == calculate_token_cost(60, 32 + reserve)
-    assert estimate_call_worst_case("vision", reserve) == calculate_token_cost(350, 64 + reserve)
+    assert estimate_call_worst_case("language", reserve) == calculate_token_cost(
+        60,
+        GENERATION_POLICIES["check_language"].answer_tokens
+        + max(GENERATION_POLICIES["check_language"].reasoning_reserve, reserve),
+    )
+    assert estimate_call_worst_case("vision", reserve) == calculate_token_cost(
+        350,
+        GENERATION_POLICIES["review"].answer_tokens
+        + max(GENERATION_POLICIES["review"].reasoning_reserve, reserve),
+    )
     assert calculate_checklist_worst_case(reserve) < 0.05
 
 
@@ -595,7 +609,7 @@ def test_failed_call_reserve_is_charged_before_next_budget_check(tmp_path):
     runner = LiveCheckRunner(
         api_key=TEST_SECRET_KEY,
         base_url=MOCK_BASE_URL,
-        budget_usd=0.006,
+        budget_usd=estimate_call_worst_case("language") + estimate_call_worst_case("vision") / 2,
         ledger=SpendLedger(tmp_path / "spend.jsonl"),
         diagnostics_path=tmp_path / "diag.json",
         transport=httpx.MockTransport(handler),

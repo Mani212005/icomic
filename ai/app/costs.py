@@ -1,5 +1,8 @@
 """Shared Meta pricing, conservative estimates, and observed usage costs."""
 
+from dataclasses import dataclass
+from types import MappingProxyType
+
 DEFAULT_REASONING_RESERVE_TOKENS = 1024
 
 PRICE_INPUT_TOKEN_PER_M = 1.25
@@ -8,13 +11,53 @@ PRICE_OUTPUT_TOKEN_PER_M = 4.25
 PRICE_PER_IMAGE_FLAT_USD = 0.01
 
 WORST_CASE_TEXT_INPUT_TOKENS = 60
-WORST_CASE_TEXT_OUTPUT_TOKENS = 32
-
-# Structured story responses use their own bound; the manual smoke checklist stays tiny.
 STORY_INPUT_TOKEN_LIMIT = 16384
-STORY_OUTPUT_TOKEN_LIMIT = 4096
 WORST_CASE_VISION_INPUT_TOKENS = 350
-WORST_CASE_VISION_OUTPUT_TOKENS = 64
+
+
+@dataclass(frozen=True)
+class GenerationPolicy:
+    answer_tokens: int
+    reasoning_reserve: int
+    effort: str
+    observed_completion: int
+    reasoning_bound: int
+    input_bound: int
+
+    def options(self, reserve_floor: int = 0) -> dict:
+        return {
+            "max_tokens": self.answer_tokens,
+            "reasoning_reserve_tokens": max(self.reasoning_reserve, reserve_floor),
+            "reasoning_effort": self.effort,
+        }
+
+
+# Evidence: data/icomic-night-d-live-run/live-attempt-3-provider-costs.json and
+# data/icomic-live-long/provider-costs-{30e951...,040cd4...}.json. Successful
+# historical ledgers did not retain reasoning separately, so their maximum FULL
+# completion counts are conservative reasoning upper bounds, not measurements.
+# The failed moderation diagnostic response-2012b255... records 873 reasoning
+# tokens, 1056 completion tokens and 797 visible characters exactly. See
+# docs/GENERATION_POLICY.md for full paths, margins and the replay distinction.
+GENERATION_POLICIES = MappingProxyType(
+    {
+        "moderation": GenerationPolicy(256, 2048, "minimal", 1056, 873, STORY_INPUT_TOKEN_LIMIT),
+        "analysis": GenerationPolicy(4096, 2560, "low", 1995, 1995, STORY_INPUT_TOKEN_LIMIT),
+        "outline": GenerationPolicy(4096, 1280, "low", 762, 762, STORY_INPUT_TOKEN_LIMIT),
+        "panels": GenerationPolicy(4096, 1536, "low", 1056, 1056, STORY_INPUT_TOKEN_LIMIT),
+        "palette": GenerationPolicy(512, 1280, "low", 809, 809, STORY_INPUT_TOKEN_LIMIT),
+        "check_language": GenerationPolicy(
+            256, 2048, "minimal", 64, 62, WORST_CASE_TEXT_INPUT_TOKENS
+        ),
+        # No separately retained live review reasoning; use the vision completion bound.
+        "review": GenerationPolicy(256, 1280, "minimal", 809, 809, WORST_CASE_VISION_INPUT_TOKENS),
+    }
+)
+
+# Compatibility aliases derive from the same table, never independent wire caps.
+STORY_OUTPUT_TOKEN_LIMIT = GENERATION_POLICIES["analysis"].answer_tokens
+WORST_CASE_TEXT_OUTPUT_TOKENS = GENERATION_POLICIES["check_language"].answer_tokens
+WORST_CASE_VISION_OUTPUT_TOKENS = GENERATION_POLICIES["review"].answer_tokens
 
 
 def calculate_token_cost(
@@ -30,13 +73,11 @@ def calculate_token_cost(
 def estimate_call_worst_case(
     stage: str, reserve_tokens: int = DEFAULT_REASONING_RESERVE_TOKENS
 ) -> float:
-    if stage == "language":
+    stage = {"language": "check_language", "vision": "review"}.get(stage, stage)
+    if stage in GENERATION_POLICIES:
+        policy = GENERATION_POLICIES[stage]
         return calculate_token_cost(
-            WORST_CASE_TEXT_INPUT_TOKENS, WORST_CASE_TEXT_OUTPUT_TOKENS + reserve_tokens
-        )
-    if stage == "vision":
-        return calculate_token_cost(
-            WORST_CASE_VISION_INPUT_TOKENS, WORST_CASE_VISION_OUTPUT_TOKENS + reserve_tokens
+            policy.input_bound, policy.answer_tokens + max(policy.reasoning_reserve, reserve_tokens)
         )
     if stage == "image":
         return PRICE_PER_IMAGE_FLAT_USD

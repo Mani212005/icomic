@@ -575,6 +575,9 @@
 									<button class="edit-icon-btn" on:click={() => startEditChar(char)}><Icon name="edit" size={18} /> Edit</button>
 								</div>
 								<p><strong>Bio:</strong> {char.description}</p>
+								{#if char.visual_attributes?.reference_role === 'extra'}
+									<p>Extra - reference image optional. Approve the profile to continue.</p>
+								{/if}
 								<p><strong>Look:</strong> {char.visual_attributes?.appearance || char.appearance || 'Standard'}</p>
 								<p><strong>Clothes:</strong> {char.visual_attributes?.clothing || char.clothing || 'Standard'}</p>
 							</div>
@@ -596,7 +599,7 @@
 								<span class="status-approved"><Icon name="check" size={18} /> Approved</span>
 							{:else}
 								<button class="approve-btn" on:click={() => approveCharacter(char.id)}>
-									Approve
+									{char.visual_attributes?.reference_role === 'extra' && !char.reference_image_url ? 'Approve profile' : 'Approve'}
 								</button>
 							{/if}
 						</div>

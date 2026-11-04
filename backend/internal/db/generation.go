@@ -65,6 +65,9 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 	if err := tx.QueryRowContext(ctx, `SELECT kill_switch_active, spend_threshold, max_daily_images, max_monthly_images FROM generation_policy WHERE singleton=TRUE FOR UPDATE`).Scan(&active, &threshold, &dailyLimit, &monthlyLimit); err != nil {
 		return nil, false, err
 	}
+	if p.E2EImageQuota != nil {
+		dailyLimit, monthlyLimit = p.E2EImageQuota.Daily, p.E2EImageQuota.Monthly
+	}
 	var userID string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1::uuid FOR UPDATE`, job.UserID).Scan(&userID); err != nil {
 		return nil, false, err

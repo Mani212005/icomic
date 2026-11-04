@@ -26,6 +26,8 @@ class FakeLanguageAdapter(LanguagePort):
                 return self.replay_adapter.complete(model, messages, **kwargs)
             finally:
                 self.last_usage = getattr(self.replay_adapter, "last_usage", None)
+        if messages and messages[0].content.startswith("Evaluate prompt for safety"):
+            return "SAFE"
         try:
             payload = json.loads(messages[-1].content)
         except (ValueError, IndexError):

@@ -1,7 +1,7 @@
 """Colour palette suggestion service."""
 
 from ..adapters.vision.port import VisionPort
-from ..costs import WORST_CASE_VISION_OUTPUT_TOKENS
+from ..costs import GENERATION_POLICIES
 from ..gen.models import ColourRegionSuggestion
 
 
@@ -20,7 +20,7 @@ class ColourService:
             model=self.model_id,
             image_bytes=line_art_image_bytes,
             panel_context=panel_context,
-            max_tokens=WORST_CASE_VISION_OUTPUT_TOKENS,
+            **GENERATION_POLICIES["palette"].options(),
         )
 
         regions = [

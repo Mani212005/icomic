@@ -23,6 +23,19 @@ DEFAULTS = {
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+class ComposeLoader(yaml.SafeLoader):
+    pass
+
+
+ComposeLoader.add_constructor(
+    "!reset",
+    lambda loader, node: (
+        loader.construct_sequence(node) if isinstance(node, yaml.SequenceNode) else None
+    ),
+)
+ComposeLoader.add_constructor("!override", lambda loader, node: loader.construct_sequence(node))
+
+
 def assert_default(name, value):
     """Allow omission, adapter fallback, or the matching documented default."""
     if value is None or value == "":
@@ -56,7 +69,7 @@ def test_deployment_model_and_endpoint_defaults():
     for path, compose in paths:
         text = path.read_text()
         if compose:
-            services = yaml.safe_load(text).get("services", {})
+            services = yaml.load(text, Loader=ComposeLoader).get("services", {})
             for service in services.values():
                 environment = service.get("environment", {})
                 if isinstance(environment, list):

@@ -4,8 +4,10 @@
 Usage: make e2e-comic [E2E_ARGS="--live --cost-cap-usd 2"]
 The default adapter configuration is fake. Live use requires --live, ICOMIC_E2E_LIVE=1,
 and an explicit --cost-cap-usd (at most 2); all adapter selection still comes from ADAPTER_* environment.
-Every run provisions its own user and credit ledger entry in the Compose PostgreSQL
-database. It never reuses or resets the shared development account or its quota.
+Each managed run starts a unique isolated Compose stack and provisions its own
+PostgreSQL user. E2E image limits default to 100/day and 1000/month in that stack
+only; --skip-services leaves external service policy unchanged. No existing
+user's quota counters or persisted policy rows are changed.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT_DIR = Path("/home/mani/icomic-artifacts/comic-e2e")
 CAP_USD = 2.0
 RUN_USER_ID: str | None = None
+COMPOSE_PROJECT: str | None = None
 API_URL = os.environ.get("ICOMIC_E2E_API_URL", "http://127.0.0.1:8080").rstrip("/")
 STORAGE_URL = os.environ.get("ICOMIC_E2E_STORAGE_URL", "http://127.0.0.1:8000").rstrip("/")
 
@@ -41,10 +44,7 @@ from app.services.pacing import chapter_count, panel_count, split_text
 sys.path.insert(0, str(REPO_ROOT / "scripts/e2e"))
 from app.costs import (
     DEFAULT_REASONING_RESERVE_TOKENS,
-    STORY_INPUT_TOKEN_LIMIT,
-    STORY_OUTPUT_TOKEN_LIMIT,
     calculate_checklist_worst_case,
-    calculate_token_cost,
     estimate_call_worst_case,
 )
 
@@ -107,9 +107,7 @@ class CostGuard:
         estimate = 0.0
         if self.live:
             per_call = (
-                calculate_token_cost(
-                    STORY_INPUT_TOKEN_LIMIT, STORY_OUTPUT_TOKEN_LIMIT + self.reserve_tokens
-                )
+                estimate_call_worst_case("analysis", self.reserve_tokens)
                 if stage == "language"
                 else estimate_call_worst_case(stage, self.reserve_tokens)
             )
@@ -163,7 +161,11 @@ class CostGuard:
             )
             return
         amount = max(0.0, usage_cost)
-        if self.live and stage in {"language", "vision", "image"} and amount <= 0:
+        if (
+            self.live
+            and stage in {"language", "vision", "analysis", "outline", "panels", "palette", "image"}
+            and amount <= 0
+        ):
             raise E2EError(f"live {stage} call returned no billable usage record; aborting")
         self.actual += amount
         self.check_alert()
@@ -277,12 +279,18 @@ def wait_for_api(timeout: float = 180.0) -> None:
     raise E2EError("Go API did not become healthy within 180 seconds")
 
 
+def compose_command() -> list[str]:
+    command = ["docker", "compose", "-f", "deploy/docker-compose.yml"]
+    if COMPOSE_PROJECT is not None:
+        command += ["-f", "deploy/docker-compose.e2e.yml", "-p", COMPOSE_PROJECT]
+    return command
+
+
 def ensure_services() -> None:
-    command = [
-        "docker",
-        "compose",
-        "-f",
-        "deploy/docker-compose.yml",
+    global API_URL, STORAGE_URL
+    if COMPOSE_PROJECT is None:
+        raise E2EError("managed services require a unique isolated E2E project")
+    command = compose_command() + [
         "up",
         "-d",
         "--build",
@@ -292,6 +300,21 @@ def ensure_services() -> None:
         "backend",
     ]
     subprocess.run(command, cwd=REPO_ROOT, check=True)
+    addresses = []
+    for service, port in (("backend", "8080"), ("ai", "8000")):
+        output = subprocess.run(
+            compose_command() + ["port", service, port],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        host, _, published = output.rpartition(":")
+        if host != "127.0.0.1" or not published.isdigit():
+            raise E2EError("isolated E2E service did not publish a loopback port")
+        addresses.append("http://" + output)
+    API_URL, STORAGE_URL = addresses
+    print(f"Isolated E2E endpoints: API={API_URL} storage={STORAGE_URL}", flush=True)
     wait_for_api()
 
 
@@ -317,11 +340,7 @@ def verify_pdf(pdf: bytes, expected_comic_pages: int) -> int:
 def provision_run_user() -> str:
     """Create an isolated fixture without changing existing users or quota policy."""
     user_id = str(uuid.uuid4())
-    command = [
-        "docker",
-        "compose",
-        "-f",
-        "deploy/docker-compose.yml",
+    command = compose_command() + [
         "exec",
         "-T",
         "postgres",
@@ -392,7 +411,7 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
 
     analysis = checked_call(
         guard,
-        "language",
+        "analysis",
         math.ceil(len(script.split()) / 500),
         "POST",
         f"/api/v1/projects/{project_id}/analyze",
@@ -407,15 +426,21 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
         raise E2EError("character list does not match script analysis")
     for character in character_list:
         cid = require(character, "id", "generated character has no id")
-        checked_call(guard, "image", 1, "POST", f"/api/v1/characters/{cid}/reference-image")
+        if character.get("visual_attributes", {}).get("reference_role") != "extra":
+            checked_call(guard, "image", 1, "POST", f"/api/v1/characters/{cid}/reference-image")
         json_request(f"/api/v1/characters/{cid}/approve", "POST")
-    print(f"PASS character references generated and approved: {len(character_list)}")
+    main_count = sum(
+        c.get("visual_attributes", {}).get("reference_role") != "extra" for c in character_list
+    )
+    print(
+        f"PASS character references generated and approved: {main_count}; all {len(character_list)} profiles approved"
+    )
 
     outline_calls = sum(
         max(1, math.ceil(len(part.split()) / 500)) for part in split_text(script, expected_chapters)
     )
     outline = checked_call(
-        guard, "language", outline_calls, "POST", f"/api/v1/projects/{project_id}/chapters"
+        guard, "outline", outline_calls, "POST", f"/api/v1/projects/{project_id}/chapters"
     )
     chapters = outline.get("chapters", [])
     if not chapters:
@@ -435,7 +460,7 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
         chapter_pages = math.ceil(chapter_panels / 5)
         expected_pages += chapter_pages
         panel_response = checked_call(
-            guard, "language", chapter_pages, "POST", f"/api/v1/chapters/{chapter['id']}/panels"
+            guard, "panels", chapter_pages, "POST", f"/api/v1/chapters/{chapter['id']}/panels"
         )
         generated_panels = panel_response.get("panels", [])
         generated_pages = panel_response.get("pages", [])
@@ -473,7 +498,7 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
         json_request(f"/api/v1/pages/{page_id}/line-art/approve", "POST")
         palette_result = checked_call(
             guard,
-            "vision",
+            "palette",
             1,
             "POST",
             f"/api/v1/pages/{page_id}/colour-palette/suggest",
@@ -560,8 +585,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    global RUN_USER_ID
+    global RUN_USER_ID, COMPOSE_PROJECT
     RUN_USER_ID = None
+    COMPOSE_PROJECT = None
     args = parse_args(argv)
     if args.live:
         error = live_authorization_error(args.live, dict(os.environ), args.cost_cap_usd)
@@ -637,9 +663,33 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
     run_id = uuid.uuid4().hex
+    quota_policy = {"scope": "external_services", "limits": "unchanged"}
+    if not args.skip_services:
+        try:
+            daily = int(os.environ.get("ICOMIC_E2E_DAILY_IMAGES", "100"))
+            monthly = int(os.environ.get("ICOMIC_E2E_MONTHLY_IMAGES", "1000"))
+        except ValueError:
+            print("REFUSED: E2E image limits must be integers", file=sys.stderr)
+            return 2
+        if daily <= 0 or monthly < daily:
+            print("REFUSED: E2E limits require daily > 0 and monthly >= daily", file=sys.stderr)
+            return 2
+        COMPOSE_PROJECT = f"icomic-e2e-{run_id}"
+        quota_policy = {
+            "scope": "isolated_e2e_stack",
+            "daily_image_limit": daily,
+            "monthly_image_limit": monthly,
+            "compose_project": COMPOSE_PROJECT,
+        }
+        print(
+            f"E2E quota configuration: daily={daily} monthly={monthly} project={COMPOSE_PROJECT}; persisted policy and existing counters unchanged",
+            flush=True,
+        )
     args.artifact_dir = args.artifact_dir.resolve()
     if args.artifact_dir == REPO_ROOT:
-        print("REFUSED: use a dedicated artifact directory, not the repository root", file=sys.stderr)
+        print(
+            "REFUSED: use a dedicated artifact directory, not the repository root", file=sys.stderr
+        )
         return 2
     args.artifact_dir.mkdir(parents=True, exist_ok=True)
     if args.artifact_dir.is_relative_to(REPO_ROOT):
@@ -693,6 +743,9 @@ def main(argv: list[str] | None = None) -> int:
             if failure is None:
                 failure = "ProviderLedgerUnavailable"
     report = {
+        "quota_policy": quota_policy,
+        "api_url": API_URL,
+        "storage_url": STORAGE_URL,
         "user_id": guard.user_id,
         "project_id": project_id or guard.project_id,
         "live": live,
