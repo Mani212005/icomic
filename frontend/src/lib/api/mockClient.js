@@ -65,7 +65,7 @@ export class MockApiClient {
 			clothing: 'Weathered grey trenchcoat, dark turtleneck',
 			personality: 'World-weary, observant, relentlessly determined',
 			reference_image_url:
-				'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="%23223"/><circle cx="100" cy="80" r="40" fill="%23ecb"/><circle cx="115" cy="75" r="8" fill="%230af"/></svg>',
+				'/mock/character.svg',
 			approved_at: now,
 			created_at: now,
 			updated_at: now
@@ -104,12 +104,12 @@ export class MockApiClient {
 			page_number: 1,
 			panel_ids: [panel1.id],
 			draft_image_url:
-				'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500"><rect width="400" height="500" fill="%23fafafa"/><text x="50" y="250" font-family="sans-serif" font-size="20">Draft Composition Page 1</text></svg>',
+				'/mock/draft.svg',
 			draft_approved_at: now,
 			line_art_url:
-				'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500"><rect width="400" height="500" fill="%23ffffff"/><rect x="20" y="20" width="360" height="460" fill="none" stroke="%23000000" stroke-width="4"/></svg>',
+				'/mock/line-art.svg',
 			line_art_image_url:
-				'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500"><rect width="400" height="500" fill="%23ffffff"/><rect x="20" y="20" width="360" height="460" fill="none" stroke="%23000000" stroke-width="4"/></svg>',
+				'/mock/line-art.svg',
 			line_art_approved_at: now,
 			colour_approved_at: null,
 			created_at: now,
@@ -233,7 +233,7 @@ export class MockApiClient {
 		const char = this.characters.get(id);
 		if (!char) throw new Error(`Character ${id} not found`);
 		const job = this.createJob(char.project_id, 'character_reference', 'characters');
-		char.reference_image_url = `mock://storage/ref-${char.id}.png`;
+		char.reference_image_url = '/mock/character.svg';
 
 		let now = new Date().toISOString();
 		if (char.approved_at && new Date(char.approved_at).getTime() >= new Date(now).getTime()) {
@@ -361,7 +361,7 @@ export class MockApiClient {
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		const job = this.createJob('proj-demo-1', 'draft_sketch', 'draft');
 		const now = new Date().toISOString();
-		page.draft_image_url = `mock://storage/draft-${pageId}.png`;
+		page.draft_image_url = '/mock/draft.svg';
 
 		page.draft_approved_at = null;
 		page.line_art_approved_at = null;
@@ -383,7 +383,7 @@ export class MockApiClient {
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		const job = this.createJob('proj-demo-1', 'final_line_art', 'line_art');
 		const now = new Date().toISOString();
-		page.line_art_url = `mock://storage/line-art-${pageId}.png`;
+		page.line_art_url = '/mock/line-art.svg';
 		page.line_art_image_url = page.line_art_url;
 		page.line_art_approved_at = null;
 		page.updated_at = now;
