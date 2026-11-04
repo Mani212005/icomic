@@ -875,6 +875,7 @@ class MetaHttpClient:
             "seed",
             "stop",
             "user",
+            "response_format",
         }:
             raise ProviderBudgetError("Unsupported parameters in capped input")
         inputs = []
@@ -904,9 +905,27 @@ class MetaHttpClient:
                         raise ProviderBudgetError("Unsupported media in capped input")
                 content = parts
             inputs.append({"role": message["role"], "content": content})
+        count_payload = {"model": payload["model"], "input": inputs}
+        if "response_format" in payload:
+            output_format = payload["response_format"]
+            if (
+                not isinstance(output_format, dict)
+                or set(output_format) != {"type", "json_schema"}
+                or output_format["type"] != "json_schema"
+                or not isinstance(output_format["json_schema"], dict)
+                or set(output_format["json_schema"]) - {"name", "schema", "strict", "description"}
+                or not isinstance(output_format["json_schema"].get("schema"), dict)
+                or not isinstance(output_format["json_schema"].get("name"), str)
+            ):
+                raise ProviderBudgetError("Unsupported response format in capped input")
+            # Responses uses text.format for the same schema supplied to Chat
+            # Completions. Include it in preflight so its prompt cost is counted.
+            count_payload["text"] = {
+                "format": {"type": "json_schema", **output_format["json_schema"]}
+            }
         response = self._client.post(
             f"{self.base_url}/responses/input_tokens",
-            json={"model": payload["model"], "input": inputs},
+            json=count_payload,
         )
         try:
             response.raise_for_status()

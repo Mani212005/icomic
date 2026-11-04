@@ -301,6 +301,75 @@ def test_count_request_preserves_exact_text_media_and_model_without_generation(t
     assert ledger.report()["calls"] == []
 
 
+def test_schema_is_counted_before_a_capped_structured_call():
+    output_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "characters",
+            "schema": {"type": "array", "items": {"type": "string"}},
+        },
+    }
+    captured = []
+
+    def respond(request):
+        captured.append(json.loads(request.content))
+        if request.url.path.endswith("/responses/input_tokens"):
+            return httpx.Response(200, json={"input_tokens": 200})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '["Nia"]'}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 200, "completion_tokens": 50},
+            },
+        )
+
+    ledger = ProviderCostLedger(2)
+    adapter = MetaLanguageAdapter(
+        api_key="mock-key",
+        base_url="http://mock.meta.internal/v1",
+        transport=httpx.MockTransport(respond),
+        cost_ledger=ledger,
+    )
+    result = adapter.complete(
+        "",
+        [Message(role="user", content="Nia returns home.")],
+        max_tokens=4096,
+        response_format=output_format,
+    )
+    assert result == '["Nia"]'
+    assert len(captured) == 2
+    assert captured[0]["text"]["format"] == {"type": "json_schema", **output_format["json_schema"]}
+    assert captured[1]["response_format"] == output_format
+    assert captured[0]["input"] == captured[1]["messages"]
+    assert ledger.report()["calls"][0]["input_bound"] == 200
+
+
+@pytest.mark.parametrize(
+    "output_format",
+    [
+        {"type": "json_object"},
+        {"type": "json_schema", "json_schema": {"name": "data", "schema": {}}, "other": True},
+        {"type": "json_schema", "json_schema": {"name": "data", "schema": {}, "other": True}},
+    ],
+)
+def test_unmapped_schema_fields_refuse_before_preflight(output_format):
+    calls = []
+    adapter = MetaLanguageAdapter(
+        api_key="mock-key",
+        base_url="http://mock.meta.internal/v1",
+        transport=httpx.MockTransport(lambda request: calls.append(request)),
+        cost_ledger=ProviderCostLedger(2),
+    )
+    with pytest.raises(ProviderBudgetError, match="Unsupported response format"):
+        adapter.complete(
+            "",
+            [Message(role="user", content="Story")],
+            max_tokens=4096,
+            response_format=output_format,
+        )
+    assert calls == []
+
+
 @pytest.mark.parametrize("inputs,outputs", [(101, 32), (100, 33)])
 def test_usage_exceeding_either_explicit_bound_stops_even_if_total_price_fits(inputs, outputs):
     ledger = ProviderCostLedger(2)

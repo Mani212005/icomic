@@ -37,6 +37,17 @@ adapter returns deterministic structured responses whose scene descriptions cove
 the entire source text in order. Contract models are regenerated from OpenAPI.
 No default adapter selection changes: fakes remain the default.
 
+Story calls send their Pydantic JSON schema through the provider's
+`response_format` with `type: json_schema`, as documented in the
+[Meta structured-output guide](https://dev.meta.ai/docs/structured-output).
+Characters and panels retain their array root; outlines retain their object root.
+The default non-strict schema mode supports these existing schemas. Local model
+validation still rejects invalid or incomplete output without retrying. Capped
+calls include the same schema in the token-count preflight as `text.format`, so
+schema overhead is included before reserving provider cost. Failed generation
+jobs retain observed provider costs even when output validation fails and user
+credits are refunded.
+
 ## Fixture and repeatable proof
 
 `tests/fixtures/the_tide_clock.txt` is an original 3,130-word story. Its default

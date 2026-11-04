@@ -30,6 +30,7 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
             runner = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(runner)
             monkeypatch.setattr(runner, "API_URL", f"http://127.0.0.1:{port}")
+            monkeypatch.setattr(runner, "STORAGE_URL", ai_service["base_url"])
             # This fresh in-memory server has exactly one supported dev fixture.
             # The PostgreSQL runner provisions a distinct UUID and ledger per run.
             monkeypatch.setattr(

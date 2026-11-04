@@ -57,20 +57,26 @@ func dispatchGeneration[T any](s *Server, ctx context.Context, job *domain.Gener
 	type outcome struct {
 		result *T
 		err    error
+		cost   float64
 	}
 	done := make(chan outcome, 1)
 	err := s.JobService.DispatchAsync(ctx, job.ID, func(taskCtx context.Context) (float64, error) {
 		result, err := dispatch(taskCtx)
-		cost := 0.0
-		if err == nil {
-			cost = s.aiActualCost(taskCtx, job.ID)
-		}
-		done <- outcome{result, err}
+		// Failed output validation still incurs the provider's recorded usage.
+		cost := s.aiActualCost(taskCtx, job.ID)
+		done <- outcome{result, err, cost}
 		return cost, err
 	})
 	if err != nil {
 		return nil, err
 	}
 	result := <-done
+	if result.err != nil {
+		// The in-memory dispatcher may still be returning from its task. Save
+		// usage before HTTP failure handling marks the job terminal.
+		message := result.err.Error()
+		statusErr := s.JobService.UpdateJobStatus(ctx, job.ID, "failed", &result.cost, &message)
+		return result.result, errors.Join(result.err, statusErr)
+	}
 	return result.result, result.err
 }
