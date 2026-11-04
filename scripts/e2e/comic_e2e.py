@@ -4,6 +4,8 @@
 Usage: make e2e-comic [E2E_ARGS="--live --cost-cap-usd 2"]
 The default adapter configuration is fake. Live use requires --live, ICOMIC_E2E_LIVE=1,
 and --cost-cap-usd 2; all adapter selection still comes from ADAPTER_* environment.
+Every run provisions its own user and credit ledger entry in the Compose PostgreSQL
+database. It never reuses or resets the shared development account or its quota.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from urllib.request import Request, urlopen
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT_DIR = Path("/home/mani/icomic-artifacts/comic-e2e")
 CAP_USD = 2.0
-DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
+RUN_USER_ID: str | None = None
 API_URL = os.environ.get("ICOMIC_E2E_API_URL", "http://127.0.0.1:8080").rstrip("/")
 
 AI_PATH = REPO_ROOT / "ai"
@@ -79,6 +81,7 @@ class CostGuard:
         self.provider_report: dict[str, Any] | None = None
         self.current_stage: str | None = None
         self.project_id: str | None = None
+        self.user_id: str | None = None
         self.reserve_tokens = reserve_tokens if live else 0
         self.third_check_reserve = (
             calculate_checklist_worst_case(self.reserve_tokens) if live else 0.0
@@ -152,11 +155,14 @@ def json_request(
     payload: dict[str, Any] | None = None,
 ) -> Any:
     data = json.dumps(payload).encode() if payload is not None else None
+    headers = {"Content-Type": "application/json"}
+    if RUN_USER_ID is not None:
+        headers["X-User-ID"] = RUN_USER_ID
     request = Request(
         f"{API_URL}{path}",
         data=data,
         method=method,
-        headers={"X-User-ID": DEV_USER_ID, "Content-Type": "application/json"},
+        headers=headers,
     )
     try:
         with urlopen(request, timeout=60) as response:
@@ -243,10 +249,55 @@ def verify_pdf(pdf: bytes, expected_comic_pages: int) -> None:
         )
 
 
+def provision_run_user() -> str:
+    """Create an isolated fixture without changing existing users or quota policy."""
+    user_id = str(uuid.uuid4())
+    command = [
+        "docker",
+        "compose",
+        "-f",
+        "deploy/docker-compose.yml",
+        "exec",
+        "-T",
+        "postgres",
+        "psql",
+        "-U",
+        "icomic",
+        "-d",
+        "icomic",
+        "--single-transaction",
+        "--file=-",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "--set",
+        f"e2e_user_id={user_id}",
+        "--set",
+        f"e2e_email=comic-e2e-{uuid.uuid4().hex}@example.invalid",
+        "--set",
+        f"e2e_credit_id={uuid.uuid4()}",
+    ]
+    # psql's quoted variables bind literals safely. A new user and opening credit
+    # commit together; no upsert, cleanup, quota reset or policy override occurs.
+    sql = """
+INSERT INTO users (id, email, password_hash, plan_id)
+VALUES (:'e2e_user_id'::uuid, :'e2e_email', '!', 'free');
+INSERT INTO credit_ledger
+    (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after)
+VALUES (:'e2e_credit_id'::uuid, :'e2e_user_id'::uuid, NULL, NULL, 'adjustment', 100, 100);
+"""
+    subprocess.run(command, cwd=REPO_ROOT, input=sql, text=True, capture_output=True, check=True)
+    return user_id
+
+
 def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, str]:
+    global RUN_USER_ID
+    guard.current_stage = "provision_user"
+    RUN_USER_ID = provision_run_user()
+    guard.user_id = RUN_USER_ID
+    print(f"PASS isolated run user created: {RUN_USER_ID}")
     usage = json_request("/api/v1/me/credit-usage")
     if float(usage.get("balance", 0)) < 10:
-        raise E2EError("dev account has insufficient starting credits")
+        raise E2EError("isolated run user has insufficient starting credits")
 
     script = (
         "Nia, a young lighthouse keeper, discovers a tiny brass bird during a storm. "
@@ -370,6 +421,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global RUN_USER_ID
+    RUN_USER_ID = None
     args = parse_args(argv)
     if args.live:
         error = live_authorization_error(args.live, dict(os.environ), args.cost_cap_usd)
@@ -479,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
             if failure is None:
                 failure = "ProviderLedgerUnavailable"
     report = {
+        "user_id": guard.user_id,
         "project_id": project_id or guard.project_id,
         "live": live,
         "status": "failed" if failure else "passed",

@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -114,3 +115,58 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
     assert report["provider_cost_report"]["accounted_spend_usd"] == 0.01029325
     assert report["cost_complete"] is False
     assert report["status"] == "failed" and report["pdf_path"] is None
+
+
+def test_consecutive_flows_provision_distinct_users_and_use_their_headers(monkeypatch, tmp_path):
+    commands = []
+    authenticated_users = []
+
+    def provision(command, **kwargs):
+        commands.append((command, kwargs))
+        return runner.subprocess.CompletedProcess(command, 0)
+
+    class UsageResponse:
+        def __init__(self):
+            self.headers = {"Content-Type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self):
+            return b'{"balance":100}'
+
+    def respond(request, **kwargs):
+        authenticated_users.append(request.get_header("X-user-id"))
+        if request.full_url.endswith("/credit-usage"):
+            return UsageResponse()
+        raise runner.E2EError("stop after isolated fixture")
+
+    monkeypatch.setattr(runner.subprocess, "run", provision)
+    monkeypatch.setattr(runner, "urlopen", respond)
+    users = []
+    emails = []
+    credit_ids = []
+    for _ in range(2):
+        guard = runner.CostGuard(float("inf"), False)
+        with pytest.raises(runner.E2EError, match="stop after isolated fixture"):
+            runner.run_flow(guard, tmp_path)
+        users.append(guard.user_id)
+        command, options = commands[-1]
+        assert "--single-transaction" in command
+        assert "--file=-" in command
+        assert options["check"] is True
+        assert options["capture_output"] is True
+        assert "INSERT INTO users" in options["input"]
+        assert "'free'" in options["input"] and "100, 100" in options["input"]
+        assert "UPDATE " not in options["input"] and "DELETE " not in options["input"]
+        assert "quota" not in options["input"]
+        variables = dict(item.split("=", 1) for item in command if item.startswith("e2e_"))
+        assert variables["e2e_user_id"] == guard.user_id
+        assert UUID(guard.user_id).version == 4
+        emails.append(variables["e2e_email"])
+        credit_ids.append(variables["e2e_credit_id"])
+    assert len(set(users)) == len(set(emails)) == len(set(credit_ids)) == 2
+    assert authenticated_users == [users[0], users[0], users[1], users[1]]
