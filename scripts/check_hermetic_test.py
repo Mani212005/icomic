@@ -24,9 +24,7 @@ class TestHermeticGuard(unittest.TestCase):
         )
         self.assertIsNone(live_authorization_error(True, {"ICOMIC_E2E_LIVE": "1"}, 2.0))
         self.assertIsNotNone(
-            live_authorization_error(
-                True, {"CI": "true", "ICOMIC_E2E_LIVE": "1"}, 2.0
-            )
+            live_authorization_error(True, {"CI": "true", "ICOMIC_E2E_LIVE": "1"}, 2.0)
         )
 
     def test_comic_cost_guard_refuses_call_above_remaining_cap(self):

@@ -28,12 +28,14 @@ PDF_PATH = ARTIFACT_DIR / "latest.pdf"
 CAP_USD = 2.0
 DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
 API_URL = "http://127.0.0.1:8080"
-AI_URL = "http://127.0.0.1:8000"
 
 AI_PATH = REPO_ROOT / "ai"
 sys.path.insert(0, str(AI_PATH))
-from app.adapters.meta_http import load_reasoning_config
-from app.costs import calculate_checklist_worst_case, estimate_call_worst_case
+from app.costs import (
+    DEFAULT_REASONING_RESERVE_TOKENS,
+    calculate_checklist_worst_case,
+    estimate_call_worst_case,
+)
 
 
 class E2EError(RuntimeError):
@@ -59,12 +61,17 @@ def live_authorization_error(
 class CostGuard:
     """Reserve the third planned live check and reject before over-budget calls."""
 
-    def __init__(self, cap: float, live: bool):
+    def __init__(
+        self,
+        cap: float,
+        live: bool,
+        reserve_tokens: int = DEFAULT_REASONING_RESERVE_TOKENS,
+    ):
         self.cap = cap
         self.live = live
         self.actual = 0.0
         self.stages: list[dict[str, Any]] = []
-        self.reserve_tokens = load_reasoning_config()[1] if live else 0
+        self.reserve_tokens = reserve_tokens if live else 0
         self.third_check_reserve = (
             calculate_checklist_worst_case(self.reserve_tokens) if live else 0.0
         )
@@ -110,11 +117,10 @@ def json_request(
     path: str,
     method: str = "GET",
     payload: dict[str, Any] | None = None,
-    base_url: str = API_URL,
 ) -> Any:
     data = json.dumps(payload).encode() if payload is not None else None
     request = Request(
-        f"{base_url}{path}",
+        f"{API_URL}{path}",
         data=data,
         method=method,
         headers={"X-User-ID": DEV_USER_ID, "Content-Type": "application/json"},
@@ -150,11 +156,9 @@ def checked_call(
         )
     actual = 0.0
     if job_id:
-        job = json_request(f"/internal/v1/job/{job_id}/status", base_url=AI_URL)
+        job = json_request(f"/api/v1/generation-jobs/{job_id}").get("job", {})
         if job.get("status") != "done":
-            raise E2EError(
-                f"{stage} AI usage record did not complete: {job.get('status')}"
-            )
+            raise E2EError(f"{stage} usage record did not complete: {job.get('status')}")
         actual = float(job.get("actual_cost") or 0.0)
     guard.record(stage, job_id, actual, estimate)
     return result
@@ -364,9 +368,30 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     live = bool(args.live)
+    reserve_tokens = 0
+    if live:
+        try:
+            reserve_tokens = int(
+                os.environ.get(
+                    "META_REASONING_RESERVE_TOKENS",
+                    str(DEFAULT_REASONING_RESERVE_TOKENS),
+                )
+            )
+        except ValueError:
+            print(
+                "REFUSED: META_REASONING_RESERVE_TOKENS must be a non-negative integer",
+                file=sys.stderr,
+            )
+            return 2
+        if reserve_tokens < 0:
+            print(
+                "REFUSED: META_REASONING_RESERVE_TOKENS must be a non-negative integer",
+                file=sys.stderr,
+            )
+            return 2
     if not args.skip_services:
         ensure_services()
-    guard = CostGuard(CAP_USD if live else float("inf"), live)
+    guard = CostGuard(CAP_USD if live else float("inf"), live, reserve_tokens)
     try:
         page_count, project_id = run_flow(guard)
     except (E2EError, subprocess.CalledProcessError) as exc:

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +36,14 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, JSONResponse{Error: message})
+}
+
+func (s *Server) aiActualCost(ctx context.Context, jobID string) float64 {
+	status, err := s.AIClient.GetJobStatus(ctx, jobID)
+	if err != nil || status == nil || status.Status != "done" || status.ActualCost == nil {
+		return 0
+	}
+	return *status.ActualCost
 }
 
 func (s *Server) getUserID(r *http.Request) string {
@@ -548,7 +557,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 
 	imgURL := s.ImageHosting.ResolveURL(refResp.ImageURL)
 	now := time.Now().UTC()
-	actualCost := credits.ImageUnitPrice
+	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	ch.ReferenceImageURL = imgURL
@@ -700,7 +709,7 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 		_ = s.Repo.UpdateProject(r.Context(), proj)
 	}
 
-	actualCost := 0.0
+	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
@@ -822,7 +831,7 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 		createdChapters = append(createdChapters, chap)
 	}
 
-	actualCost := 0.0
+	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"chapters": createdChapters, "job_id": job.ID})
@@ -1043,7 +1052,7 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		pageNum++
 	}
 
-	actualCost := 0.0
+	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1337,7 +1346,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 
 	imgURL := s.ImageHosting.ResolveURL(draftResp.ImageURL)
 	now := time.Now().UTC()
-	actualCost := credits.ImageUnitPrice
+	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	pg.DraftImageURL = imgURL
@@ -1524,7 +1533,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 
 	imgURL := s.ImageHosting.ResolveURL(lineArtResp.ImageURL)
 	now := time.Now().UTC()
-	actualCost := credits.ImageUnitPrice
+	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	pg.LineArtImageURL = imgURL
@@ -1702,7 +1711,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		Palette:         palette,
 	})
 
-	actualCost := credits.ColourSuggestionUnitPrice
+	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
@@ -1925,7 +1934,7 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actualCost := 0.0
+	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{"export": exp, "job_id": job.ID})

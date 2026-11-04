@@ -1,6 +1,6 @@
 """Shared Meta pricing, conservative estimates, and observed usage costs."""
 
-from .adapters.meta_http import DEFAULT_REASONING_RESERVE_TOKENS
+DEFAULT_REASONING_RESERVE_TOKENS = 1024
 
 PRICE_INPUT_TOKEN_PER_M = 1.25
 PRICE_OUTPUT_TOKEN_PER_M = 4.25
