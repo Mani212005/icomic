@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from typing import Any, Literal
-from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -35,9 +34,9 @@ class CharacterProfile(BaseModel):
 
 
 class AnalyzeScriptRequest(BaseModel):
-    job_id: UUID
+    job_id: str
     hashed_user_id: str
-    project_id: UUID
+    project_id: str
     script: str
     target_chapter_count: int | None = Field(None, ge=1)
 
@@ -51,10 +50,10 @@ class AnalyzeScriptResponse(BaseModel):
 
 
 class GenerateCharacterReferenceRequest(BaseModel):
-    job_id: UUID
+    job_id: str
     hashed_user_id: str
-    project_id: UUID
-    character_id: UUID
+    project_id: str
+    character_id: str
     character_name: str
     prompt: str
     reference_images: list[str] = []
@@ -78,9 +77,9 @@ class ChapterOutlineItem(BaseModel):
 
 
 class GenerateChapterOutlineRequest(BaseModel):
-    job_id: UUID
+    job_id: str
     hashed_user_id: str
-    project_id: UUID
+    project_id: str
     script: str
     chapter_count: int = Field(..., ge=1)
     approved_characters: list[CharacterProfile]
@@ -103,10 +102,10 @@ class PanelTextItem(BaseModel):
 
 
 class GeneratePanelTextRequest(BaseModel):
-    job_id: UUID
+    job_id: str
     hashed_user_id: str
-    project_id: UUID
-    chapter_id: UUID
+    project_id: str
+    chapter_id: str
     chapter_number: int
     chapter_title: str
     chapter_summary: str
@@ -119,10 +118,10 @@ class GeneratePanelTextResponse(BaseModel):
 
 
 class GenerateDraftSketchRequest(BaseModel):
-    job_id: UUID
+    job_id: str
     hashed_user_id: str
-    project_id: UUID
-    page_id: UUID
+    project_id: str
+    page_id: str
     page_number: int
     panels: list[PanelTextItem]
     style: str
@@ -137,10 +136,10 @@ class GenerateDraftSketchResponse(BaseModel):
 
 
 class GenerateLineArtRequest(BaseModel):
-    job_id: UUID
+    job_id: str
     hashed_user_id: str
-    project_id: UUID
-    page_id: UUID
+    project_id: str
+    page_id: str
     page_number: int
     draft_image_url: str
     panels: list[PanelTextItem]
@@ -162,10 +161,10 @@ class ColourRegionSuggestion(BaseModel):
 
 
 class SuggestColourPaletteRequest(BaseModel):
-    job_id: UUID
+    job_id: str
     hashed_user_id: str
-    project_id: UUID
-    page_id: UUID
+    project_id: str
+    page_id: str
     line_art_image_url: str
     panel_context: str
 
@@ -177,7 +176,7 @@ class SuggestColourPaletteResponse(BaseModel):
 
 
 class ModeratePromptRequest(BaseModel):
-    job_id: UUID
+    job_id: str
     hashed_user_id: str
     prompt: str
 
@@ -198,9 +197,9 @@ class PageExportItem(BaseModel):
 
 
 class AssemblePdfRequest(BaseModel):
-    job_id: UUID
+    job_id: str
     hashed_user_id: str
-    project_id: UUID
+    project_id: str
     title: str
     page_size: Literal["A4", "US_Letter", "Custom_Comic"] = "A4"
     include_ai_disclosure: bool = True

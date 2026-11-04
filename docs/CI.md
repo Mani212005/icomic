@@ -36,7 +36,7 @@ Developers can run all CI checks locally using `make` or the underlying native t
 
 ### OpenAPI Contract Models
 
-The Go and Python service models are generated from `contracts/openapi/ai-service.yaml`. Generator options live in `backend/oapi-codegen.yaml`; generator and formatter versions are pinned in the Makefile. Install the pinned tools, regenerate after changing the contract, and check the checked-in output with:
+The Go and Python service models are generated from `contracts/openapi/ai-service.yaml`. Go generator options live in `backend/oapi-codegen.yaml`; Python generation options and pinned tool versions live in the Makefile, with Python field overrides in `ai/datamodel-codegen-overrides.json`. Request UUID fields stay Python strings to preserve the existing model API while keeping the OpenAPI wire shape unchanged. Install the pinned tools, regenerate after changing the contract, and check the checked-in output with:
 
 ```bash
 make install-contract-codegen

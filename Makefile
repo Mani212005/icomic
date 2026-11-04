@@ -24,12 +24,12 @@ install-contract-codegen:
 
 generate-contract-models:
 	$(OAPI_CODEGEN) -config backend/oapi-codegen.yaml -o backend/gen/types.go $(OPENAPI_SPEC)
-	datamodel-codegen $(DATAMODEL_CODEGEN_ARGS) --output ai/app/gen/models.py
+	datamodel-codegen $(DATAMODEL_CODEGEN_ARGS) --type-overrides "$$(cat ai/datamodel-codegen-overrides.json)" --output ai/app/gen/models.py
 
 check-contract-models:
 	@tmp=$$(mktemp -d ai/.contract-codegen.XXXXXX); trap 'rm -rf "$$tmp"' EXIT; \
 	  $(OAPI_CODEGEN) -config backend/oapi-codegen.yaml -o "$$tmp/types.go" $(OPENAPI_SPEC) && \
-	  datamodel-codegen $(DATAMODEL_CODEGEN_ARGS) --output "$$tmp/models.py" && \
+	  datamodel-codegen $(DATAMODEL_CODEGEN_ARGS) --type-overrides "$$(cat ai/datamodel-codegen-overrides.json)" --output "$$tmp/models.py" && \
 	  python3 scripts/check_generated.py --generated-dir "$$tmp"
 
 test-contracts:
