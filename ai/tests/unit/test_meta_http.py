@@ -372,7 +372,7 @@ def test_meta_http_client_rate_limit_retry_after_and_backoff():
         assert call >= 2.5
 
 
-def test_meta_http_client_transient_5xx_retry_and_exhaustion():
+def test_meta_http_client_5xx_is_unknown_without_retry():
     mock_env = MockClockSleeper()
     attempts = 0
 
@@ -394,9 +394,34 @@ def test_meta_http_client_transient_5xx_retry_and_exhaustion():
     with pytest.raises(MetaTransientError) as exc_info:
         client.post("/chat/completions", {})
 
-    assert attempts == 4  # Initial + 3 retries
+    assert attempts == 1
     assert exc_info.value.status_code == 503
-    assert len(mock_env.sleep_calls) == 3
+    assert exc_info.value.outcome_unknown is True
+    assert len(mock_env.sleep_calls) == 0
+
+
+def test_meta_http_client_does_not_retry_after_transmitted_post_disconnects():
+    attempts = 0
+
+    def mock_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        # The provider may have consumed and billed the request before the
+        # connection failed while returning its response.
+        raise httpx.ReadError("connection closed after request transmission", request=request)
+
+    client = MetaHttpClient(
+        api_key="test-key",
+        base_url="http://mock.meta.internal/v1",
+        transport=httpx.MockTransport(mock_handler),
+        max_retries=3,
+    )
+
+    with pytest.raises(MetaTransientError) as exc_info:
+        client.post("/chat/completions", {"prompt": "test"})
+
+    assert attempts == 1
+    assert exc_info.value.outcome_unknown is True
 
 
 def test_meta_http_client_authorization_header_and_privacy():

@@ -146,6 +146,12 @@ class MetaTransientError(MetaAPIError):
         super().__init__(message, status_code=status_code, details=details, request_id=request_id)
 
 
+class MetaUnknownOutcomeError(MetaTransientError):
+    """A transmitted POST may have been processed, so automatic retry is unsafe."""
+
+    outcome_unknown = True
+
+
 # ---------------------------------------------------------------------------
 # Reasoning configuration
 # ---------------------------------------------------------------------------
@@ -959,7 +965,7 @@ class MetaHttpClient:
         endpoint: str,
         json_body: dict[str, Any],
     ) -> tuple[dict[str, Any], Mapping[str, str]]:
-        """Execute POST request with retries, backoff, and error mapping.
+        """Execute POST request with safe rejection retries and error mapping.
 
         Never logs API keys or full prompt bodies.
         """
@@ -1088,17 +1094,12 @@ class MetaHttpClient:
                         request_id=request_id,
                     )
 
-                # HTTP 5xx - Upstream server error (transient)
+                # A server error does not prove that generation was not accepted.
+                # Preserve the uncertain result for an explicit new user attempt.
                 if response.status_code >= 500:
-                    if attempt <= self.max_retries:
-                        delay = min(
-                            DEFAULT_MAX_BACKOFF, DEFAULT_BASE_BACKOFF * (2 ** (attempt - 1))
-                        )
-                        jitter = random.uniform(0.05, 0.25)
-                        self._sleeper(delay + jitter)
-                        continue
-                    raise MetaTransientError(
-                        f"Upstream Meta API server error (HTTP {response.status_code}) after {attempt} attempts.",
+                    raise MetaUnknownOutcomeError(
+                        f"Upstream Meta API returned HTTP {response.status_code}; request outcome is unknown. "
+                        "Do not retry automatically; start a new attempt only after review.",
                         status_code=response.status_code,
                         request_id=request_id,
                     )
@@ -1111,13 +1112,9 @@ class MetaHttpClient:
                 )
 
             except (httpx.TimeoutException, httpx.NetworkError) as net_err:
-                if attempt <= self.max_retries:
-                    delay = min(DEFAULT_MAX_BACKOFF, DEFAULT_BASE_BACKOFF * (2 ** (attempt - 1)))
-                    jitter = random.uniform(0.05, 0.25)
-                    self._sleeper(delay + jitter)
-                    continue
-                raise MetaTransientError(
-                    f"Transient network failure connecting to Meta API: {net_err}",
+                raise MetaUnknownOutcomeError(
+                    f"Meta API connection failed and request outcome is unknown: {net_err}. "
+                    "Do not retry automatically; start a new attempt only after review.",
                     request_id=request_id,
                 ) from net_err
             except Exception as exc:
