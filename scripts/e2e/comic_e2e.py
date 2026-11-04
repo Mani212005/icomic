@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,17 +32,19 @@ ARTIFACT_DIR = Path("/home/mani/icomic-artifacts/comic-e2e")
 CAP_USD = 2.0
 RUN_USER_ID: str | None = None
 API_URL = os.environ.get("ICOMIC_E2E_API_URL", "http://127.0.0.1:8080").rstrip("/")
+STORAGE_URL = os.environ.get("ICOMIC_E2E_STORAGE_URL", "http://127.0.0.1:8000").rstrip("/")
 
 AI_PATH = REPO_ROOT / "ai"
 sys.path.insert(0, str(AI_PATH))
 from app.services.pacing import chapter_count, panel_count, split_text
 
+sys.path.insert(0, str(REPO_ROOT / "scripts/e2e"))
 from app.costs import (
     DEFAULT_REASONING_RESERVE_TOKENS,
     STORY_INPUT_TOKEN_LIMIT,
     STORY_OUTPUT_TOKEN_LIMIT,
-    calculate_token_cost,
     calculate_checklist_worst_case,
+    calculate_token_cost,
     estimate_call_worst_case,
 )
 
@@ -206,6 +209,37 @@ def json_request(
         raise E2EError(f"{method} {path} failed: {exc.reason}") from exc
 
 
+def binary_request(path: str, method: str, body: bytes, content_type: str) -> Any:
+    headers = {"Content-Type": content_type}
+    if RUN_USER_ID is not None:
+        headers["X-User-ID"] = RUN_USER_ID
+    request = Request(f"{API_URL}{path}", data=body, method=method, headers=headers)
+    try:
+        with urlopen(request, timeout=60) as response:
+            return json.loads(response.read())
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise E2EError(f"{method} {path} returned HTTP {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise E2EError(f"{method} {path} failed: {exc.reason}") from exc
+
+
+def fetch_line_art_image(image_url: str) -> bytes:
+    parsed = urlsplit(image_url)
+    if parsed.scheme != "http" or not parsed.path.startswith("/storage/fake/"):
+        raise E2EError("fake E2E line art URL is outside local fake storage")
+    storage = urlsplit(STORAGE_URL)
+    local_url = urlunsplit((storage.scheme, storage.netloc, parsed.path, "", ""))
+    try:
+        with urlopen(local_url, timeout=15) as response:
+            image_bytes = response.read(10 * 1024 * 1024 + 1)
+    except (HTTPError, URLError) as exc:
+        raise E2EError(f"could not fetch fake line art image: {exc}") from exc
+    if not image_bytes or len(image_bytes) > 10 * 1024 * 1024:
+        raise E2EError("fake line art image is empty or exceeds 10 MiB")
+    return image_bytes
+
+
 def checked_call(
     guard: CostGuard,
     stage: str,
@@ -321,6 +355,8 @@ VALUES (:'e2e_credit_id'::uuid, :'e2e_user_id'::uuid, NULL, NULL, 'adjustment', 
 
 
 def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, str]:
+    from colouring import colour_enclosed_regions
+
     global RUN_USER_ID
     guard.current_stage = "provision_user"
     RUN_USER_ID = provision_run_user()
@@ -343,7 +379,7 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
         "/api/v1/projects",
         "POST",
         {
-            "title": f"Lighthouse Bird {datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+            "title": "Lighthouse Bird",
             "original_script": script,
             "art_style": "storybook",
             "chapter_count": expected_chapters,
@@ -390,6 +426,7 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
 
     panels = []
     pages = []
+    page_chapter_ids = {}
     expected_pages = 0
     for index, chapter in enumerate(chapters):
         chapter_panels = (
@@ -414,6 +451,7 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
             raise E2EError("pages dropped or duplicated panels")
         panels.extend(generated_panels)
         pages.extend(generated_pages)
+        page_chapter_ids.update({page["id"]: chapter["id"] for page in generated_pages})
     if (
         len(chapters) != expected_chapters
         or len(panels) != expected_panels
@@ -433,13 +471,25 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
         json_request(f"/api/v1/pages/{page_id}/draft/approve", "POST")
         checked_call(guard, "image", 1, "POST", f"/api/v1/pages/{page_id}/line-art")
         json_request(f"/api/v1/pages/{page_id}/line-art/approve", "POST")
-        checked_call(
+        palette_result = checked_call(
             guard,
             "vision",
             1,
             "POST",
             f"/api/v1/pages/{page_id}/colour-palette/suggest",
         )
+        page_chapter_id = page_chapter_ids[page_id]
+        current_pages = json_request(f"/api/v1/chapters/{page_chapter_id}/pages").get("pages", [])
+        current_page = next((item for item in current_pages if item.get("id") == page_id), None)
+        line_art_url = require(
+            current_page or {}, "line_art_image_url", "approved line art URL missing"
+        )
+        line_art_bytes = fetch_line_art_image(line_art_url)
+        coloured_page = colour_enclosed_regions(
+            line_art_bytes,
+            require(palette_result, "palette", "palette missing"),
+        )
+        binary_request(f"/api/v1/pages/{page_id}/colour-image", "PUT", coloured_page, "image/png")
         json_request(f"/api/v1/pages/{page_id}/colour/approve", "POST")
     print(f"PASS pages inked and coloured: {len(pages)}")
 

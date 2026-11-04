@@ -154,6 +154,12 @@ func TestFakeAIServiceClientHermetic(t *testing.T) {
 	if err != nil || len(colResp.Palette) == 0 {
 		t.Fatalf("SuggestColourPalette failed: %v, resp: %+v", err, colResp)
 	}
+	storedColour, err := fake.StoreColourImage(ctx, gen.StoreColourImageRequest{
+		PageID: "page-1", ImageBase64: "cG5n", MediaType: gen.ImagePng,
+	})
+	if err != nil || !strings.Contains(storedColour.ImageURL, "page-1/colours/") {
+		t.Fatalf("StoreColourImage failed: %v, resp: %+v", err, storedColour)
+	}
 
 	// 9. AssemblePdf
 	pdfResp, err := fake.AssemblePdf(ctx, gen.AssemblePdfRequest{
@@ -430,6 +436,13 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 	}
 	if palResp.Theme == "" || len(palResp.Palette) == 0 || !strings.HasPrefix(palResp.Palette[0].HexColor, "#") {
 		t.Fatalf("unexpected colour palette response: %+v", palResp)
+	}
+
+	storedColour, err := client.StoreColourImage(ctx, gen.StoreColourImageRequest{
+		PageID: "88888888-8888-8888-8888-888888888888", ImageBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", MediaType: gen.ImagePng,
+	})
+	if err != nil || !strings.Contains(storedColour.ImageURL, "/colours/") {
+		t.Fatalf("StoreColourImage failed: %v, response: %+v", err, storedColour)
 	}
 
 	// Exercise Endpoint 9: AssemblePdf (POST /internal/v1/assemble-pdf)

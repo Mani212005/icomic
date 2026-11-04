@@ -1,13 +1,18 @@
 """FastAPI entry point for Icomic Python AI service."""
 
+import base64
+import binascii
 import mimetypes
 import posixpath
+import uuid
 from contextlib import asynccontextmanager
 from functools import wraps
+from io import BytesIO
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from PIL import Image
 
 from .adapters.factory import AdapterSet, build_adapters_from_env, get_media_fetch_adapter
 from .costs import actual_stage_cost, cost_from_usage
@@ -31,6 +36,8 @@ from .gen.models import (
     JobStatusResponse,
     ModeratePromptRequest,
     ModeratePromptResponse,
+    StoreColourImageRequest,
+    StoreColourImageResponse,
     SuggestColourPaletteRequest,
     SuggestColourPaletteResponse,
 )
@@ -307,6 +314,42 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             theme=theme,
             palette=palette,
         )
+
+    @app.post(
+        "/internal/v1/store-colour-image",
+        response_model=StoreColourImageResponse,
+    )
+    def store_colour_image(req: StoreColourImageRequest):
+        try:
+            image_bytes = base64.b64decode(req.image_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(
+                status_code=400, detail="Coloured page image is not valid base64"
+            ) from exc
+        if not image_bytes or len(image_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Coloured page image has an invalid size")
+        detected = None
+        try:
+            with Image.open(BytesIO(image_bytes)) as image:
+                detected = image.format
+                image.verify()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail="Coloured page image is not a valid PNG or WebP"
+            ) from exc
+        if detected == "PNG":
+            media_type, extension = "image/png", "png"
+        elif detected == "WEBP":
+            media_type, extension = "image/webp", "webp"
+        else:
+            raise HTTPException(status_code=400, detail="Coloured page image must be PNG or WebP")
+        if media_type != req.media_type:
+            raise HTTPException(
+                status_code=400, detail="Coloured page image media type does not match its bytes"
+            )
+        key = f"pages/{req.page_id}/colours/{uuid.uuid4()}.{extension}"
+        image_url = wired_adapters.storage.put(key, image_bytes, media_type)
+        return StoreColourImageResponse(image_url=image_url)
 
     @app.post(
         "/internal/v1/moderate-prompt",

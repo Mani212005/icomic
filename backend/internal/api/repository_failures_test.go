@@ -114,7 +114,7 @@ func seedWriteFailureFlow(t *testing.T, repo db.Repository) {
 		repo.CreateCharacter(nil, &domain.Character{ID: "character", ProjectID: "project", Name: "Hero", ReferenceImageURL: "https://storage.example/reference.png", ApprovedAt: &now, UpdatedAt: now}),
 		repo.CreateChapter(nil, &domain.Chapter{ID: "chapter", ProjectID: "project", ChapterNumber: 1, Title: "The bird", UpdatedAt: now}),
 		repo.CreatePanel(nil, &domain.Panel{ID: "panel", ChapterID: "chapter", PanelNumber: 1, SceneDescription: "A bird", UpdatedAt: now}),
-		repo.CreatePage(nil, &domain.Page{ID: "page", ChapterID: "chapter", PageNumber: 1, PanelIDs: []string{"panel"}, DraftImageURL: "https://storage.example/draft.png", LineArtImageURL: "https://storage.example/lineart.png", DraftApprovedAt: &now, LineArtApprovedAt: &now, UpdatedAt: now}),
+		repo.CreatePage(nil, &domain.Page{ID: "page", ChapterID: "chapter", PageNumber: 1, PanelIDs: []string{"panel"}, DraftImageURL: "https://storage.example/draft.png", LineArtImageURL: "https://storage.example/lineart.png", DraftApprovedAt: &now, LineArtApprovedAt: &now, ColourImageURL: "https://storage.example/coloured.png", ColourImageUploadedAt: &now, UpdatedAt: now}),
 		repo.RecordApproval(nil, &domain.StageApproval{ProjectID: "project", EntityType: "chapter_outline", EntityID: "chapter", ApprovedAt: time.Now().UTC()}),
 	} {
 		if err != nil {

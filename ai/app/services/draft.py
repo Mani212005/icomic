@@ -5,6 +5,7 @@ from typing import Any
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
 from ..gen.models import PanelTextItem
+from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
 from .images import store_image
 
 
@@ -28,7 +29,8 @@ class DraftService:
         panel_count = len(panels)
         prompt = (
             f"Rough comic book page layout draft sketch, {panel_count}-panel grid composition, "
-            f"loose stick-figure and rough pencil layout for page {page_number}. Style: {style}"
+            f"loose stick-figure and rough pencil layout for page {page_number}. Style: {style}. "
+            f"{IMAGE_ONLY_INSTRUCTIONS}"
         )
         if character_reference_image_urls:
             refs = ", ".join(character_reference_image_urls)

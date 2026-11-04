@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -181,6 +182,16 @@ class SuggestColourPaletteResponse(BaseModel):
     palette: list[ColourRegionSuggestion]
 
 
+class StoreColourImageRequest(BaseModel):
+    page_id: UUID
+    image_base64: str
+    media_type: Literal["image/png", "image/webp"]
+
+
+class StoreColourImageResponse(BaseModel):
+    image_url: str
+
+
 class ModeratePromptRequest(BaseModel):
     job_id: str
     hashed_user_id: str
@@ -196,6 +207,10 @@ class ModeratePromptResponse(BaseModel):
 class PageExportItem(BaseModel):
     page_number: int
     image_url: str
+    original_image_url: str | None = Field(
+        None,
+        description="Original line art URL, retained when the exported image is a coloured derivative.",
+    )
     panel_count: int | None = None
     provenance_metadata: dict[str, Any] | None = None
     panels: list[PanelTextItem] | None = None

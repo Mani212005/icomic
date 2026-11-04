@@ -172,7 +172,23 @@ func TestRealDBGenerationTransactionsAndRepositories(t *testing.T) {
 		t.Fatalf("expected one page, got %d", len(pages))
 	}
 	gotPage.DraftImageURL = "fake://draft"
+	gotPage.LineArtImageURL = "fake://line-art-original"
 	must(t, repo.UpdatePage(ctx, gotPage))
+	pageBeforeColour, err := repo.GetPage(ctx, page.ID)
+	must(t, err)
+	colouredAt := time.Now().UTC().Truncate(time.Microsecond)
+	must(t, repo.SavePageColourImage(ctx, page.ID, "fake://coloured-page", colouredAt))
+	pageAfterColour, err := repo.GetPage(ctx, page.ID)
+	must(t, err)
+	if pageAfterColour.LineArtImageURL != "fake://line-art-original" || pageAfterColour.ColourImageURL != "fake://coloured-page" {
+		t.Fatalf("coloured page persistence overwrote line art: %+v", pageAfterColour)
+	}
+	if pageAfterColour.ColourImageUploadedAt == nil || !pageAfterColour.ColourImageUploadedAt.Equal(colouredAt) {
+		t.Fatalf("coloured page upload timestamp did not round trip: %+v", pageAfterColour.ColourImageUploadedAt)
+	}
+	if !pageAfterColour.UpdatedAt.Equal(pageBeforeColour.UpdatedAt) {
+		t.Fatalf("colour upload changed the line-art activity timestamp: before=%s after=%s", pageBeforeColour.UpdatedAt, pageAfterColour.UpdatedAt)
+	}
 
 	makeJob := func(kind, stage, entity, key string) *domain.GenerationJob {
 		return &domain.GenerationJob{ID: uuid.NewString(), ProjectID: project.ID, UserID: user.ID, JobType: kind, Stage: stage, ModelID: "fake", IdempotencyKey: key, EstimatedCost: .01, HashedUserID: domain.HashUserID(user.ID)}

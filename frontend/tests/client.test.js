@@ -50,6 +50,24 @@ test('ApiClient checkHealth handles HTTP error with parsed message', async () =>
 	}
 });
 
+test('ApiClient uploads the coloured page as raw PNG bytes', async () => {
+	const originalFetch = globalThis.fetch;
+	const blob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+	try {
+		globalThis.fetch = async (url, options) => {
+			assert.equal(url, 'http://test-api:8080/api/v1/pages/page-1/colour-image');
+			assert.equal(options.method, 'PUT');
+			assert.equal(options.body, blob);
+			assert.equal(options.headers['Content-Type'], 'image/png');
+			return { ok: true, status: 200, json: async () => ({ colour_image_url: 'stored' }) };
+		};
+		const client = new ApiClient('http://test-api:8080');
+		assert.deepEqual(await client.uploadColourImage('page-1', blob), { colour_image_url: 'stored' });
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
 test('ApiClient sends correct HTTP request for projects and operations', async () => {
 	const requests = [];
 	const originalFetch = globalThis.fetch;

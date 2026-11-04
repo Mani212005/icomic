@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1241,6 +1242,13 @@ func (s *Server) ListPages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pages, _ := s.Repo.ListPages(r.Context(), chapID)
+	for _, page := range pages {
+		approval, approvalErr := s.Repo.GetLatestApproval(r.Context(), "colour_page", page.ID)
+		if approvalErr == nil && page.ColourImageUploadedAt != nil && approval.ApprovedAt.After(*page.ColourImageUploadedAt) && !domain.IsApprovalStale(&approval.ApprovedAt, page.UpdatedAt) {
+			approvedAt := approval.ApprovedAt
+			page.ColourApprovedAt = &approvedAt
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"pages": pages})
 }
 
@@ -1492,7 +1500,6 @@ func (s *Server) ApproveDraft(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	pg.DraftApprovedAt = &now
-	pg.UpdatedAt = now
 	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save page")
 		return
@@ -1648,6 +1655,8 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 
 	pg.LineArtImageURL = imgURL
 	pg.LineArtImageJobID = &job.ID
+	pg.ColourImageURL = ""
+	pg.ColourImageUploadedAt = nil
 	domain.StaleOnLineArtRegeneration(pg, now)
 	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save page")
@@ -1693,7 +1702,6 @@ func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	pg.LineArtApprovedAt = &now
-	pg.UpdatedAt = now
 	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save page")
 		return
@@ -1870,6 +1878,85 @@ func (s *Server) UpdateColourPalette(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"palette": body.Palette})
 }
 
+const maxColourImageBytes = 10 * 1024 * 1024
+
+// detectColourImageType identifies the supported media type from image bytes, never from a client header.
+func detectColourImageType(data []byte) (gen.StoreColourImageRequestMediaType, bool) {
+	if len(data) >= 8 && string(data[:8]) == "\x89PNG\r\n\x1a\n" {
+		return gen.ImagePng, true
+	}
+	if len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP" {
+		return gen.ImageWebp, true
+	}
+	return "", false
+}
+
+// UploadColourImage stores the browser-coloured page image beside its unchanged line art.
+func (s *Server) UploadColourImage(w http.ResponseWriter, r *http.Request) {
+	userID := s.getUserID(r)
+	pageID := r.PathValue("id")
+	pg, err := s.Repo.GetPage(r.Context(), pageID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Page not found")
+		return
+	}
+	chapter, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Chapter not found")
+		return
+	}
+	project, err := s.Repo.GetProject(r.Context(), chapter.ProjectID)
+	if err != nil || project.UserID != userID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if pg.LineArtImageURL == "" || pg.LineArtApprovedAt == nil || domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt) {
+		writeError(w, http.StatusBadRequest, "Approved line art is required before uploading page colours")
+		return
+	}
+	if s.AIClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
+	}
+	imageBytes, err := io.ReadAll(io.LimitReader(r.Body, maxColourImageBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Could not read coloured page image")
+		return
+	}
+	if len(imageBytes) == 0 {
+		writeError(w, http.StatusBadRequest, "Coloured page image is empty")
+		return
+	}
+	if len(imageBytes) > maxColourImageBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "Coloured page image exceeds the 10 MiB limit")
+		return
+	}
+	mediaType, ok := detectColourImageType(imageBytes)
+	if !ok {
+		writeError(w, http.StatusUnsupportedMediaType, "Coloured page image must be PNG or WebP")
+		return
+	}
+	stored, err := s.AIClient.StoreColourImage(r.Context(), gen.StoreColourImageRequest{
+		PageID:      pageID,
+		ImageBase64: base64.StdEncoding.EncodeToString(imageBytes),
+		MediaType:   mediaType,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("Could not store coloured page image: %v", err))
+		return
+	}
+	imageURL := s.ImageHosting.ResolveURL(stored.ImageURL)
+	uploadedAt := time.Now().UTC()
+	if err := s.Repo.SavePageColourImage(r.Context(), pageID, imageURL, uploadedAt); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to save coloured page image")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"colour_image_url":         imageURL,
+		"colour_image_uploaded_at": uploadedAt,
+	})
+}
+
 // ApproveColour handles POST /api/v1/pages/{id}/colour/approve
 func (s *Server) ApproveColour(w http.ResponseWriter, r *http.Request) {
 	userID := s.getUserID(r)
@@ -1891,18 +1978,27 @@ func (s *Server) ApproveColour(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
+	if pg.ColourImageURL == "" || pg.ColourImageUploadedAt == nil {
+		writeError(w, http.StatusBadRequest, "Upload the coloured page image before approving colour")
+		return
+	}
+	if pg.LineArtApprovedAt == nil || domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt) {
+		writeError(w, http.StatusBadRequest, "Current approved line art is required before approving colour")
+		return
+	}
 
+	now := time.Now().UTC()
 	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
 		ProjectID:        chapter.ProjectID,
 		EntityType:       "colour_page",
 		EntityID:         pageID,
 		ApprovedByUserID: userID,
-		ApprovedAt:       time.Now().UTC(),
+		ApprovedAt:       now,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save approval")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "colour_approved_at": now})
 }
 
 // -------------------------------------------------------------
@@ -2040,6 +2136,12 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		pages, _ := s.Repo.ListPages(r.Context(), ch.ID)
 		for _, pg := range pages {
 			imgURL := pg.LineArtImageURL
+			if pg.ColourImageURL != "" && pg.ColourImageUploadedAt != nil {
+				approval, approvalErr := s.Repo.GetLatestApproval(r.Context(), "colour_page", pg.ID)
+				if approvalErr == nil && approval.ApprovedAt.After(*pg.ColourImageUploadedAt) && !domain.IsApprovalStale(&approval.ApprovedAt, pg.UpdatedAt) {
+					imgURL = pg.ColourImageURL
+				}
+			}
 			if imgURL == "" {
 				imgURL = pg.DraftImageURL
 			}
@@ -2048,9 +2150,14 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 			}
 			panelCount := len(pg.PanelIDs)
 			provenance := map[string]interface{}{"c2pa": true}
+			var originalImageURL *string
+			if imgURL == pg.ColourImageURL && pg.LineArtImageURL != "" {
+				originalImageURL = &pg.LineArtImageURL
+			}
 			exportPages = append(exportPages, gen.PageExportItem{
 				PageNumber:         len(exportPages) + 1,
 				ImageURL:           imgURL,
+				OriginalImageURL:   originalImageURL,
 				PanelCount:         optionalInt(panelCount),
 				ProvenanceMetadata: &provenance,
 			})

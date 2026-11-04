@@ -278,12 +278,23 @@ func TestCascadePanelEditStalesDraftApproval(t *testing.T) {
 	if recDraft.Code != http.StatusAccepted {
 		t.Fatalf("draft generation failed: %d", recDraft.Code)
 	}
+	pageBeforeApproval, err := repo.GetPage(nil, pg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	reqAppDraft := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/draft/approve", nil)
 	recAppDraft := httptest.NewRecorder()
 	handler.ServeHTTP(recAppDraft, reqAppDraft)
 	if recAppDraft.Code != http.StatusOK {
 		t.Fatalf("approve draft failed: %d", recAppDraft.Code)
+	}
+	approvedPage, err := repo.GetPage(nil, pg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !approvedPage.UpdatedAt.Equal(pageBeforeApproval.UpdatedAt) {
+		t.Fatalf("draft approval changed page content timestamp: got %s, want %s", approvedPage.UpdatedAt, pageBeforeApproval.UpdatedAt)
 	}
 
 	// 1. Line art generation succeeds with approved draft

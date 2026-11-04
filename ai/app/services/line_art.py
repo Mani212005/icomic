@@ -5,6 +5,7 @@ from typing import Any
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
 from ..gen.models import PanelTextItem
+from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
 from .images import store_image
 
 
@@ -30,7 +31,8 @@ class LineArtService:
         prompt = (
             f"Comic book page {page_number} final black and white line art, {panel_count}-panel grid. "
             f"Bold clean closed-contour comic book lines, thick outlines, flat white fills, "
-            f"no shading, high contrast graphic novel inking based on draft {draft_image_url}. Style: {style}"
+            f"no shading, high contrast graphic novel inking based on draft {draft_image_url}. Style: {style}. "
+            f"{IMAGE_ONLY_INSTRUCTIONS}"
         )
         if character_reference_image_urls:
             refs = ", ".join(character_reference_image_urls)

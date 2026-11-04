@@ -4,7 +4,8 @@
 		floodFill,
 		CanvasHistory,
 		hexToRgba,
-		createGapClosedBoundaryMask
+		createGapClosedBoundaryMask,
+		applyPaletteToRegions
 	} from './bucketFill.js';
 
 	export let lineArtUrl = '';
@@ -16,6 +17,8 @@
 	let ctx;
 	let lineArtCanvas;
 	let lineArtCtx;
+	let lineArtReady = false;
+	let appliedPaletteSignature = '';
 
 	let selectedColour = palette[0]?.hex_color || '#38BDF8';
 	let customColour = '#38BDF8';
@@ -35,6 +38,14 @@
 
 	const width = 600;
 	const height = 750;
+	$: paletteItems = Array.isArray(palette)
+		? palette
+		: Object.entries(palette || {}).map(([region_name, hex_color]) => ({ region_name, hex_color, label: region_name }));
+	$: paletteSignature = JSON.stringify(paletteItems.map((item) => [item.region_name, item.hex_color]));
+	$: if (lineArtReady && paletteItems.length > 0 && paletteSignature !== appliedPaletteSignature) {
+		appliedPaletteSignature = paletteSignature;
+		applySuggestedPalette();
+	}
 
 	function updateHistoryState() {
 		historyLength = history.length;
@@ -62,14 +73,41 @@
 			img.crossOrigin = 'anonymous';
 			img.onload = () => {
 				lineArtCtx.drawImage(img, 0, 0, width, height);
+				lineArtReady = true;
 			};
 			img.onerror = () => {
 				drawFallbackLineArt();
+				lineArtReady = true;
 			};
 			img.src = lineArtUrl;
 		} else {
 			drawFallbackLineArt();
+			lineArtReady = true;
 		}
+	}
+
+	function applySuggestedPalette() {
+		ctx.fillStyle = '#FFFFFF';
+		ctx.fillRect(0, 0, width, height);
+		const coloured = applyPaletteToRegions(
+			ctx.getImageData(0, 0, width, height),
+			lineArtCtx.getImageData(0, 0, width, height),
+			paletteItems,
+			{ darknessThreshold: 60, gapClosingRadius: 1 }
+		);
+		ctx.putImageData(coloured, 0, 0);
+	}
+
+	function approveColour() {
+		const composite = document.createElement('canvas');
+		composite.width = width;
+		composite.height = height;
+		const compositeCtx = composite.getContext('2d');
+		compositeCtx.drawImage(canvas, 0, 0);
+		compositeCtx.drawImage(lineArtCanvas, 0, 0);
+		composite.toBlob((blob) => {
+			if (blob) onApprove(blob);
+		}, 'image/png');
 	}
 
 	function drawFallbackLineArt() {
@@ -267,7 +305,7 @@
 		</div>
 
 		<div class="action-group">
-			<button class="approve-btn" on:click={onApprove}>
+			<button class="approve-btn" on:click={approveColour} disabled={!lineArtReady}>
 				✓ Approve
 			</button>
 		</div>
@@ -275,7 +313,7 @@
 
 	<div class="palette-bar">
 		<div class="swatches">
-			{#each palette as item}
+			{#each paletteItems as item}
 				<button
 					class="colour-swatch"
 					style="background-color: {item.hex_color};"
