@@ -51,6 +51,24 @@ func (e JobStatusResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for StoreColourImageRequestMediaType.
+const (
+	ImagePng  StoreColourImageRequestMediaType = "image/png"
+	ImageWebp StoreColourImageRequestMediaType = "image/webp"
+)
+
+// Valid indicates whether the value is a known member of the StoreColourImageRequestMediaType enum.
+func (e StoreColourImageRequestMediaType) Valid() bool {
+	switch e {
+	case ImagePng:
+		return true
+	case ImageWebp:
+		return true
+	default:
+		return false
+	}
+}
+
 // AnalyzeScriptRequest defines model for AnalyzeScriptRequest.
 type AnalyzeScriptRequest struct {
 	HashedUserID       string `json:"hashed_user_id"`
@@ -260,8 +278,11 @@ type ModeratePromptResponse struct {
 
 // PageExportItem defines model for PageExportItem.
 type PageExportItem struct {
-	DialogueText       *string                 `json:"dialogue_text,omitempty"`
-	ImageURL           string                  `json:"image_url"`
+	DialogueText *string `json:"dialogue_text,omitempty"`
+	ImageURL     string  `json:"image_url"`
+
+	// OriginalImageURL Original line art URL, retained when the exported image is a coloured derivative.
+	OriginalImageURL   *string                 `json:"original_image_url,omitempty"`
 	PageNumber         int                     `json:"page_number"`
 	PanelCount         *int                    `json:"panel_count,omitempty"`
 	Panels             *[]PanelTextItem        `json:"panels,omitempty"`
@@ -278,6 +299,21 @@ type PanelTextItem struct {
 	Narration        string `json:"narration"`
 	PanelNumber      int    `json:"panel_number"`
 	SceneDescription string `json:"scene_description"`
+}
+
+// StoreColourImageRequest defines model for StoreColourImageRequest.
+type StoreColourImageRequest struct {
+	ImageBase64 string                           `json:"image_base64"`
+	MediaType   StoreColourImageRequestMediaType `json:"media_type"`
+	PageID      string                           `json:"page_id"`
+}
+
+// StoreColourImageRequestMediaType defines model for StoreColourImageRequest.MediaType.
+type StoreColourImageRequestMediaType string
+
+// StoreColourImageResponse defines model for StoreColourImageResponse.
+type StoreColourImageResponse struct {
+	ImageURL string `json:"image_url"`
 }
 
 // SuggestColourPaletteRequest defines model for SuggestColourPaletteRequest.
@@ -329,6 +365,9 @@ type GeneratePanelTextJSONRequestBody = GeneratePanelTextRequest
 
 // ModeratePromptJSONRequestBody defines body for ModeratePrompt for application/json ContentType.
 type ModeratePromptJSONRequestBody = ModeratePromptRequest
+
+// StoreColourImageJSONRequestBody defines body for StoreColourImage for application/json ContentType.
+type StoreColourImageJSONRequestBody = StoreColourImageRequest
 
 // SuggestColourPaletteJSONRequestBody defines body for SuggestColourPalette for application/json ContentType.
 type SuggestColourPaletteJSONRequestBody = SuggestColourPaletteRequest

@@ -285,6 +285,14 @@ export class ApiClient {
 		});
 	}
 
+	async uploadColourImage(pageId, imageBlob) {
+		return this.request(`/api/v1/pages/${pageId}/colour-image`, {
+			method: 'PUT',
+			body: imageBlob,
+			headers: { 'Content-Type': imageBlob?.type || 'image/png' }
+		});
+	}
+
 	async approveColour(pageId) {
 		const res = await this.request(`/api/v1/pages/${pageId}/colour/approve`, {
 			method: 'POST'

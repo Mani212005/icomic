@@ -9,8 +9,10 @@ export -> download PDF -> structural PDF verification (disclosure & provenance).
 
 from __future__ import annotations
 
+from io import BytesIO
+
 import httpx
-import pytest
+from PIL import Image
 
 try:
     from .pdf_verifier import verify_pdf_structure
@@ -28,7 +30,9 @@ def test_complete_comic_lifecycle_e2e(api_client: httpx.Client) -> None:
     assert me_res.status_code == 200, f"Sign-in / credit usage failed: {me_res.text}"
     user_info = me_res.json()
     assert "balance" in user_info, "Expected balance in user credit usage"
-    assert user_info["balance"] >= 10.0, f"Expected adequate initial credit, got {user_info['balance']}"
+    assert user_info["balance"] >= 10.0, (
+        f"Expected adequate initial credit, got {user_info['balance']}"
+    )
 
     # -------------------------------------------------------------------------
     # 2. Create Project
@@ -137,6 +141,18 @@ def test_complete_comic_lifecycle_e2e(api_client: httpx.Client) -> None:
     col_res = api_client.post(f"/api/v1/pages/{target_page_id}/colour-palette/suggest")
     assert col_res.status_code == 202, f"Suggest colour palette failed: {col_res.text}"
 
+    png_buffer = BytesIO()
+    Image.new("RGB", (3, 3), "red").save(png_buffer, format="PNG")
+    colour_image_res = api_client.put(
+        f"/api/v1/pages/{target_page_id}/colour-image",
+        content=png_buffer.getvalue(),
+        headers={"Content-Type": "image/png"},
+    )
+    assert colour_image_res.status_code == 200, (
+        f"Upload coloured page failed: {colour_image_res.text}"
+    )
+    assert colour_image_res.json().get("colour_image_url"), "Expected a stored coloured page URL"
+
     app_col_res = api_client.post(f"/api/v1/pages/{target_page_id}/colour/approve")
     assert app_col_res.status_code == 200, f"Approve colour failed: {app_col_res.text}"
 
@@ -159,7 +175,9 @@ def test_complete_comic_lifecycle_e2e(api_client: httpx.Client) -> None:
     download_res = api_client.get(f"/api/v1/exports/{export_id}/download")
     assert download_res.status_code == 200, f"Download export failed: {download_res.text}"
     content_type = download_res.headers.get("Content-Type", "")
-    assert "application/pdf" in content_type, f"Expected application/pdf content type, got '{content_type}'"
+    assert "application/pdf" in content_type, (
+        f"Expected application/pdf content type, got '{content_type}'"
+    )
 
     pdf_bytes = download_res.content
     assert len(pdf_bytes) > 0, "Downloaded PDF bytes must not be empty"

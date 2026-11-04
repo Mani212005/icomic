@@ -1,6 +1,10 @@
 """Boundary contract tests verifying FastAPI endpoints conform to contracts/openapi/ai-service.yaml."""
 
+import base64
+from io import BytesIO
+
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.gen.models import (
     AnalyzeScriptResponse,
@@ -20,6 +24,46 @@ from app.main import create_app
 
 app = create_app()
 client = TestClient(app)
+
+
+def test_store_colour_image_contract_and_content_type_validation():
+    page_id = "55555555-5555-5555-5555-555555555555"
+    png_buffer = BytesIO()
+    Image.new("RGB", (2, 2), "red").save(png_buffer, format="PNG")
+    png_bytes = png_buffer.getvalue()
+    response = client.post(
+        "/internal/v1/store-colour-image",
+        json={
+            "page_id": page_id,
+            "image_base64": base64.b64encode(png_bytes).decode("ascii"),
+            "media_type": "image/png",
+        },
+    )
+    assert response.status_code == 200
+    image_url = response.json()["image_url"]
+    assert f"pages/{page_id}/colours/" in image_url
+    assert app.state.storage_adapter.get(image_url) == png_bytes
+    assert app.state.storage_adapter.get_content_type(image_url) == "image/png"
+
+    invalid = client.post(
+        "/internal/v1/store-colour-image",
+        json={
+            "page_id": page_id,
+            "image_base64": base64.b64encode(b"not an image").decode("ascii"),
+            "media_type": "image/png",
+        },
+    )
+    assert invalid.status_code == 400
+
+    mismatched = client.post(
+        "/internal/v1/store-colour-image",
+        json={
+            "page_id": page_id,
+            "image_base64": base64.b64encode(png_bytes).decode("ascii"),
+            "media_type": "image/webp",
+        },
+    )
+    assert mismatched.status_code == 400
 
 
 def test_healthz():

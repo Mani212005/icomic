@@ -117,6 +117,7 @@ func (s *Server) NewRouter() http.Handler {
 	mux.HandleFunc("GET /api/v1/pages/{id}/colour-palette", s.authMiddleware(s.GetColourPalette))
 	mux.HandleFunc("POST /api/v1/pages/{id}/colour-palette/suggest", s.authMiddleware(s.SuggestColourPalette))
 	mux.HandleFunc("PATCH /api/v1/pages/{id}/colour-palette", s.authMiddleware(s.UpdateColourPalette))
+	mux.HandleFunc("PUT /api/v1/pages/{id}/colour-image", s.authMiddleware(s.UploadColourImage))
 	mux.HandleFunc("POST /api/v1/pages/{id}/colour/approve", s.authMiddleware(s.ApproveColour))
 
 	// Jobs and Credits

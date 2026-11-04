@@ -57,6 +57,7 @@ type Repository interface {
 	GetPage(ctx context.Context, id string) (*domain.Page, error)
 	ListPages(ctx context.Context, chapterID string) ([]*domain.Page, error)
 	UpdatePage(ctx context.Context, pg *domain.Page) error
+	SavePageColourImage(ctx context.Context, pageID, imageURL string, uploadedAt time.Time) error
 
 	// Colour Palettes and Regions
 	GetColourPalette(ctx context.Context, pageID string) (*domain.ColourPalette, error)
@@ -501,6 +502,20 @@ func (m *InMemoryRepository) UpdatePage(_ context.Context, pg *domain.Page) erro
 	}
 	cpy := *pg
 	m.pages[pg.ID] = &cpy
+	return nil
+}
+
+func (m *InMemoryRepository) SavePageColourImage(_ context.Context, pageID, imageURL string, uploadedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pg, ok := m.pages[pageID]
+	if !ok {
+		return ErrNotFound
+	}
+	cpy := *pg
+	cpy.ColourImageURL = imageURL
+	cpy.ColourImageUploadedAt = &uploadedAt
+	m.pages[pageID] = &cpy
 	return nil
 }
 

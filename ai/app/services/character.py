@@ -4,6 +4,7 @@ from typing import Any
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
+from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
 from .images import store_image
 
 
@@ -26,7 +27,8 @@ class CharacterService:
         """Generate a character reference image and store it in object storage."""
         full_prompt = (
             f"Character reference sheet for {character_name}: {prompt}. "
-            f"Full turnaround, clear facial details, front and side view. Style: {style}"
+            f"Full turnaround, clear facial details, front and side view. Style: {style}. "
+            f"{IMAGE_ONLY_INSTRUCTIONS}"
         )
         result = self.image_adapter.generate(
             prompt=full_prompt,

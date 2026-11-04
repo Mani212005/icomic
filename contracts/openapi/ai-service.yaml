@@ -175,6 +175,28 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /internal/v1/store-colour-image:
+    post:
+      summary: Store a client-coloured page image separately from its line art
+      operationId: storeColourImage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreColourImageRequest'
+      responses:
+        '200':
+          description: Coloured page image stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreColourImageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /internal/v1/moderate-prompt:
     post:
       summary: Pre-moderate prompt before dispatching to image generation
@@ -753,6 +775,30 @@ components:
           items:
             $ref: '#/components/schemas/ColourRegionSuggestion'
 
+    StoreColourImageRequest:
+      type: object
+      required:
+        - page_id
+        - image_base64
+        - media_type
+      properties:
+        page_id:
+          type: string
+          format: uuid
+        image_base64:
+          type: string
+        media_type:
+          type: string
+          enum: [image/png, image/webp]
+
+    StoreColourImageResponse:
+      type: object
+      required:
+        - image_url
+      properties:
+        image_url:
+          type: string
+
     ModeratePromptRequest:
       type: object
       required:
@@ -792,6 +838,9 @@ components:
           type: integer
         image_url:
           type: string
+        original_image_url:
+          type: string
+          description: Original line art URL, retained when the exported image is a coloured derivative.
         panel_count:
           type: integer
         provenance_metadata:

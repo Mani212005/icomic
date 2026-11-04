@@ -77,17 +77,20 @@ type Panel struct {
 
 // Page represents a partitioned page containing ordered panels (SPEC 3.5.1, 9).
 type Page struct {
-	ID                string     `json:"id"`
-	ChapterID         string     `json:"chapter_id"`
-	PageNumber        int        `json:"page_number"`
-	PanelIDs          []string   `json:"panel_ids"`
-	DraftImageURL     string     `json:"draft_image_url,omitempty"`
-	DraftImageJobID   *string    `json:"draft_image_job_id,omitempty"`
-	DraftApprovedAt   *time.Time `json:"draft_approved_at,omitempty"`
-	LineArtImageURL   string     `json:"line_art_image_url,omitempty"`
-	LineArtImageJobID *string    `json:"line_art_image_job_id,omitempty"`
-	LineArtApprovedAt *time.Time `json:"line_art_approved_at,omitempty"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                    string     `json:"id"`
+	ChapterID             string     `json:"chapter_id"`
+	PageNumber            int        `json:"page_number"`
+	PanelIDs              []string   `json:"panel_ids"`
+	DraftImageURL         string     `json:"draft_image_url,omitempty"`
+	DraftImageJobID       *string    `json:"draft_image_job_id,omitempty"`
+	DraftApprovedAt       *time.Time `json:"draft_approved_at,omitempty"`
+	LineArtImageURL       string     `json:"line_art_image_url,omitempty"`
+	LineArtImageJobID     *string    `json:"line_art_image_job_id,omitempty"`
+	LineArtApprovedAt     *time.Time `json:"line_art_approved_at,omitempty"`
+	ColourImageURL        string     `json:"colour_image_url,omitempty"`
+	ColourImageUploadedAt *time.Time `json:"colour_image_uploaded_at,omitempty"`
+	ColourApprovedAt      *time.Time `json:"colour_approved_at,omitempty"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 // ColourPalette represents AI suggested and user modified page colors (SPEC 9).

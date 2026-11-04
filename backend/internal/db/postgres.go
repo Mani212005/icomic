@@ -461,23 +461,24 @@ func (p *PostgresRepository) CreatePage(ctx context.Context, pg *domain.Page) er
 	}
 	pidsBytes, _ := json.Marshal(pg.PanelIDs)
 	query := `
-		INSERT INTO pages (id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO pages (id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at, colour_image_url, colour_image_uploaded_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
-	_, err := p.db.ExecContext(ctx, query, pg.ID, pg.ChapterID, pg.PageNumber, pidsBytes, pg.DraftImageURL, pg.DraftImageJobID, pg.DraftApprovedAt, pg.LineArtImageURL, pg.LineArtImageJobID, pg.LineArtApprovedAt)
+	_, err := p.db.ExecContext(ctx, query, pg.ID, pg.ChapterID, pg.PageNumber, pidsBytes, pg.DraftImageURL, pg.DraftImageJobID, pg.DraftApprovedAt, pg.LineArtImageURL, pg.LineArtImageJobID, pg.LineArtApprovedAt, pg.ColourImageURL, pg.ColourImageUploadedAt)
 	return err
 }
 
 func (p *PostgresRepository) GetPage(ctx context.Context, id string) (*domain.Page, error) {
-	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at FROM pages WHERE id = $1`
+	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at, colour_image_url, colour_image_uploaded_at, updated_at FROM pages WHERE id = $1`
 	var pg domain.Page
 	var pidsBytes []byte
 	var draftURL sql.NullString
 	var draftJobID sql.NullString
 	var lineURL sql.NullString
 	var lineJobID sql.NullString
+	var colourURL sql.NullString
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt,
+		&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt, &colourURL, &pg.ColourImageUploadedAt, &pg.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -499,6 +500,9 @@ func (p *PostgresRepository) GetPage(ctx context.Context, id string) (*domain.Pa
 		str := lineJobID.String
 		pg.LineArtImageJobID = &str
 	}
+	if colourURL.Valid {
+		pg.ColourImageURL = colourURL.String
+	}
 	if len(pidsBytes) > 0 {
 		_ = json.Unmarshal(pidsBytes, &pg.PanelIDs)
 	}
@@ -506,7 +510,7 @@ func (p *PostgresRepository) GetPage(ctx context.Context, id string) (*domain.Pa
 }
 
 func (p *PostgresRepository) ListPages(ctx context.Context, chapterID string) ([]*domain.Page, error) {
-	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at FROM pages WHERE chapter_id = $1 ORDER BY page_number ASC`
+	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at, colour_image_url, colour_image_uploaded_at, updated_at FROM pages WHERE chapter_id = $1 ORDER BY page_number ASC`
 	rows, err := p.db.QueryContext(ctx, query, chapterID)
 	if err != nil {
 		return nil, err
@@ -521,7 +525,8 @@ func (p *PostgresRepository) ListPages(ctx context.Context, chapterID string) ([
 		var draftJobID sql.NullString
 		var lineURL sql.NullString
 		var lineJobID sql.NullString
-		if err := rows.Scan(&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt); err != nil {
+		var colourURL sql.NullString
+		if err := rows.Scan(&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt, &colourURL, &pg.ColourImageUploadedAt, &pg.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if draftURL.Valid {
@@ -538,6 +543,9 @@ func (p *PostgresRepository) ListPages(ctx context.Context, chapterID string) ([
 			str := lineJobID.String
 			pg.LineArtImageJobID = &str
 		}
+		if colourURL.Valid {
+			pg.ColourImageURL = colourURL.String
+		}
 		if len(pidsBytes) > 0 {
 			_ = json.Unmarshal(pidsBytes, &pg.PanelIDs)
 		}
@@ -548,11 +556,29 @@ func (p *PostgresRepository) ListPages(ctx context.Context, chapterID string) ([
 
 func (p *PostgresRepository) UpdatePage(ctx context.Context, pg *domain.Page) error {
 	pidsBytes, _ := json.Marshal(pg.PanelIDs)
+	if pg.UpdatedAt.IsZero() {
+		pg.UpdatedAt = time.Now().UTC()
+	}
 	query := `
-		UPDATE pages SET page_number = $2, panel_ids = $3, draft_image_url = $4, draft_image_job_id = $5, draft_approved_at = $6, line_art_image_url = $7, line_art_image_job_id = $8, line_art_approved_at = $9
+		UPDATE pages SET page_number = $2, panel_ids = $3, draft_image_url = $4, draft_image_job_id = $5, draft_approved_at = $6, line_art_image_url = $7, line_art_image_job_id = $8, line_art_approved_at = $9, colour_image_url = $10, colour_image_uploaded_at = $11, updated_at = $12
 		WHERE id = $1
 	`
-	res, err := p.db.ExecContext(ctx, query, pg.ID, pg.PageNumber, pidsBytes, pg.DraftImageURL, pg.DraftImageJobID, pg.DraftApprovedAt, pg.LineArtImageURL, pg.LineArtImageJobID, pg.LineArtApprovedAt)
+	res, err := p.db.ExecContext(ctx, query, pg.ID, pg.PageNumber, pidsBytes, pg.DraftImageURL, pg.DraftImageJobID, pg.DraftApprovedAt, pg.LineArtImageURL, pg.LineArtImageJobID, pg.LineArtApprovedAt, pg.ColourImageURL, pg.ColourImageUploadedAt, pg.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *PostgresRepository) SavePageColourImage(ctx context.Context, pageID, imageURL string, uploadedAt time.Time) error {
+	res, err := p.db.ExecContext(ctx, `UPDATE pages SET colour_image_url = $2, colour_image_uploaded_at = $3 WHERE id = $1`, pageID, imageURL, uploadedAt)
 	if err != nil {
 		return err
 	}

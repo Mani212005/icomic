@@ -65,6 +65,22 @@ def test_character_service():
     assert url.endswith("characters/char-111/reference.png")
     assert model_id == "muse-image-1.0-fake"
     assert prov["c2pa"]["watermark_present"] is True
+    prompt = img.recorded_calls[0]["prompt"]
+    assert_image_prompt_excludes_editorial_text(prompt)
+
+
+def assert_image_prompt_excludes_editorial_text(prompt: str) -> None:
+    for instruction in (
+        "no titles",
+        "no headings",
+        "no captions",
+        "no page numbers",
+        "no labels",
+        "no notes",
+        "no watermarks",
+        "only the requested artwork and specified speech bubbles",
+    ):
+        assert instruction in prompt.lower()
 
 
 def test_panel_service_outline():
@@ -102,6 +118,7 @@ def test_panel_service_panel_text():
         assert p.panel_number == i
         assert p.image_prompt != ""
         assert p.scene_description != ""
+        assert_image_prompt_excludes_editorial_text(p.image_prompt)
 
 
 def parse_pdf_structure(pdf_bytes: bytes) -> dict[str, Any]:
@@ -222,6 +239,7 @@ def test_draft_service_character_consistency_anchoring():
     assert "c2pa" in prov
     assert len(img.recorded_calls) == 1
     call = img.recorded_calls[0]
+    assert_image_prompt_excludes_editorial_text(call["prompt"])
 
     # Verify approved character reference image bytes passed as reference inputs
     assert len(call["reference_images"]) == 2
@@ -310,6 +328,7 @@ def test_line_art_service_character_consistency_anchoring():
     assert "c2pa" in prov
     assert len(img.recorded_calls) == 1
     call = img.recorded_calls[0]
+    assert_image_prompt_excludes_editorial_text(call["prompt"])
 
     # Verify approved character reference image bytes passed as reference inputs
     assert call["reference_images"] == [draft_bytes, char_bytes]
@@ -449,7 +468,20 @@ def test_pdf_service_valid_multipage_and_structural_validation():
     # 4. Mandatory AI disclosure text present
     assert "MANDATORY AI-GENERATION DISCLOSURE" in parsed["text_content"]
     assert "Notice: This comic book was created with Icomic AI" in parsed["text_content"]
+    assert (
+        "All visual artwork, character artwork, and panel compositions are AI-generated."
+        in parsed["text_content"]
+    )
     assert "Meta C2PA provenance metadata" in parsed["text_content"]
+    assert (
+        "Cryptographic provenance records remain embedded for transparency and auditability."
+        in parsed["text_content"]
+    )
+    assert "ICOMIC GRAPHIC NOVEL SERIES" in parsed["text_content"]
+    assert "PROJECT & PROVENANCE RECORD" in parsed["text_content"]
+    assert "Project Identifier: proj-comic-777" in parsed["text_content"]
+    assert "Total Comic Pages: 2" in parsed["text_content"]
+    assert "Assembled:" in parsed["text_content"]
 
     # 5. Title & panel dialogue text present
     assert "Shadows of Neo-Tokyo" in parsed["text_content"]
@@ -461,6 +493,44 @@ def test_pdf_service_valid_multipage_and_structural_validation():
     assert "Meta-AI-Provenance/1.0" in parsed["text_content"]
     assert "sig-page-1" in parsed["text_content"]
     assert "sig-page-2" in parsed["text_content"]
+
+
+def test_pdf_service_keeps_original_line_art_attached_for_coloured_page():
+    from io import BytesIO
+
+    from PIL import Image
+
+    storage = FakeStorageAdapter()
+    service = PdfAssemblyService(storage)
+    line_art_buffer = BytesIO()
+    Image.new("RGB", (3, 3), "black").save(line_art_buffer, format="PNG")
+    original_line_art = line_art_buffer.getvalue() + b"source-provenance"
+    colour_buffer = BytesIO()
+    Image.new("RGB", (3, 3), "red").save(colour_buffer, format="PNG")
+    coloured_page = colour_buffer.getvalue()
+    line_art_url = storage.put("pages/page-1/line-art.png", original_line_art, "image/png")
+    colour_url = storage.put("pages/page-1/colour.png", coloured_page, "image/png")
+
+    service.assemble_pdf(
+        project_id="project-colour-export",
+        title="Colour Export",
+        page_size="A4",
+        include_ai_disclosure=True,
+        pages=[
+            PageExportItem(
+                page_number=1,
+                image_url=colour_url,
+                original_image_url=line_art_url,
+                provenance_metadata={"c2pa": "source-record"},
+            )
+        ],
+    )
+    pdf_bytes = storage.get("exports/project-colour-export/comic.pdf")
+    parsed = parse_pdf_structure(pdf_bytes)
+    assert b"page-1-original-line-art.png" in pdf_bytes
+    assert original_line_art in pdf_bytes
+    assert colour_url in parsed["text_content"]
+    assert line_art_url in parsed["text_content"]
 
 
 def test_pdf_service_page_sizes_and_fallback_image():

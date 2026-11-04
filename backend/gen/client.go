@@ -23,6 +23,7 @@ type AIService interface {
 	GenerateDraftSketch(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error)
 	GenerateLineArt(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error)
 	SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
+	StoreColourImage(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error)
 	AssemblePdf(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
 	GetJobStatus(ctx context.Context, jobID string) (*JobStatusResponse, error)
 }
@@ -138,6 +139,14 @@ func (c *AIServiceClient) SuggestColourPalette(ctx context.Context, req SuggestC
 	return &resp, nil
 }
 
+func (c *AIServiceClient) StoreColourImage(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error) {
+	var resp StoreColourImageResponse
+	if err := c.postJSON(ctx, "/internal/v1/store-colour-image", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AIServiceClient) AssemblePdf(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error) {
 	var resp AssemblePdfResponse
 	if err := c.postJSON(ctx, "/internal/v1/assemble-pdf", req, &resp); err != nil {
@@ -183,6 +192,7 @@ type FakeAIServiceClient struct {
 	GenerateDraftSketchFunc        func(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error)
 	GenerateLineArtFunc            func(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error)
 	SuggestColourPaletteFunc       func(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
+	StoreColourImageFunc           func(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error)
 	AssemblePdfFunc                func(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
 	GetJobStatusFunc               func(ctx context.Context, jobID string) (*JobStatusResponse, error)
 }
@@ -370,6 +380,15 @@ func (f *FakeAIServiceClient) SuggestColourPalette(ctx context.Context, req Sugg
 			{RegionName: "skin", HexColor: "#F5D0C5", Label: "Warm Fair Skin"},
 			{RegionName: "hair", HexColor: "#00CED1", Label: "Vibrant Cyan"},
 		},
+	}, nil
+}
+
+func (f *FakeAIServiceClient) StoreColourImage(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error) {
+	if f.StoreColourImageFunc != nil {
+		return f.StoreColourImageFunc(ctx, req)
+	}
+	return &StoreColourImageResponse{
+		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/pages/%s/colours/fake.png", req.PageID),
 	}, nil
 }
 

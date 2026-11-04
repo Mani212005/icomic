@@ -258,8 +258,8 @@ class PdfWriter:
 
         # Mandatory AI Generation Disclosure Box
         if include_ai_disclosure:
-            box_y = self.height - 375
-            box_h = 155
+            box_y = self.height - 345
+            box_h = 125
             box_w = self.width - 100
 
             cover_lines.append(b"0.94 0.96 0.98 rg 0.25 0.35 0.55 RG 1.5 w")
@@ -277,10 +277,11 @@ class PdfWriter:
                 "Cryptographic provenance records remain embedded for transparency and auditability.",
             ]
             y_pos = box_y + box_h - 48
-            cover_lines.append(b"BT /F1 9 Tf 0.2 0.2 0.25 rg")
             for statement in disclosure_statements:
                 esc_s = escape_pdf_string(statement)
-                cover_lines.append(f"65 {y_pos:.2f} Td ({esc_s}) Tj ET".encode())
+                cover_lines.append(
+                    f"BT /F1 9 Tf 0.2 0.2 0.25 rg 65 {y_pos:.2f} Td ({esc_s}) Tj ET".encode()
+                )
                 y_pos -= 18
 
         # Project Specifications & Provenance Summary
@@ -296,10 +297,11 @@ class PdfWriter:
             f"Assembled: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%SZ')}",
         ]
         curr_y = spec_y - 22
-        cover_lines.append(b"BT /F1 9 Tf 0.3 0.3 0.3 rg")
         for detail in spec_details:
             esc_d = escape_pdf_string(detail)
-            cover_lines.append(f"50 {curr_y:.2f} Td ({esc_d}) Tj ET".encode())
+            cover_lines.append(
+                f"BT /F1 9 Tf 0.3 0.3 0.3 rg 50 {curr_y:.2f} Td ({esc_d}) Tj ET".encode()
+            )
             curr_y -= 16
 
         # Cover Footer
@@ -410,6 +412,34 @@ class PdfWriter:
                     f"<< /Type /Filespec /F ({filename}) /EF << /F {source_id} 0 R >> >>".encode()
                 )
                 source_files.append(f"({filename}) {file_id} 0 R")
+
+            original_image_bytes = p.get("original_image_bytes")
+            if original_image_bytes and original_image_bytes != img_bytes:
+                if original_image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                    original_extension = "png"
+                elif original_image_bytes.startswith(b"\xff\xd8"):
+                    original_extension = "jpeg"
+                elif (
+                    original_image_bytes.startswith(b"RIFF")
+                    and original_image_bytes[8:12] == b"WEBP"
+                ):
+                    original_extension = "webp"
+                else:
+                    raise UnsupportedImageMediaError(
+                        f"Unsupported original line art image format on page {p.get('page_number', idx)}."
+                    )
+                original_id = self._add_object(
+                    f"<< /Type /EmbeddedFile /Subtype /image#2F{original_extension} "
+                    f"/Length {len(original_image_bytes)} >>\nstream\n".encode()
+                    + original_image_bytes
+                    + b"\nendstream"
+                )
+                original_filename = f"page-{idx}-original-line-art.{original_extension}"
+                original_file_id = self._add_object(
+                    f"<< /Type /Filespec /F ({original_filename}) "
+                    f"/EF << /F {original_id} 0 R >> >>".encode()
+                )
+                source_files.append(f"({original_filename}) {original_file_id} 0 R")
 
             # Scale and center image
             avail_w = self.width - 100
@@ -529,6 +559,7 @@ class PdfWriter:
             {
                 "page_number": p.get("page_number", i),
                 "image_url": p.get("image_url", ""),
+                "original_image_url": p.get("original_image_url", ""),
                 "provenance": p.get("provenance_metadata", {}),
             }
             for i, p in enumerate(pages_data, start=1)
@@ -627,11 +658,18 @@ class PdfAssemblyService:
         pages_data: list[dict[str, Any]] = []
         for p in pages:
             img_bytes: bytes | None = None
+            original_image_bytes: bytes | None = None
             if p.image_url:
                 try:
                     img_bytes = self.storage_adapter.get(p.image_url)
                 except (KeyError, ValueError, OSError):
                     img_bytes = None
+            original_image_url = getattr(p, "original_image_url", None)
+            if original_image_url:
+                try:
+                    original_image_bytes = self.storage_adapter.get(original_image_url)
+                except (KeyError, ValueError, OSError):
+                    original_image_bytes = None
 
             # Convert p.panels into list of dicts if present
             panels_list: list[dict[str, Any]] = []
@@ -647,6 +685,8 @@ class PdfAssemblyService:
                     "page_number": p.page_number,
                     "image_url": p.image_url,
                     "image_bytes": img_bytes,
+                    "original_image_url": original_image_url,
+                    "original_image_bytes": original_image_bytes,
                     "provenance_metadata": p.provenance_metadata or {},
                     "panels": panels_list,
                     "dialogue_text": getattr(p, "dialogue_text", None),

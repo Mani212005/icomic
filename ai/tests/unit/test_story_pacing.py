@@ -59,6 +59,19 @@ def test_long_fixture_preserves_all_source_and_bounds_each_response():
     assert len(all_panels) == 51
     assert total_pages == 12
     assert " ".join(p.scene_description for p in all_panels).split() == script.split()
+    required_image_text = (
+        "no titles",
+        "no headings",
+        "no captions",
+        "no page numbers",
+        "no labels",
+        "no notes",
+        "no watermarks",
+    )
+    assert all(
+        all(instruction in panel.image_prompt.lower() for instruction in required_image_text)
+        for panel in all_panels
+    )
     operations = [json.loads(messages[-1].content)["operation"] for messages, _ in adapter.calls]
     assert operations.count("characters") == 7
     assert operations.count("outline") == 8

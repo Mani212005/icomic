@@ -6,6 +6,7 @@ from pydantic import TypeAdapter
 
 from ..adapters.language.port import LanguagePort
 from ..gen.models import ChapterOutlineItem, CharacterProfile, PanelTextItem
+from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
 from .pacing import PANELS_PER_PAGE, SOURCE_WORDS_PER_CALL, split_text
 from .structured import complete_json
 
@@ -92,5 +93,8 @@ class PanelService:
                 )
             for item in page_panels:
                 item.panel_number = len(panels) + 1
+                item.image_prompt = (
+                    f"{item.image_prompt.rstrip()}\n\n{IMAGE_ONLY_INSTRUCTIONS}".strip()
+                )
                 panels.append(item)
         return panels

@@ -20,6 +20,7 @@
 	let panels = [];
 	let pages = [];
 	let palette = [];
+	let palettesByPage = {};
 	let creditUsage = { remaining_credits: 1000 };
 
 	let isJobActive = false;
@@ -38,6 +39,20 @@
 	let editingPanelId = null;
 	let editPanelDialogue = '';
 	let editPanelScene = '';
+
+	function normalizePalette(rawPalette) {
+		if (Array.isArray(rawPalette)) return rawPalette;
+		return Object.entries(rawPalette || {}).map(([region_name, hex_color]) => ({
+			region_name,
+			hex_color: typeof hex_color === 'string' ? hex_color : hex_color?.hex_color,
+			label: typeof hex_color === 'string' ? region_name : (hex_color?.label || region_name)
+		})).filter((item) => typeof item.hex_color === 'string');
+	}
+
+	function updatePagePalette(pageId, newPalette) {
+		palettesByPage = { ...palettesByPage, [pageId]: newPalette };
+		if (pages[0]?.id === pageId) palette = newPalette;
+	}
 
 	const stageList = [
 		{ id: STAGES.SCRIPT, label: '1. Script' },
@@ -100,13 +115,14 @@
 				panels = chapterData.flatMap((chapter) => chapter.panels);
 				pages = chapterData.flatMap((chapter) => chapter.pages);
 
-				if (pages.length > 0) {
-					const pal = await apiClient.getColourPalette(pages[0].id);
-					palette = Array.isArray(pal) ? pal : (pal?.palette || []);
-				}
+				const loadedPalettes = await Promise.all(pages.map((page) => apiClient.getColourPalette(page.id)));
+				palettesByPage = Object.fromEntries(pages.map((page, index) => [page.id, normalizePalette(loadedPalettes[index]?.palette || loadedPalettes[index])]));
+				palette = pages.length > 0 ? palettesByPage[pages[0].id] : [];
 			} else {
 				panels = [];
 				pages = [];
+				palettesByPage = {};
+				palette = [];
 			}
 		} catch (e) {
 			console.error('Project:', e);
@@ -363,12 +379,17 @@
 		}
 	}
 
-	async function handleApproveColour(pageId) {
+	async function handleApproveColour(pageId, colouredImage) {
 		jobError = null;
 		try {
+			if (colouredImage && typeof apiClient.uploadColourImage === 'function') {
+				await apiClient.uploadColourImage(pageId, colouredImage);
+			}
 			await apiClient.approveColour(pageId);
 			await reloadProjectData();
-			activeStage = STAGES.EXPORT;
+			if (pages.length > 0 && pages.every((page) => hasValidApproval(page.colour_approved_at, page.updated_at))) {
+				activeStage = STAGES.EXPORT;
+			}
 		} catch (err) {
 			jobError = formatApiError(err);
 		}
@@ -386,7 +407,7 @@
 				await pollJob(apiClient, res.job.id, { intervalMs: 500 });
 			}
 			if (res && res.palette) {
-				palette = res.palette;
+				updatePagePalette(pageId, normalizePalette(res.palette));
 			}
 		} catch (err) {
 			jobError = formatApiError(err);
@@ -853,17 +874,24 @@
 		<section class="stage-section">
 			<header class="section-header">
 				<h3>Colour</h3>
-				<button class="secondary-btn" on:click={() => suggestNewPalette(pages[0]?.id)}>
-					🎨 Suggest palette
-				</button>
 			</header>
 
-			<ColourEditor
-				lineArtUrl={pages[0]?.line_art_image_url || pages[0]?.line_art_url || ''}
-				{palette}
-				onApprove={() => handleApproveColour(pages[0]?.id)}
-				onPaletteChange={(newPal) => (palette = newPal)}
-			/>
+		{#each pages as page (page.id)}
+			<div class="page-colour-editor">
+				<div class="page-colour-heading">
+					<h4>Page {page.page_number}</h4>
+					<button class="secondary-btn" on:click={() => suggestNewPalette(page.id)}>
+						🎨 Suggest palette
+					</button>
+				</div>
+				<ColourEditor
+					lineArtUrl={page.line_art_image_url || page.line_art_url || ''}
+					palette={palettesByPage[page.id] || []}
+					onApprove={(colouredImage) => handleApproveColour(page.id, colouredImage)}
+					onPaletteChange={(newPalette) => updatePagePalette(page.id, newPalette)}
+				/>
+			</div>
+		{/each}
 		</section>
 
 	{:else if activeStage === STAGES.EXPORT}
@@ -1062,6 +1090,20 @@
 		margin: 0;
 		font-size: 1.2rem;
 		color: #0f172a;
+	}
+	.page-colour-editor {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+	.page-colour-heading {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+	.page-colour-heading h4 {
+		margin: 0;
+		color: #1e293b;
 	}
 	.section-desc {
 		margin: 0;

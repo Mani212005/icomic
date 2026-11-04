@@ -262,6 +262,81 @@ export function floodFill(imageData, startX, startY, fillColor, options = {}) {
 	return imageData;
 }
 
+export function applyPaletteToRegions(imageData, lineArtData, palette, options = {}) {
+	if (!imageData || !lineArtData || imageData.width !== lineArtData.width || imageData.height !== lineArtData.height) {
+		return imageData;
+	}
+	const colours = (palette || [])
+		.map((item) => item?.hex_color)
+		.filter((colour) => typeof colour === 'string' && /^#[0-9a-f]{6}$/i.test(colour));
+	if (colours.length === 0) return imageData;
+
+	const { width, height } = imageData;
+	const barriers = options.gapClosingRadius > 0
+		? createGapClosedBoundaryMask(lineArtData, options.gapClosingRadius, options.darknessThreshold || 60)
+		: null;
+	const seen = new Uint8Array(width * height);
+	let regionIndex = 0;
+
+	for (let start = 0; start < seen.length; start++) {
+		const sx = start % width;
+		const sy = (start / width) | 0;
+		if (seen[start] || isLineArtBoundary(
+			lineArtData.data[start * 4],
+			lineArtData.data[start * 4 + 1],
+			lineArtData.data[start * 4 + 2],
+			lineArtData.data[start * 4 + 3],
+			options.darknessThreshold || 60
+		) || barriers?.[start]) {
+			seen[start] = 1;
+			continue;
+		}
+
+		const stack = [start];
+		const region = [];
+		let touchesEdge = false;
+		seen[start] = 1;
+		while (stack.length > 0) {
+			const index = stack.pop();
+			const x = index % width;
+			const y = (index / width) | 0;
+			region.push(index);
+			if (x === 0 || y === 0 || x === width - 1 || y === height - 1) touchesEdge = true;
+
+			const neighbours = [];
+			if (x > 0) neighbours.push(index - 1);
+			if (x < width - 1) neighbours.push(index + 1);
+			if (y > 0) neighbours.push(index - width);
+			if (y < height - 1) neighbours.push(index + width);
+			for (const next of neighbours) {
+				if (seen[next]) continue;
+				seen[next] = 1;
+				const p = next * 4;
+				if (barriers?.[next] || isLineArtBoundary(
+					lineArtData.data[p],
+					lineArtData.data[p + 1],
+					lineArtData.data[p + 2],
+					lineArtData.data[p + 3],
+					options.darknessThreshold || 60
+				)) continue;
+				stack.push(next);
+			}
+		}
+
+		if (touchesEdge) continue;
+		const fill = hexToRgba(colours[regionIndex % colours.length]);
+		for (const pixel of region) {
+			const p = pixel * 4;
+			imageData.data[p] = fill.r;
+			imageData.data[p + 1] = fill.g;
+			imageData.data[p + 2] = fill.b;
+			imageData.data[p + 3] = 255;
+		}
+		regionIndex++;
+	}
+	return imageData;
+}
+
 export class CanvasHistory {
 	constructor(maxHistory = 20) {
 		this.maxHistory = maxHistory;

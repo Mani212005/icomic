@@ -332,6 +332,12 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 	if recPalSuggest.Code != http.StatusAccepted {
 		t.Fatalf("suggest colour palette failed: %d", recPalSuggest.Code)
 	}
+	reqColourImage := httptest.NewRequest(http.MethodPut, "/api/v1/pages/"+pageID+"/colour-image", bytes.NewReader([]byte(fixturePNG)))
+	recColourImage := httptest.NewRecorder()
+	handler.ServeHTTP(recColourImage, reqColourImage)
+	if recColourImage.Code != http.StatusOK {
+		t.Fatalf("upload colour image failed: %d (%s)", recColourImage.Code, recColourImage.Body.String())
+	}
 
 	reqAppColour := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/colour/approve", nil)
 	recAppColour := httptest.NewRecorder()

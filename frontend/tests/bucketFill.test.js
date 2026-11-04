@@ -7,6 +7,7 @@ import {
 	isLineArtBoundary,
 	isBoundaryPixel,
 	createGapClosedBoundaryMask,
+	applyPaletteToRegions,
 	floodFill,
 	CanvasHistory
 } from '../src/lib/colour/bucketFill.js';
@@ -17,6 +18,32 @@ test('hexToRgba and legacy hexToRgb parse hex formats correctly', () => {
 	assert.deepEqual(hexToRgba('#ffffff'), { r: 255, g: 255, b: 255, a: 255 });
 	assert.deepEqual(hexToRgba('#11223380'), { r: 17, g: 34, b: 51, a: 128 });
 	assert.deepEqual(hexToRgb('#4A90E2'), { r: 74, g: 144, b: 226 });
+});
+
+test('applies a palette deterministically to enclosed regions and leaves the page margin white', () => {
+	const width = 7;
+	const height = 7;
+	const lineArtData = { width, height, data: new Uint8ClampedArray(width * height * 4) };
+	lineArtData.data.fill(255);
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			if (x === 0 || y === 0 || x === width - 1 || y === height - 1 || x === 3) {
+				const p = (y * width + x) * 4;
+				lineArtData.data[p] = 0;
+				lineArtData.data[p + 1] = 0;
+				lineArtData.data[p + 2] = 0;
+			}
+		}
+	}
+	const imageData = { width, height, data: new Uint8ClampedArray(width * height * 4) };
+	imageData.data.fill(255);
+	applyPaletteToRegions(imageData, lineArtData, [
+		{ region_name: 'first', hex_color: '#FF0000' },
+		{ region_name: 'second', hex_color: '#0000FF' }
+	]);
+	assert.deepEqual(Array.from(imageData.data.slice((1 * width + 1) * 4, (1 * width + 1) * 4 + 4)), [255, 0, 0, 255]);
+	assert.deepEqual(Array.from(imageData.data.slice((1 * width + 4) * 4, (1 * width + 4) * 4 + 4)), [0, 0, 255, 255]);
+	assert.deepEqual(Array.from(imageData.data.slice(0, 4)), [255, 255, 255, 255]);
 });
 
 test('getLuminance, isLineArtBoundary, and isBoundaryPixel classify ink lines vs fill areas', () => {
