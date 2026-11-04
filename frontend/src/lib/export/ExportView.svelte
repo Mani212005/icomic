@@ -47,43 +47,43 @@
 
 <div class="export-view">
 	<header class="export-header">
-		<h3>Comic Book Export & Publishing</h3>
-		<p class="subtitle">Prepare, package, and download your finished comic book.</p>
+		<h3>Export</h3>
+
 	</header>
 
 	<div class="compliance-notice">
-		<div class="badge">ℹ️ AI Model Disclosure</div>
+		<div class="badge">ℹ️ AI disclosure</div>
 		<p>
-			<strong>Mandatory Meta API Terms Disclosure:</strong> This comic book contains AI-generated content produced using Meta AI models (muse-image-1.0 and Llama). C2PA content provenance metadata is preserved in the export.
+			AI-generated with Meta AI (muse-image-1.0, Llama). C2PA included.
 		</p>
 	</div>
 
 	<div class="options-grid">
 		<div class="option-card">
-			<label for="format-select">Export Format</label>
-			<select id="format-select" bind:value={format}>
-				<option value={EXPORT_FORMATS.PDF}>PDF Document (Full Comic Book)</option>
-				<option value={EXPORT_FORMATS.PNG}>PNG Page Images (.zip bundle)</option>
+			<label for="format-select">Format</label>
+			<select id="format-select" bind:value={format} aria-label="Export Format">
+				<option value={EXPORT_FORMATS.PDF}>PDF</option>
+				<option value={EXPORT_FORMATS.PNG}>PNG (.zip)</option>
 			</select>
-			<small>PDF includes cover, panels, dialogue bubbles, and page numbers.</small>
+			<small>PDF has cover, panels, dialogue, and page numbers.</small>
 		</div>
 
 		<div class="option-card">
-			<label for="pagesize-select">Page Size</label>
-			<select id="pagesize-select" bind:value={pageSize}>
+			<label for="pagesize-select">Size</label>
+			<select id="pagesize-select" bind:value={pageSize} aria-label="Page Size">
 				<option value={PAGE_SIZES.A4}>A4 (210 × 297 mm)</option>
 				<option value={PAGE_SIZES.US_LETTER}>US Letter (8.5 × 11 in)</option>
-				<option value={PAGE_SIZES.CUSTOM}>Custom Comic Standard (6.625 × 10.25 in)</option>
+				<option value={PAGE_SIZES.CUSTOM}>Custom (6.625 × 10.25 in)</option>
 			</select>
-			<small>Formatted to standard print and reader dimensions.</small>
+			<small>Print-ready sizes.</small>
 		</div>
 	</div>
 
 	<div class="preview-section">
-		<h4>Page Assembly Preview ({pages.length} Pages)</h4>
+		<h4>Preview ({pages.length})</h4>
 		<div class="pages-strip">
 			{#if pages.length === 0}
-				<div class="empty-pages">No pages generated yet.</div>
+				<div class="empty-pages">No pages yet.</div>
 			{:else}
 				{#each pages as page, i}
 					<div class="page-card">
@@ -106,11 +106,16 @@
 	{/if}
 
 	<div class="export-actions">
-		<button class="export-btn" on:click={handleExport} disabled={isExporting}>
+		<button
+			class="export-btn"
+			aria-label={isExporting ? `Assembling ${format.toUpperCase()}...` : `🚀 Generate & Assemble Comic ${format.toUpperCase()}`}
+			on:click={handleExport}
+			disabled={isExporting}
+		>
 			{#if isExporting}
 				<span class="spinner"></span> Assembling {format.toUpperCase()}...
 			{:else}
-				🚀 Generate & Assemble Comic {format.toUpperCase()}
+				🚀 Export {format.toUpperCase()}
 			{/if}
 		</button>
 
@@ -136,11 +141,6 @@
 		margin: 0 0 0.25rem 0;
 		font-size: 1.25rem;
 		color: #0f172a;
-	}
-	.subtitle {
-		margin: 0;
-		color: #64748b;
-		font-size: 0.875rem;
 	}
 	.compliance-notice {
 		background: #f8fafc;

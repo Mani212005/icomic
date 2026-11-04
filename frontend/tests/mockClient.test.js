@@ -47,14 +47,12 @@ test('MockApiClient manages characters and approval cycle', async () => {
 	const char = characters[0];
 	assert.equal(char.name, 'Jack Vance');
 
-	// Generating a reference image stales approval (updated_at > approved_at, matching Go backend)
 	const { job, character } = await client.generateCharacterReference(char.id);
 	assert.ok(job.id);
 	assert.ok(character.approved_at, 'approved_at timestamp is preserved per backend semantics');
 	assert.ok(isApprovalStale(character.approved_at, character.updated_at), 'approval is stale');
 	assert.equal(hasValidApproval(character.approved_at, character.updated_at), false);
 
-	// User approves character
 	const approved = await client.approveCharacter(char.id);
 	assert.ok(approved.approved_at);
 	assert.equal(isApprovalStale(approved.approved_at, approved.updated_at), false);
@@ -76,19 +74,16 @@ test('MockApiClient manages chapters, panels, and pages', async () => {
 	assert.ok(pages.length >= 1);
 	const page = pages[0];
 
-	// Draft cycle
 	const draftRes = await client.generateDraft(page.id);
 	assert.ok(draftRes.job.id);
 	const approvedDraft = await client.approveDraft(page.id);
 	assert.ok(approvedDraft.draft_approved_at);
 
-	// Line art cycle
 	const lineArtRes = await client.generateLineArt(page.id);
 	assert.ok(lineArtRes.job.id);
 	const approvedLineArt = await client.approveLineArt(page.id);
 	assert.ok(approvedLineArt.line_art_approved_at);
 
-	// Colour cycle
 	const { palette } = await client.suggestColourPalette(page.id);
 	assert.ok(palette.length > 0);
 	const approvedColour = await client.approveColour(page.id);
@@ -101,7 +96,7 @@ test('MockApiClient calculates cost estimates based on stage and count', async (
 
 	assert.equal(estimate.stage, 'draft_sketch');
 	assert.equal(estimate.image_count, 5);
-	assert.equal(estimate.estimated_cost_usd, 0.05); // 5 * $0.01
+	assert.equal(estimate.estimated_cost_usd, 0.05);
 });
 
 test('MockApiClient handles export workflow', async () => {

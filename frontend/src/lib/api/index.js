@@ -6,11 +6,6 @@ export * from './client.js';
 export * from './mockClient.js';
 export * from './jobPolling.js';
 
-/**
- * Returns the effective API client configuration from environment variables.
- * PUBLIC_API_URL defaults to http://localhost:8080.
- * PUBLIC_USE_MOCK_API defaults to false (mock client selectable only by explicit 'true').
- */
 export function getApiConfig() {
 	const isMockExplicit =
 		(typeof import.meta !== 'undefined' && import.meta.env?.PUBLIC_USE_MOCK_API === 'true') ||
@@ -45,12 +40,6 @@ export function getApiConfig() {
 	};
 }
 
-/**
- * Factory creating either real ApiClient (default) or MockApiClient (when explicit PUBLIC_USE_MOCK_API=true).
- *
- * @param {{ useMock?: boolean, baseUrl?: string, devMode?: boolean, devUserId?: string|null, token?: string|null }} [options]
- * @returns {ApiClient|MockApiClient}
- */
 export function createDefaultClient(options = {}) {
 	const config = getApiConfig();
 	const useMock = options.useMock !== undefined ? options.useMock : config.useMock;
@@ -67,5 +56,4 @@ export function createDefaultClient(options = {}) {
 	});
 }
 
-// Real ApiClient is the default client instance per WP-5 contract
 export const defaultClient = createDefaultClient();

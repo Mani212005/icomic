@@ -19,7 +19,7 @@
 
 	let selectedColour = palette[0]?.hex_color || '#38BDF8';
 	let customColour = '#38BDF8';
-	let activeTool = 'bucket'; // 'bucket', 'eyedropper', 'brush'
+	let activeTool = 'bucket';
 	let tolerance = 32;
 	let gapClosing = false;
 	let brushSize = 2;
@@ -46,11 +46,9 @@
 		ctx = canvas.getContext('2d', { willReadFrequently: true });
 		lineArtCtx = lineArtCanvas.getContext('2d', { willReadFrequently: true });
 
-		// Initialize colour canvas with white background
 		ctx.fillStyle = '#FFFFFF';
 		ctx.fillRect(0, 0, width, height);
 
-		// Initialize line art canvas
 		initLineArt();
 		updateHistoryState();
 	});
@@ -75,24 +73,19 @@
 	}
 
 	function drawFallbackLineArt() {
-		// Draw demo comic panels if no external image
+
 		lineArtCtx.strokeStyle = '#000000';
 		lineArtCtx.lineWidth = 4;
 		lineArtCtx.fillStyle = '#000000';
 
-		// Outer border
 		lineArtCtx.strokeRect(20, 20, width - 40, height - 40);
 
-		// Top panel
 		lineArtCtx.strokeRect(30, 30, width - 60, 320);
 
-		// Bottom left panel
 		lineArtCtx.strokeRect(30, 370, (width - 70) / 2, 340);
 
-		// Bottom right panel
 		lineArtCtx.strokeRect(30 + (width - 70) / 2 + 10, 370, (width - 70) / 2, 340);
 
-		// Detective silhouette outline in top panel
 		lineArtCtx.beginPath();
 		lineArtCtx.arc(150, 150, 40, 0, Math.PI * 2);
 		lineArtCtx.stroke();
@@ -130,11 +123,9 @@
 		const currentImgData = ctx.getImageData(0, 0, width, height);
 		const lineArtImgData = lineArtCtx.getImageData(0, 0, width, height);
 
-		// Record current state for undo
 		history.record(currentImgData.data);
 		updateHistoryState();
 
-		// Apply visited-on-enqueue flood fill with line art barrier
 		const filled = floodFill(
 			currentImgData,
 			x,
@@ -157,7 +148,7 @@
 		const hex = `#${((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1)}`;
 		selectedColour = hex;
 		customColour = hex;
-		activeTool = 'bucket'; // switch back to bucket after sampling
+		activeTool = 'bucket';
 	}
 
 	function handleMouseDown(e) {
@@ -167,7 +158,6 @@
 		lastX = coords.x;
 		lastY = coords.y;
 
-		// Record for undo before stroke
 		const currentImgData = lineArtCtx.getImageData(0, 0, width, height);
 		history.record(ctx.getImageData(0, 0, width, height).data);
 		updateHistoryState();
@@ -177,7 +167,6 @@
 		if (!isDrawing || activeTool !== 'brush') return;
 		const { x, y } = getCanvasCoords(e);
 
-		// Draw ink bridge on line art layer to close gaps
 		lineArtCtx.strokeStyle = '#000000';
 		lineArtCtx.lineWidth = brushSize;
 		lineArtCtx.lineCap = 'round';
@@ -238,7 +227,7 @@
 				class="tool-btn"
 				class:active={activeTool === 'bucket'}
 				on:click={() => (activeTool = 'bucket')}
-				title="Paint Bucket Tool (Client-side Flood Fill)"
+				title="Bucket fill"
 			>
 				🪣 Bucket Fill
 			</button>
@@ -246,7 +235,7 @@
 				class="tool-btn"
 				class:active={activeTool === 'eyedropper'}
 				on:click={() => (activeTool = 'eyedropper')}
-				title="Eyedropper Sample Tool"
+				title="Eyedropper"
 			>
 				💉 Eyedropper
 			</button>
@@ -254,25 +243,25 @@
 				class="tool-btn"
 				class:active={activeTool === 'brush'}
 				on:click={() => (activeTool = 'brush')}
-				title="Gap Closer Brush (Draw line art bridge strokes)"
+				title="Close gaps"
 			>
 				✏️ Gap Closer
 			</button>
 		</div>
 
 		<div class="settings-group">
-			<label class="setting-item" title="Tolerance for colour fill against clicked pixel">
+			<label class="setting-item" title="Fill tolerance">
 				<span>Tolerance: {tolerance}</span>
 				<input type="range" min="0" max="100" bind:value={tolerance} />
 			</label>
-			<label class="setting-item checkbox" title="Enable morphological gap-closing to bridge tiny line art gaps">
-				<input type="checkbox" bind:checked={gapClosing} />
-				<span>Auto Gap-Close</span>
+			<label class="setting-item checkbox" title="Auto-close gaps">
+				<input type="checkbox" bind:checked={gapClosing} aria-label="Auto Gap-Close" />
+				<span>Auto-close</span>
 			</label>
 		</div>
 
 		<div class="history-group">
-			<button class="tool-btn" on:click={handleUndo} disabled={!canUndo} title="Undo last fill (Ctrl+Z)">
+			<button class="tool-btn" on:click={handleUndo} disabled={!canUndo} title="Undo (Ctrl+Z)">
 				↩ Undo ({historyLength})
 			</button>
 			<button class="tool-btn" on:click={handleRedo} disabled={!canRedo} title="Redo (Ctrl+Y)">
@@ -281,8 +270,8 @@
 		</div>
 
 		<div class="action-group">
-			<button class="approve-btn" on:click={onApprove}>
-				✓ Approve Colouring
+			<button class="approve-btn" on:click={onApprove} aria-label="✓ Approve Colouring">
+				✓ Approve
 			</button>
 		</div>
 	</header>
@@ -303,14 +292,14 @@
 		</div>
 
 		<div class="custom-picker">
-			<input type="color" bind:value={customColour} on:change={addCustomColour} title="Choose custom color" />
-			<button class="small-btn" on:click={addCustomColour}>Set Color</button>
+			<input type="color" bind:value={customColour} on:change={addCustomColour} title="Custom color" aria-label="Choose custom color" />
+			<button class="small-btn" on:click={addCustomColour} aria-label="Set Color">Set</button>
 		</div>
 	</div>
 
 	<div class="workspace-area">
 		<div class="canvas-viewport">
-			<!-- Colour Layer (underneath) -->
+
 			<canvas
 				bind:this={canvas}
 				{width}
@@ -323,7 +312,6 @@
 				on:mouseleave={handleMouseUp}
 			></canvas>
 
-			<!-- Line Art Layer (composited on top with multiply blend mode) -->
 			<canvas
 				bind:this={lineArtCanvas}
 				{width}
@@ -361,6 +349,9 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
+	}
+	.action-group .approve-btn {
+		min-width: 8.5rem;
 	}
 	.tool-btn {
 		background: #f8fafc;

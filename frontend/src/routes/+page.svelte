@@ -4,22 +4,17 @@
 	import { AGE_TERMS_ADVISORY } from '$lib/config/policies.js';
 	import { onMount } from 'svelte';
 
-	// Client instance: real ApiClient pointing to PUBLIC_API_URL by default;
-	// MockApiClient selectable only when explicit PUBLIC_USE_MOCK_API=true is set.
 	let apiClient = createDefaultClient();
 
-	// Auth and Identity states
 	let isAuthenticated = apiClient.isAuthenticated();
 	let authMode = apiClient.getAuthMode();
 
-	// Project states
 	let projects = [];
 	let activeProjectId = '';
 	let activeProject = null;
 	let isLoadingProjects = true;
 	let projectError = null;
 
-	// Project Create Modal
 	let showCreateModal = false;
 	let isCreatingProject = false;
 	let createError = null;
@@ -150,20 +145,20 @@
 </script>
 
 <div class="app-layout">
-	<!-- Navbar -->
+
 	<header class="navbar">
 		<div class="brand">
 			<span class="logo">🎨</span>
 			<div class="brand-text">
 				<h1>Icomic</h1>
-				<span class="tagline">Meta AI Comic Generation Studio</span>
+				<span class="tagline">Comic Studio</span>
 			</div>
 		</div>
 
 		<div class="nav-status">
-			<div class="status-pill global-pill" title="Users are global (no geo-restrictions)">
+			<div class="status-pill global-pill" title="Global access">
 				<span class="indicator green"></span>
-				<span>Global Access</span>
+				<span>Global</span>
 			</div>
 
 			<div class="status-pill advisory-pill" title={AGE_TERMS_ADVISORY}>
@@ -171,21 +166,21 @@
 			</div>
 
 			{#if authMode === 'mock'}
-				<div class="status-pill mock-pill" title="Running against hermetic typed mock API (PUBLIC_USE_MOCK_API=true)">
+				<div class="status-pill mock-pill" title="Mock API">
 					<span class="badge blue">Mock API</span>
 				</div>
 			{:else if authMode === 'dev'}
-				<div class="status-pill dev-pill" title="Authenticated via dev identity header (X-User-ID)">
+				<div class="status-pill dev-pill" title="Dev identity">
 					<span class="indicator green"></span>
-					<span class="dev-label">Dev Mode: 0000...0001</span>
+					<span class="dev-label">Dev</span>
 				</div>
 			{:else if authMode === 'bearer'}
-				<div class="status-pill bearer-pill" title="Authenticated via Bearer Token">
+				<div class="status-pill bearer-pill" title="Bearer auth">
 					<span class="indicator green"></span>
 					<span>Bearer Token</span>
 				</div>
 			{:else}
-				<div class="status-pill unauth-pill" title="Unauthenticated: No credentials configured">
+				<div class="status-pill unauth-pill" title="No credentials">
 					<span class="indicator amber"></span>
 					<span class="unauth-label">Unauthenticated</span>
 				</div>
@@ -193,28 +188,25 @@
 		</div>
 	</header>
 
-	<!-- Unauthenticated Banner (shown when dev identity is not configured in real API mode) -->
 	{#if !isAuthenticated && authMode !== 'mock'}
 		<div class="unauth-banner" role="alert">
 			<div class="unauth-content">
 				<span class="unauth-icon">🔒</span>
 				<div class="unauth-text">
-					<strong>Unauthenticated State:</strong> The Go backend requires authentication.
-					In local development, start the backend with <code>DEV_AUTH_ENABLED=true</code> and set <code>PUBLIC_DEV_MODE=true</code> (or <code>PUBLIC_DEV_USER_ID</code>) in frontend environment.
+					<strong>Sign in:</strong> For local use, enable <code>DEV_AUTH_ENABLED=true</code> and <code>PUBLIC_DEV_MODE=true</code>.
 				</div>
 			</div>
-			<button class="enable-dev-btn" on:click={enableDevIdentity}>
-				⚡ Enable Local Dev Identity
+			<button class="enable-dev-btn" on:click={enableDevIdentity} aria-label="⚡ Enable Local Dev Identity">
+				⚡ Enable dev identity
 			</button>
 		</div>
 	{/if}
 
-	<!-- Project Management Bar -->
-	<section class="project-bar" aria-label="Project Selection & Actions">
+		<section class="project-bar" aria-label="Project Selection & Actions">
 		<div class="project-selector-group">
 			<label for="project-select" class="selector-label">Project:</label>
 			{#if isLoadingProjects}
-				<span class="loading-label">Loading projects...</span>
+				<span class="loading-label">Loading…</span>
 			{:else if projects.length > 0}
 				<select
 					id="project-select"
@@ -229,7 +221,7 @@
 					{/each}
 				</select>
 			{:else}
-				<span class="no-projects-label">No projects found</span>
+				<span class="no-projects-label">No projects</span>
 			{/if}
 		</div>
 
@@ -242,8 +234,8 @@
 		{/if}
 
 		<div class="project-actions">
-			<button class="action-btn create-btn" on:click={openCreateModal}>
-				➕ New Project
+			<button class="action-btn create-btn" on:click={openCreateModal} aria-label="➕ New Project">
+				➕ New
 			</button>
 
 			{#if activeProject}
@@ -259,14 +251,13 @@
 			<button
 				class="action-btn refresh-btn"
 				on:click={loadProjects}
-				title="Reload projects from API"
+				 title="Reload projects from API"
 			>
 				🔄 Refresh
 			</button>
 		</div>
 	</section>
 
-	<!-- Global Project Error Alert -->
 	{#if projectError}
 		<div class="project-error-banner">
 			<strong>⚠️ {projectError.title}:</strong> {projectError.message}
@@ -276,12 +267,11 @@
 		</div>
 	{/if}
 
-	<!-- Main Comic Studio Area -->
 	<main class="main-container">
 		{#if isLoadingProjects}
 			<div class="loading-container">
 				<div class="spinner-large"></div>
-				<p>Connecting to Icomic API and loading projects...</p>
+				<p>Loading…</p>
 			</div>
 		{:else if activeProject}
 			<ComicEditor
@@ -292,16 +282,15 @@
 		{:else}
 			<div class="empty-state-card">
 				<div class="empty-icon">📖</div>
-				<h2>No Comic Projects Found</h2>
-				<p>Create your first project to start generating scripts, character designs, stick drafts, line art, and full PDF comics.</p>
-				<button class="primary-btn large" on:click={openCreateModal}>
-					🚀 Create Your First Comic Project
+				<h2>No comics</h2>
+				<p>Create a comic to begin.</p>
+				<button class="primary-btn large" on:click={openCreateModal} aria-label="🚀 Create Your First Comic Project">
+					🚀 Create project
 				</button>
 			</div>
 		{/if}
 	</main>
 
-	<!-- Create Project Modal Dialog -->
 	{#if showCreateModal}
 		<div
 			class="modal-backdrop"
@@ -317,7 +306,7 @@
 				tabindex="-1"
 			>
 				<header class="modal-header">
-					<h3 id="modal-title">Create New Comic Project</h3>
+					<h3 id="modal-title" aria-label="Create New Comic Project">New project</h3>
 					<button class="close-btn" on:click={closeCreateModal} aria-label="Close dialog">✕</button>
 				</header>
 
@@ -367,7 +356,7 @@
 						<textarea
 							id="new-proj-script"
 							rows="5"
-							placeholder="Enter initial story description, character dialogue, or plot summary..."
+							placeholder="Describe your story…"
 							bind:value={newProjectForm.script}
 							required
 						></textarea>
@@ -385,9 +374,10 @@
 						<button
 							type="submit"
 							class="primary-btn"
+							aria-label="Create Project"
 							disabled={isCreatingProject}
 						>
-							{isCreatingProject ? 'Creating...' : 'Create Project'}
+							{isCreatingProject ? 'Creating…' : 'Create'}
 						</button>
 					</footer>
 				</form>
@@ -487,7 +477,6 @@
 		color: #166534;
 	}
 
-	/* Unauthenticated Notice Banner */
 	.unauth-banner {
 		background: #fffbeb;
 		border-bottom: 1px solid #fde68a;
@@ -528,7 +517,6 @@
 		background: #0369a1;
 	}
 
-	/* Project Switcher Bar */
 	.project-bar {
 		background: #ffffff;
 		border-bottom: 1px solid #e2e8f0;
@@ -717,7 +705,6 @@
 		cursor: pointer;
 	}
 
-	/* Modal Dialog Styles */
 	.modal-backdrop {
 		position: fixed;
 		top: 0;

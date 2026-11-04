@@ -6,7 +6,7 @@ import {
 } from '../src/lib/config/policies.js';
 
 test('AGE_TERMS_ADVISORY provides advisory notice without enforced blocking', () => {
-	assert.ok(AGE_TERMS_ADVISORY.includes('18 years of age or older'));
+	assert.ok(AGE_TERMS_ADVISORY.includes('18+'));
 });
 
 test('DefaultImageHostingPolicy resolves relative and absolute asset paths', () => {

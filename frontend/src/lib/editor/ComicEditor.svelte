@@ -15,7 +15,6 @@
 	export let apiClient;
 	export let activeStage = STAGES.SCRIPT;
 
-	// Project state
 	let characters = [];
 	let chapters = [];
 	let panels = [];
@@ -23,14 +22,12 @@
 	let palette = [];
 	let creditUsage = { remaining_credits: 1000 };
 
-	// UI & Job states
 	let isJobActive = false;
 	let currentJobStatus = '';
 	let activeJobType = '';
 	let jobError = null;
 	let currentAbortController = null;
 
-	// In-line editing states
 	let editingCharId = null;
 	let editCharForm = { name: '', description: '', appearance: '', clothing: '' };
 
@@ -56,7 +53,6 @@
 	$: effectiveScript = project ? (project.original_script || project.script || '') : '';
 	$: scriptWordCount = effectiveScript ? effectiveScript.trim().split(/\s+/).filter(Boolean).length : 0;
 
-	// Stale approval detection matching backend domain rules (SPEC 3.2, 3.5, 3.6, 3.7; ARCHITECTURE 5.3)
 	$: anyCharacterStale = characters.some((c) => isApprovalStale(c.approved_at, c.updated_at));
 	$: allCharactersApproved = characters.length > 0 && characters.every((c) => hasValidApproval(c.approved_at, c.updated_at));
 
@@ -73,14 +69,12 @@
 
 	$: allColoursApproved = pages.length > 0 && pages.every((p) => hasValidApproval(p.colour_approved_at, p.updated_at));
 
-	// Reactive project reload on project switch
 	let lastProjectId = null;
 	$: if (project && project.id && project.id !== lastProjectId) {
 		lastProjectId = project.id;
 		reloadProjectData();
 	}
 
-	// Load initial stage data from API client
 	export async function reloadProjectData() {
 		if (!apiClient || !project || !project.id) return;
 		try {
@@ -117,7 +111,6 @@
 
 	reloadProjectData();
 
-	// Stage 1: Script Analysis
 	async function runScriptAnalysis() {
 		const scriptText = (project.original_script || project.script || '').trim();
 		if (!scriptText) {
@@ -126,11 +119,11 @@
 		}
 		jobError = null;
 		isJobActive = true;
-		activeJobType = 'Script Analysis';
-		currentJobStatus = 'Analyzing characters and plot structure...';
+		activeJobType = 'Script';
+		currentJobStatus = 'Analyzing…';
 
 		try {
-			// Update project with the latest script first
+
 			await apiClient.updateProject(project.id, {
 				title: project.title,
 				art_style: project.art_style,
@@ -155,12 +148,11 @@
 		}
 	}
 
-	// Stage 2: Characters
 	async function regenerateCharacterReference(charId) {
 		jobError = null;
 		isJobActive = true;
 		activeJobType = 'Character Reference Generation';
-		currentJobStatus = 'Rendering character reference image (Cost: $0.01)...';
+		currentJobStatus = 'Rendering ($0.01)…';
 
 		try {
 			const res = await apiClient.generateCharacterReference(charId);
@@ -219,7 +211,6 @@
 		}
 	}
 
-	// Stage 3: Chapters
 	async function approveChapter(chapId) {
 		jobError = null;
 		try {
@@ -254,7 +245,6 @@
 		}
 	}
 
-	// Stage 4: Panels
 	function startEditPanel(panel) {
 		editingPanelId = panel.id;
 		editPanelDialogue = panel.dialogue || '';
@@ -279,12 +269,11 @@
 		}
 	}
 
-	// Stage 5: Draft
 	async function generateDraft(pageId) {
 		jobError = null;
 		isJobActive = true;
 		activeJobType = 'Draft Sketch Generation';
-		currentJobStatus = 'Generating rough composition stick draft per page (Cost: $0.01)...';
+		currentJobStatus = 'Generating drafts ($0.01)…';
 
 		try {
 			const res = await apiClient.generateDraft(pageId);
@@ -309,12 +298,11 @@
 		}
 	}
 
-	// Stage 6: Line Art
 	async function generateLineArt(pageId) {
 		jobError = null;
 		isJobActive = true;
 		activeJobType = 'Final Line Art Generation';
-		currentJobStatus = 'Generating clean, closed-contour black & white line art (Cost: $0.01)...';
+		currentJobStatus = 'Generating line art ($0.01)…';
 
 		try {
 			const res = await apiClient.generateLineArt(pageId);
@@ -339,7 +327,6 @@
 		}
 	}
 
-	// Stage 7: Colour
 	async function handleApproveColour(pageId) {
 		jobError = null;
 		try {
@@ -355,7 +342,7 @@
 		jobError = null;
 		isJobActive = true;
 		activeJobType = 'AI Palette Suggestion';
-		currentJobStatus = 'Requesting Meta vision model colour palette recommendation...';
+		currentJobStatus = 'Suggesting palette…';
 
 		try {
 			const res = await apiClient.suggestColourPalette(pageId);
@@ -381,7 +368,7 @@
 </script>
 
 <div class="comic-editor-container">
-	<!-- Stage Stepper Header -->
+
 	<nav class="stepper-nav" aria-label="Pipeline Stages">
 		{#each stageList as stage}
 			<button
@@ -394,19 +381,17 @@
 		{/each}
 	</nav>
 
-	<!-- Job Polling Progress Overlay -->
 	{#if isJobActive}
 		<div class="job-banner">
 			<div class="spinner"></div>
 			<div class="job-info">
-				<strong>{activeJobType} in Progress</strong>
+				<strong>{activeJobType}…</strong>
 				<span>{currentJobStatus}</span>
 			</div>
 			<button class="cancel-job-btn" on:click={cancelActiveJob}>Cancel</button>
 		</div>
 	{/if}
 
-	<!-- Clear API Error Banner -->
 	{#if jobError}
 		<div class="error-banner error-{jobError.type}">
 			<div class="error-header">
@@ -417,18 +402,17 @@
 			<p class="error-msg">{jobError.message}</p>
 			{#if jobError.action}
 				<div class="error-action">
-					<span class="action-tag">Next step:</span> {jobError.action}
+					<span class="action-tag">Next:</span> {jobError.action}
 				</div>
 			{/if}
 		</div>
 	{/if}
 
-	<!-- Stage 1: Script Input -->
 	{#if activeStage === STAGES.SCRIPT}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 1: Script Input & Chapter Selection</h3>
-				<span class="meta-info">Word count: <strong>{scriptWordCount}</strong> words</span>
+				<h3>Stage 1: Script</h3>
+				<span class="meta-info">Words: <strong>{scriptWordCount}</strong> words</span>
 			</header>
 
 			<div class="form-grid">
@@ -458,7 +442,7 @@
 				<textarea
 					id="script-textarea"
 					rows="8"
-					placeholder="Enter your script here... Include scene descriptions, characters, and dialogue."
+					placeholder="Write scenes and dialogue…"
 					bind:value={project.script}
 				></textarea>
 			</div>
@@ -466,25 +450,25 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
+					aria-label="⚡ Analyze Script & Extract Characters"
 					on:click={runScriptAnalysis}
 					disabled={isJobActive || scriptWordCount === 0}
 				>
-					⚡ Analyze Script & Extract Characters
+					⚡ Analyze script
 				</button>
 			</div>
 		</section>
 
-	<!-- Stage 2: Character Design -->
 	{:else if activeStage === STAGES.CHARACTERS}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 2: Character Design & Reference Images</h3>
+				<h3>Stage 2: Characters</h3>
 				<div class="header-tags">
 					{#if anyCharacterStale}
-						<span class="approval-tag stale">⚠️ Stale Approvals Detected</span>
+						<span class="approval-tag stale">⚠️ Stale</span>
 					{:else}
 						<span class="approval-tag" class:approved={allCharactersApproved}>
-							{allCharactersApproved ? '✓ All Characters Approved' : 'Approval Gate Required'}
+							{allCharactersApproved ? '✓ All Characters Approved' : 'Approval needed'}
 						</span>
 					{/if}
 				</div>
@@ -492,14 +476,12 @@
 
 			{#if anyCharacterStale}
 				<div class="stale-stage-banner">
-					<strong>⚠️ Stale Character Approval:</strong> One or more characters were modified after approval.
-					Downstream stages are locked until all modified characters are re-approved.
+					<strong>⚠️ Character edits:</strong> Re-approve to continue.
 				</div>
 			{/if}
 
 			<p class="section-desc">
-				Review extracted character profiles. Approved reference images anchor character stability across all comic pages.
-				Editing any character after approval invalidates downstream generation until re-approved.
+				Review characters. Re-approve edits to continue.
 			</p>
 
 			<div class="cards-grid">
@@ -537,8 +519,8 @@
 						{/if}
 
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)}>
-								🔄 Regenerate Reference ($0.01)
+							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)} aria-label="🔄 Regenerate Reference ($0.01)">
+								🔄 Regenerate ($0.01)
 							</button>
 
 							{#if isApprovalStale(char.approved_at, char.updated_at)}
@@ -563,25 +545,25 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
+					aria-label="Proceed to Chapter Outline"
 					on:click={() => (activeStage = STAGES.CHAPTERS)}
 					disabled={!allCharactersApproved}
 				>
-					Proceed to Chapter Outline →
+					Continue →
 				</button>
 			</div>
 		</section>
 
-	<!-- Stage 3: Chapter Outline -->
 	{:else if activeStage === STAGES.CHAPTERS}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 3: Story Outline</h3>
+				<h3>Stage 3: Outline</h3>
 				<div class="header-tags">
 					{#if anyChapterStale}
-						<span class="approval-tag stale">⚠️ Stale Outline Approval</span>
+						<span class="approval-tag stale">⚠️ Stale</span>
 					{:else}
 						<span class="approval-tag" class:approved={allChaptersApproved}>
-							{allChaptersApproved ? '✓ Outline Approved' : 'Approval Gate Required'}
+							{allChaptersApproved ? '✓ Outline Approved' : 'Approval needed'}
 						</span>
 					{/if}
 				</div>
@@ -589,8 +571,7 @@
 
 			{#if anyChapterStale}
 				<div class="stale-stage-banner">
-					<strong>⚠️ Stale Chapter Approval:</strong> A chapter was edited after approval.
-					Downstream stages are locked until all modified chapters are re-approved.
+					<strong>⚠️ Chapter edits:</strong> Re-approve to continue.
 				</div>
 			{/if}
 
@@ -637,23 +618,22 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
+					aria-label="Proceed to Panels & Pagination"
 					on:click={() => (activeStage = STAGES.PANELS)}
 					disabled={!allChaptersApproved}
 				>
-					Proceed to Panels & Pagination →
+					Continue →
 				</button>
 			</div>
 		</section>
 
-	<!-- Stage 4: Panels & Pages -->
 	{:else if activeStage === STAGES.PANELS}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 4: Panels & Page Partitioning</h3>
+				<h3>Stage 4: Panels</h3>
 			</header>
 			<p class="section-desc">
-				Review and edit dialogue, narration, and page layout allocations.
-				Editing panel text automatically invalidates the parent page's draft approval.
+				Edit panels. Changes reset page draft approval.
 			</p>
 
 			<div class="panels-list">
@@ -667,7 +647,7 @@
 									<button class="secondary-btn small" on:click={cancelEditPanel}>Cancel</button>
 								</div>
 							{:else}
-								<button class="edit-icon-btn" on:click={() => startEditPanel(panel)}>✏️ Edit Panel</button>
+								<button class="edit-icon-btn" on:click={() => startEditPanel(panel)} aria-label="✏️ Edit Panel">✏️ Edit</button>
 							{/if}
 						</div>
 
@@ -689,23 +669,22 @@
 			</div>
 
 			<div class="section-actions">
-				<button class="primary-btn" on:click={() => (activeStage = STAGES.DRAFT)}>
-					Proceed to Draft Sketches →
+				<button class="primary-btn" on:click={() => (activeStage = STAGES.DRAFT)} aria-label="Proceed to Draft Sketches">
+					Continue →
 				</button>
 			</div>
 		</section>
 
-	<!-- Stage 5: Draft Sketches -->
 	{:else if activeStage === STAGES.DRAFT}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 5: Rough Draft Sketches (Page Composition)</h3>
+				<h3>Stage 5: Drafts</h3>
 				<div class="header-tags">
 					{#if anyDraftStale}
-						<span class="approval-tag stale">⚠️ Stale Drafts Detected</span>
+						<span class="approval-tag stale">⚠️ Stale</span>
 					{:else}
 						<span class="approval-tag" class:approved={allDraftsApproved}>
-							{allDraftsApproved ? '✓ All Drafts Approved' : 'Approval Gate Required'}
+							{allDraftsApproved ? '✓ All Drafts Approved' : 'Approval needed'}
 						</span>
 					{/if}
 				</div>
@@ -713,13 +692,12 @@
 
 			{#if anyDraftStale}
 				<div class="stale-stage-banner">
-					<strong>⚠️ Stale Draft Approval:</strong> A draft sketch or panel was modified after approval.
-					Final line art generation is locked until all modified pages are re-approved.
+					<strong>⚠️ Page edits:</strong> Approve before line art.
 				</div>
 			{/if}
 
 			<p class="section-desc">
-				One rough stick draft per page lets you approve composition at low cost ($0.01 per attempt) before committing to final line art.
+				Approve each page draft before line art ($0.01 per attempt).
 			</p>
 
 			<div class="page-grid">
@@ -728,14 +706,14 @@
 						<h4>Page {page.page_number}</h4>
 						<div class="img-container">
 							{#if page.draft_image_url}
-								<img src={page.draft_image_url} alt="Draft Page {page.page_number}" />
+								<img src={page.draft_image_url} alt="Draft {page.page_number}" />
 							{:else}
-								<div class="empty-img">Draft Not Generated</div>
+								<div class="empty-img">No draft</div>
 							{/if}
 						</div>
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => generateDraft(page.id)}>
-								🔄 Regenerate Draft ($0.01)
+							<button class="secondary-btn" on:click={() => generateDraft(page.id)} aria-label="🔄 Regenerate Draft ($0.01)">
+								🔄 Regenerate ($0.01)
 							</button>
 
 							{#if isApprovalStale(page.draft_approved_at, page.updated_at)}
@@ -760,25 +738,25 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
+					aria-label="Proceed to Final Line Art"
 					on:click={() => (activeStage = STAGES.LINE_ART)}
 					disabled={!allDraftsApproved}
 				>
-					Proceed to Final Line Art →
+					Continue →
 				</button>
 			</div>
 		</section>
 
-	<!-- Stage 6: Final Line Art -->
 	{:else if activeStage === STAGES.LINE_ART}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 6: Final Line Art</h3>
+				<h3>Stage 6: Line Art</h3>
 				<div class="header-tags">
 					{#if anyLineArtStale}
-						<span class="approval-tag stale">⚠️ Stale Line Art Detected</span>
+						<span class="approval-tag stale">⚠️ Stale</span>
 					{:else}
 						<span class="approval-tag" class:approved={allLineArtApproved}>
-							{allLineArtApproved ? '✓ Line Art Approved' : 'Approval Gate Required'}
+							{allLineArtApproved ? '✓ Line Art Approved' : 'Approval needed'}
 						</span>
 					{/if}
 				</div>
@@ -786,29 +764,28 @@
 
 			{#if anyLineArtStale}
 				<div class="stale-stage-banner">
-					<strong>⚠️ Stale Line Art Approval:</strong> Line art was regenerated after approval.
-					Colouring studio is locked until re-approved.
+					<strong>⚠️ Line art changed:</strong> Re-approve to colour.
 				</div>
 			{/if}
 
 			<p class="section-desc">
-				High-contrast, bold comic outlines forming the fixed layer for client-side colouring.
+				Bold outlines for colouring.
 			</p>
 
 			<div class="page-grid">
 				{#each pages as page}
 					<div class="page-preview-card" class:card-stale={isApprovalStale(page.line_art_approved_at, page.updated_at)}>
-						<h4>Page {page.page_number} Line Art</h4>
+						<h4>Page {page.page_number}</h4>
 						<div class="img-container">
 							{#if page.line_art_image_url || page.line_art_url}
-								<img src={page.line_art_image_url || page.line_art_url} alt="Line Art Page {page.page_number}" />
+								<img src={page.line_art_image_url || page.line_art_url} alt="Page {page.page_number}" />
 							{:else}
-								<div class="empty-img">Line Art Not Generated</div>
+								<div class="empty-img">No line art</div>
 							{/if}
 						</div>
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => generateLineArt(page.id)}>
-								🔄 Regenerate Line Art ($0.01)
+							<button class="secondary-btn" on:click={() => generateLineArt(page.id)} aria-label="🔄 Regenerate Line Art ($0.01)">
+								🔄 Regenerate ($0.01)
 							</button>
 
 							{#if isApprovalStale(page.line_art_approved_at, page.updated_at)}
@@ -833,25 +810,25 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
+					aria-label="Proceed to Colouring Studio"
 					on:click={() => (activeStage = STAGES.COLOUR)}
 					disabled={!allLineArtApproved}
 				>
-					Proceed to Colouring Studio →
+					Continue →
 				</button>
 			</div>
 		</section>
 
-	<!-- Stage 7: Colouring -->
 	{:else if activeStage === STAGES.COLOUR}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 7: Colouring Studio</h3>
-				<button class="secondary-btn" on:click={() => suggestNewPalette(pages[0]?.id)}>
-					🎨 Suggest AI Palette
+				<h3>Stage 7: Colour</h3>
+				<button class="secondary-btn" on:click={() => suggestNewPalette(pages[0]?.id)} aria-label="🎨 Suggest AI Palette">
+					🎨 Suggest palette
 				</button>
 			</header>
 			<p class="section-desc">
-				Deterministic client-side bucket flood fill with undo and morphological gap-closing.
+				Fill areas, undo, or close outline gaps.
 			</p>
 
 			<ColourEditor
@@ -862,7 +839,6 @@
 			/>
 		</section>
 
-	<!-- Stage 8: Export -->
 	{:else if activeStage === STAGES.EXPORT}
 		<section class="stage-section">
 			<ExportView
@@ -952,7 +928,6 @@
 		cursor: pointer;
 	}
 
-	/* Structured Error Notice Banner */
 	.error-banner {
 		background: #fef2f2;
 		color: #991b1b;
