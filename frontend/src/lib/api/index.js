@@ -1,12 +1,24 @@
 import { ApiClient } from './client.js';
 import { MockApiClient } from './mockClient.js';
 
+function isDemoBuild() {
+	return (
+		(typeof __ICOMIC_DEMO_BUILD__ !== 'undefined' && __ICOMIC_DEMO_BUILD__) ||
+		(typeof import.meta !== 'undefined' && import.meta.env?.PUBLIC_USE_MOCK_API === 'true') ||
+		(typeof process !== 'undefined' && process.env?.PUBLIC_USE_MOCK_API === 'true')
+	);
+}
+
 export * from './types.js';
 export * from './client.js';
 export * from './mockClient.js';
 export * from './jobPolling.js';
 
 export function getApiConfig() {
+	if (isDemoBuild()) {
+		return { useMock: true, apiUrl: '', devMode: false, devUserId: null, authToken: null };
+	}
+
 	const isMockExplicit =
 		(typeof import.meta !== 'undefined' && import.meta.env?.PUBLIC_USE_MOCK_API === 'true') ||
 		(typeof process !== 'undefined' && process.env?.PUBLIC_USE_MOCK_API === 'true');
@@ -41,6 +53,10 @@ export function getApiConfig() {
 }
 
 export function createDefaultClient(options = {}) {
+	if (isDemoBuild()) {
+		return new MockApiClient(options);
+	}
+
 	const config = getApiConfig();
 	const useMock = options.useMock !== undefined ? options.useMock : config.useMock;
 
