@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 from typing_extensions import Self
 
-from ..provider_costs import ProviderCostLedger
+from ..provider_costs import ProviderBudgetError, ProviderCostLedger, token_output_bound
 from .image.port import ImageResult
 from .language.port import Message, TokenUsage
 from .vision.port import ColourItem, PaletteSuggestion
@@ -857,6 +857,66 @@ class MetaHttpClient:
         except ValueError:
             return None
 
+    def _count_capped_input(self, payload: dict[str, Any]) -> int:
+        """Count the exact single-turn input without generation or billable usage.
+
+        Meta documents /responses/input_tokens as authoritative for text, media,
+        and injected prompt scaffolding: https://dev.meta.ai/docs/token-counting.
+        No byte-size or fixed image-token estimate can safely replace this count.
+        """
+        token_output_bound(payload)  # Refuse uncapped calls before any HTTP.
+        if set(payload) - {
+            "model",
+            "messages",
+            "max_tokens",
+            "reasoning_effort",
+            "temperature",
+            "top_p",
+            "seed",
+            "stop",
+            "user",
+        }:
+            raise ProviderBudgetError("Unsupported parameters in capped input")
+        inputs = []
+        for message in payload["messages"]:
+            if set(message) - {"role", "content"} or message["role"] not in {
+                "system",
+                "developer",
+                "user",
+                "assistant",
+            }:
+                raise ProviderBudgetError("Unsupported message in capped input")
+            content = message["content"]
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    if part["type"] == "text":
+                        parts.append({"type": "input_text", "text": part["text"]})
+                    elif part["type"] == "image_url":
+                        url = part["image_url"]["url"]
+                        # Public URLs can change between counting and generation.
+                        if set(part["image_url"]) != {"url"} or not url.startswith("data:"):
+                            raise ProviderBudgetError(
+                                "Capped vision requires immutable inline images"
+                            )
+                        parts.append({"type": "input_image", "image_url": url})
+                    else:
+                        raise ProviderBudgetError("Unsupported media in capped input")
+                content = parts
+            inputs.append({"role": message["role"], "content": content})
+        response = self._client.post(
+            f"{self.base_url}/responses/input_tokens",
+            json={"model": payload["model"], "input": inputs},
+        )
+        try:
+            response.raise_for_status()
+            count = response.json()["input_tokens"]
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            raise ProviderBudgetError("Input token preflight failed; refusing generation") from exc
+        if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            raise ProviderBudgetError("Invalid input token preflight; refusing generation")
+        return count
+
     def post(
         self,
         endpoint: str,
@@ -866,6 +926,19 @@ class MetaHttpClient:
 
         Never logs API keys or full prompt bodies.
         """
+        input_tokens = None
+        if self.cost_ledger is not None:
+            # Freeze the same payload for preflight and transmission.
+            json_body = json.loads(json.dumps(json_body))
+            if self.cost_stage == "image" and (
+                endpoint != "/responses" or set(json_body) - {"model", "input", "user"}
+            ):
+                raise ProviderBudgetError("Capped images require a single-image request")
+            if self.cost_stage != "image":
+                if endpoint != "/chat/completions":
+                    raise ProviderBudgetError("Unsupported capped generation endpoint")
+                input_tokens = self._count_capped_input(json_body)
+
         # Apply client-side token bucket if configured
         if self.rate_limiter is not None:
             self.rate_limiter.acquire(1.0)
@@ -881,7 +954,7 @@ class MetaHttpClient:
             attempt += 1
             request_id: str | None = None
             reservation = (
-                self.cost_ledger.before_call(self.cost_stage, json_body)
+                self.cost_ledger.before_call(self.cost_stage, json_body, input_tokens=input_tokens)
                 if self.cost_ledger
                 else None
             )

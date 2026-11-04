@@ -33,6 +33,8 @@ def test_entire_meta_service_flow_with_webp_and_moderation_costs(tmp_path):
     calls = []
 
     def respond(request):
+        if request.url.path.endswith("/responses/input_tokens"):
+            return httpx.Response(200, json={"input_tokens": 100})
         payload = json.loads(request.content)
         calls.append((request.url.path, payload))
         if request.url.path.endswith("/chat/completions"):
@@ -193,6 +195,8 @@ def test_entire_meta_service_flow_with_webp_and_moderation_costs(tmp_path):
 
 def test_multicall_script_job_reports_all_observed_provider_usage(tmp_path):
     def respond(request):
+        if request.url.path.endswith("/responses/input_tokens"):
+            return httpx.Response(200, json={"input_tokens": 100})
         payload = json.loads(request.content)
         answer = FakeLanguageAdapter().complete(
             "fake", [Message(role=m["role"], content=m["content"]) for m in payload["messages"]]

@@ -30,6 +30,18 @@ class ProviderAccountingError(RuntimeError):
     pass
 
 
+def token_output_bound(payload):
+    """The wire cap already includes visible output and the reasoning reserve."""
+    if payload.get("model") != "muse-spark-1.3":
+        raise ProviderBudgetError("Capped token calls require the priced Muse Spark model")
+    bound = payload.get("max_tokens")
+    if isinstance(bound, bool) or not isinstance(bound, int) or bound <= 0:
+        raise ProviderBudgetError("Capped provider calls require a positive max_tokens wire limit")
+    if bound > MUSE_CONTEXT_TOKENS:
+        raise ProviderBudgetError("Output limit exceeds the Muse context window")
+    return bound
+
+
 class ProviderCostLedger:
     """Reserve before transmission, then replace reservations with observed usage.
 
@@ -131,7 +143,7 @@ class ProviderCostLedger:
         with self._locked():
             return self._report()
 
-    def before_call(self, stage, payload):
+    def before_call(self, stage, payload, *, input_tokens=None):
         if stage == "image":
             if payload.get("model") != "muse-image-1.0":
                 raise ProviderBudgetError("Capped image calls require the priced Muse image model")
@@ -140,20 +152,19 @@ class ProviderCostLedger:
         else:
             if stage not in {"language", "vision"} or payload.get("model") != "muse-spark-1.3":
                 raise ProviderBudgetError("Capped token calls require the priced Muse Spark model")
-            output_bound = payload.get("max_tokens")
+            output_bound = token_output_bound(payload)
+            # An absent explicit input count keeps the original conservative fallback.
+            # The HTTP boundary supplies the model-specific preflight count for the
+            # exact immutable request, including media and provider prompt scaffolding.
+            input_bound = MUSE_CONTEXT_TOKENS if input_tokens is None else input_tokens
             if (
-                isinstance(output_bound, bool)
-                or not isinstance(output_bound, int)
-                or output_bound <= 0
+                isinstance(input_bound, bool)
+                or not isinstance(input_bound, int)
+                or not 0 < input_bound <= MUSE_CONTEXT_TOKENS
             ):
-                raise ProviderBudgetError(
-                    "Capped provider calls require a positive max_tokens wire limit"
-                )
-            if output_bound > MUSE_CONTEXT_TOKENS:
-                raise ProviderBudgetError("Output limit exceeds the Muse context window")
-            # Reserve the entire documented context, including image tokens.
-            # Compressed image byte size is not a safe token-count bound.
-            input_bound = MUSE_CONTEXT_TOKENS
+                raise ProviderBudgetError("Invalid explicit input token bound")
+            if input_tokens is not None and input_bound + output_bound > MUSE_CONTEXT_TOKENS:
+                raise ProviderBudgetError("Input and output limits exceed the Muse context window")
             estimate = (
                 Decimal(input_bound) * Decimal(str(PRICE_INPUT_TOKEN_PER_M))
                 + Decimal(output_bound) * Decimal(str(PRICE_OUTPUT_TOKEN_PER_M))
@@ -215,7 +226,11 @@ class ProviderCostLedger:
                     call["actual_cost_usd"] = float(
                         Decimal(count) * Decimal(str(PRICE_PER_IMAGE_FLAT_USD))
                     )
-            elif call["stage"] != "image" and isinstance(usage, dict):
+            elif (
+                call["status"] == "completed"
+                and call["stage"] != "image"
+                and isinstance(usage, dict)
+            ):
                 inputs, outputs = usage.get("prompt_tokens"), usage.get("completion_tokens")
                 cached_details = usage.get("prompt_tokens_details") or {}
                 cached = (
@@ -245,6 +260,13 @@ class ProviderCostLedger:
                         )
                         / 1_000_000
                     )
+            if call["usage"] is not None and (
+                call["usage"]["input_tokens"] > call["input_bound"]
+                or call["usage"]["output_tokens"] > call["output_bound"]
+            ):
+                raise ProviderAccountingError(
+                    "Observed usage exceeded its explicit token bounds; stopping"
+                )
             if (
                 call["actual_cost_usd"] is not None
                 and call["actual_cost_usd"] > call["reserved_cost_usd"]
