@@ -8,9 +8,7 @@ from ..gen.models import ChapterOutlineItem, CharacterProfile, PanelTextItem
 class PanelService:
     """Service handling chapter outlines and panel text generation."""
 
-    def __init__(
-        self, language_adapter: LanguagePort, model_id: str = "meta-llama-3.3-70b-instruct"
-    ):
+    def __init__(self, language_adapter: LanguagePort, model_id: str = ""):
         self.language_adapter = language_adapter
         self.model_id = model_id
 

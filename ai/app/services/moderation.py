@@ -6,7 +6,7 @@ from ..adapters.language.port import LanguagePort, Message
 class ModerationService:
     """Service pre-screening prompts before dispatching to image generation."""
 
-    def __init__(self, language_adapter: LanguagePort, model_id: str = "meta-llama-guard-3-8b"):
+    def __init__(self, language_adapter: LanguagePort, model_id: str = ""):
         self.language_adapter = language_adapter
         self.model_id = model_id
 

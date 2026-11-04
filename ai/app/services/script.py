@@ -8,9 +8,7 @@ from ..gen.models import CharacterProfile
 class ScriptService:
     """Business logic for script analysis and character extraction."""
 
-    def __init__(
-        self, language_adapter: LanguagePort, model_id: str = "meta-llama-3.3-70b-instruct"
-    ):
+    def __init__(self, language_adapter: LanguagePort, model_id: str = ""):
         self.language_adapter = language_adapter
         self.model_id = model_id
 

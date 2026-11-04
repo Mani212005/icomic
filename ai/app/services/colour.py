@@ -8,9 +8,7 @@ from ..gen.models import ColourRegionSuggestion
 class ColourService:
     """Service suggesting harmonious color palettes using multimodal vision models."""
 
-    def __init__(
-        self, vision_adapter: VisionPort, model_id: str = "meta-llama-3.2-11b-vision-instruct"
-    ):
+    def __init__(self, vision_adapter: VisionPort, model_id: str = ""):
         self.vision_adapter = vision_adapter
         self.model_id = model_id
 
