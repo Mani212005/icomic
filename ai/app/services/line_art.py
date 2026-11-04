@@ -6,7 +6,7 @@ from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
 from ..gen.models import PanelTextItem
 from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
-from .images import store_image
+from .images import store_page_image
 
 
 class LineArtService:
@@ -50,7 +50,7 @@ class LineArtService:
             style=style,
         )
 
-        url = store_image(
+        url = store_page_image(
             self.storage_adapter, f"pages/{page_id}/line_art_page_{page_number}", result
         )
         return url, result.model_id, result.provenance_metadata
