@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""Run the full comic flow against the local Go API and configured AI adapters.
+
+Usage: make e2e-comic [E2E_ARGS="--live --cost-cap-usd 2"]
+The default adapter configuration is fake. Live use requires --live, ICOMIC_E2E_LIVE=1,
+and --cost-cap-usd 2; all adapter selection still comes from ADAPTER_* environment.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ARTIFACT_DIR = Path("/home/mani/icomic-artifacts/comic-e2e")
+PDF_PATH = ARTIFACT_DIR / "latest.pdf"
+CAP_USD = 2.0
+DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
+API_URL = "http://127.0.0.1:8080"
+AI_URL = "http://127.0.0.1:8000"
+
+AI_PATH = REPO_ROOT / "ai"
+sys.path.insert(0, str(AI_PATH))
+from app.adapters.meta_http import load_reasoning_config
+from app.costs import calculate_checklist_worst_case, estimate_call_worst_case
+
+
+class E2EError(RuntimeError):
+    pass
+
+
+def live_authorization_error(
+    live_flag: bool,
+    environ: dict[str, str],
+    cost_cap: float | None,
+) -> str | None:
+    if environ.get("CI") or environ.get("PYTEST_CURRENT_TEST"):
+        return "live mode is disabled in CI and tests"
+    if not live_flag:
+        return "live mode requires the --live flag"
+    if environ.get("ICOMIC_E2E_LIVE") != "1":
+        return "live mode requires ICOMIC_E2E_LIVE=1"
+    if cost_cap != CAP_USD:
+        return "live mode requires --cost-cap-usd 2"
+    return None
+
+
+class CostGuard:
+    """Reserve the third planned live check and reject before over-budget calls."""
+
+    def __init__(self, cap: float, live: bool):
+        self.cap = cap
+        self.live = live
+        self.actual = 0.0
+        self.stages: list[dict[str, Any]] = []
+        self.reserve_tokens = load_reasoning_config()[1] if live else 0
+        self.third_check_reserve = (
+            calculate_checklist_worst_case(self.reserve_tokens) if live else 0.0
+        )
+
+    def before_call(self, stage: str, count: int = 1) -> float:
+        estimate = (
+            estimate_call_worst_case(stage, self.reserve_tokens) * count
+            if self.live
+            else 0.0
+        )
+        if self.actual + estimate + self.third_check_reserve > self.cap + 1e-12:
+            raise E2EError(
+                f"cost guard refused {stage}: actual ${self.actual:.6f} + "
+                f"worst-case ${estimate:.6f} + third-check reserve "
+                f"${self.third_check_reserve:.6f} exceeds ${self.cap:.2f}"
+            )
+        return estimate
+
+    def record(
+        self, stage: str, job_id: str | None, usage_cost: float, estimate: float
+    ) -> None:
+        amount = max(0.0, usage_cost)
+        if self.live and stage in {"language", "vision", "image"} and amount <= 0:
+            raise E2EError(
+                f"live {stage} call returned no billable usage record; aborting"
+            )
+        self.actual += amount
+        if self.actual + self.third_check_reserve > self.cap + 1e-12:
+            raise E2EError("recorded usage exceeded the hard cap reserve; aborting")
+        self.stages.append(
+            {
+                "stage": stage,
+                "job_id": job_id,
+                "actual_cost_usd": round(amount, 9),
+                "worst_case_estimate_usd": round(estimate, 9),
+                "cumulative_spend_usd": round(self.actual, 9),
+            }
+        )
+        print(f"Cumulative spend: ${self.actual:.6f} USD after {stage}")
+
+
+def json_request(
+    path: str,
+    method: str = "GET",
+    payload: dict[str, Any] | None = None,
+    base_url: str = API_URL,
+) -> Any:
+    data = json.dumps(payload).encode() if payload is not None else None
+    request = Request(
+        f"{base_url}{path}",
+        data=data,
+        method=method,
+        headers={"X-User-ID": DEV_USER_ID, "Content-Type": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            body = response.read()
+            if "application/pdf" in response.headers.get("Content-Type", ""):
+                return body
+            return json.loads(body) if body else {}
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise E2EError(f"{method} {path} returned HTTP {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise E2EError(f"{method} {path} failed: {exc.reason}") from exc
+
+
+def checked_call(
+    guard: CostGuard,
+    stage: str,
+    count: int,
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None = None,
+) -> Any:
+    estimate = guard.before_call(stage, count)
+    result = json_request(path, method, payload)
+    job_id = None
+    if isinstance(result, dict):
+        job_record = result.get("job")
+        job_id = result.get("job_id") or (
+            job_record.get("id") if isinstance(job_record, dict) else None
+        )
+    actual = 0.0
+    if job_id:
+        job = json_request(f"/internal/v1/job/{job_id}/status", base_url=AI_URL)
+        if job.get("status") != "done":
+            raise E2EError(
+                f"{stage} AI usage record did not complete: {job.get('status')}"
+            )
+        actual = float(job.get("actual_cost") or 0.0)
+    guard.record(stage, job_id, actual, estimate)
+    return result
+
+
+def wait_for_api(timeout: float = 180.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            json_request("/healthz")
+            return
+        except E2EError:
+            time.sleep(2)
+    raise E2EError("Go API did not become healthy within 180 seconds")
+
+
+def ensure_services() -> None:
+    command = [
+        "docker",
+        "compose",
+        "-f",
+        "deploy/docker-compose.yml",
+        "up",
+        "-d",
+        "--build",
+        "postgres",
+        "redis",
+        "ai",
+        "backend",
+    ]
+    subprocess.run(command, cwd=REPO_ROOT, check=True)
+    wait_for_api()
+
+
+def require(mapping: dict[str, Any], key: str, message: str) -> Any:
+    value = mapping.get(key)
+    if value is None or value == "":
+        raise E2EError(message)
+    return value
+
+
+def verify_pdf(pdf: bytes, expected_comic_pages: int) -> None:
+    if not pdf or not pdf.startswith(b"%PDF-"):
+        raise E2EError("download is empty or missing the PDF header")
+    page_count = len(re.findall(rb"/Type\s*/Page\b", pdf))
+    if page_count < expected_comic_pages:
+        raise E2EError(
+            f"PDF contains {page_count} pages; expected at least {expected_comic_pages} generated pages"
+        )
+
+
+def run_flow(guard: CostGuard) -> tuple[int, str]:
+    usage = json_request("/api/v1/me/credit-usage")
+    if float(usage.get("balance", 0)) < 10:
+        raise E2EError("dev account has insufficient starting credits")
+
+    script = (
+        "Nia, a young lighthouse keeper, discovers a tiny brass bird during a storm. "
+        "The bird lights the dark sea, guiding a lost boat safely home. At sunrise, Nia "
+        "sets it free and watches it fly toward the bright horizon."
+    )
+    project_response = json_request(
+        "/api/v1/projects",
+        "POST",
+        {
+            "title": f"Lighthouse Bird {datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+            "original_script": script,
+            "art_style": "storybook",
+            "chapter_count": 1,
+        },
+    )
+    project = require(
+        project_response, "project", "project creation response has no project"
+    )
+    project_id = require(project, "id", "created project has no id")
+    print(f"PASS project created: {project_id}")
+
+    analysis = checked_call(
+        guard, "language", 1, "POST", f"/api/v1/projects/{project_id}/analyze"
+    )
+    characters = analysis.get("character_profiles", [])
+    if not characters:
+        raise E2EError("script analysis returned no characters")
+    print(f"PASS script written and analyzed: {len(characters)} characters")
+
+    character_list = json_request(f"/api/v1/projects/{project_id}/characters").get(
+        "characters", []
+    )
+    if len(character_list) != len(characters):
+        raise E2EError("character list does not match script analysis")
+    for character in character_list:
+        cid = require(character, "id", "generated character has no id")
+        checked_call(
+            guard, "image", 1, "POST", f"/api/v1/characters/{cid}/reference-image"
+        )
+        json_request(f"/api/v1/characters/{cid}/approve", "POST")
+    print(f"PASS character references generated and approved: {len(character_list)}")
+
+    outline = checked_call(
+        guard, "language", 1, "POST", f"/api/v1/projects/{project_id}/chapters"
+    )
+    chapters = outline.get("chapters", [])
+    if not chapters:
+        raise E2EError("chapter generation returned no chapters")
+    for chapter in chapters:
+        json_request(f"/api/v1/chapters/{chapter['id']}/approve", "POST")
+    chapter_id = chapters[0]["id"]
+    print(f"PASS chapter outline generated and approved: {len(chapters)}")
+
+    panel_response = checked_call(
+        guard, "language", 1, "POST", f"/api/v1/chapters/{chapter_id}/panels"
+    )
+    panels = panel_response.get("panels", [])
+    pages = panel_response.get("pages", [])
+    if not panels or not pages:
+        raise E2EError("panel generation did not produce panels and pages")
+    print(f"PASS comic pages generated: {len(panels)} panels across {len(pages)} pages")
+
+    for page in pages:
+        page_id = page["id"]
+        checked_call(guard, "image", 1, "POST", f"/api/v1/pages/{page_id}/draft")
+        json_request(f"/api/v1/pages/{page_id}/draft/approve", "POST")
+        checked_call(guard, "image", 1, "POST", f"/api/v1/pages/{page_id}/line-art")
+        json_request(f"/api/v1/pages/{page_id}/line-art/approve", "POST")
+        checked_call(
+            guard,
+            "vision",
+            1,
+            "POST",
+            f"/api/v1/pages/{page_id}/colour-palette/suggest",
+        )
+        json_request(f"/api/v1/pages/{page_id}/colour/approve", "POST")
+    print(f"PASS pages inked and coloured: {len(pages)}")
+
+    exported = json_request(f"/api/v1/projects/{project_id}/export", "POST")
+    export = require(exported, "export", "export response has no export record")
+    export_id = require(export, "id", "export response has no id")
+    export_status = json_request(f"/api/v1/exports/{export_id}").get("export", {})
+    if export_status.get("status") != "completed":
+        raise E2EError(f"export did not complete: {export_status.get('status')}")
+    pdf = json_request(f"/api/v1/exports/{export_id}/download")
+    if not isinstance(pdf, bytes):
+        raise E2EError("download endpoint did not return PDF bytes")
+    verify_pdf(pdf, len(pages))
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    staged = ARTIFACT_DIR / f"latest-{timestamp}.pdf"
+    staged.write_bytes(pdf)
+    shutil.copyfile(staged, PDF_PATH)
+    print(f"PASS export and PDF verified: {len(pages)} generated page(s)")
+    return len(pages), project_id
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="explicitly authorize configured real adapters",
+    )
+    parser.add_argument(
+        "--cost-cap-usd",
+        type=float,
+        help="required hard cap for live mode (exactly 2 USD)",
+    )
+    parser.add_argument(
+        "--skip-services",
+        action="store_true",
+        help="use already-running local services",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    if args.live:
+        error = live_authorization_error(args.live, dict(os.environ), args.cost_cap_usd)
+        if error:
+            print(f"REFUSED: {error}", file=sys.stderr)
+            return 2
+        configured = [
+            os.environ.get(f"ADAPTER_{name}", "fake").lower()
+            for name in ("LANGUAGE", "VISION", "IMAGE")
+        ]
+        if configured != ["meta", "meta", "meta"]:
+            print(
+                "REFUSED: live mode requires ADAPTER_LANGUAGE, ADAPTER_VISION, and ADAPTER_IMAGE=meta",
+                file=sys.stderr,
+            )
+            return 2
+    elif args.cost_cap_usd is not None:
+        print(
+            "REFUSED: --cost-cap-usd is accepted only together with --live",
+            file=sys.stderr,
+        )
+        return 2
+    else:
+        configured = [
+            os.environ.get(f"ADAPTER_{name}", "fake").lower()
+            for name in ("LANGUAGE", "VISION", "IMAGE")
+        ]
+        if configured != ["fake", "fake", "fake"]:
+            print(
+                "REFUSED: non-fake adapters require all live-mode safeguards",
+                file=sys.stderr,
+            )
+            return 2
+
+    live = bool(args.live)
+    if not args.skip_services:
+        ensure_services()
+    guard = CostGuard(CAP_USD if live else float("inf"), live)
+    try:
+        page_count, project_id = run_flow(guard)
+    except (E2EError, subprocess.CalledProcessError) as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return 1
+    report = {
+        "project_id": project_id,
+        "live": live,
+        "hard_cap_usd": CAP_USD if live else None,
+        "third_check_reserve_usd": round(guard.third_check_reserve, 9),
+        "actual_spend_usd": round(guard.actual, 9),
+        "generated_comic_pages": page_count,
+        "stages": guard.stages,
+    }
+    (ARTIFACT_DIR / "cost-report.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(f"Cost report: {ARTIFACT_DIR / 'cost-report.json'}")
+    print(str(PDF_PATH))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

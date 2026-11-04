@@ -1,6 +1,7 @@
 """Script analysis service."""
 
 from ..adapters.language.port import LanguagePort, Message
+from ..costs import WORST_CASE_TEXT_OUTPUT_TOKENS
 from ..gen.models import CharacterProfile
 
 
@@ -41,6 +42,7 @@ class ScriptService:
                 ),
                 Message(role="user", content=clean_script),
             ],
+            max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
         )
 
         # Build extracted character profiles

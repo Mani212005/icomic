@@ -46,7 +46,6 @@ from app.adapters.image.meta import MetaImageAdapter
 from app.adapters.language.meta import MetaLanguageAdapter
 from app.adapters.language.port import Message
 from app.adapters.meta_http import (
-    DEFAULT_REASONING_RESERVE_TOKENS,
     MetaConfigurationError,
     MetaHttpClient,
     detect_image_media_type,
@@ -54,22 +53,23 @@ from app.adapters.meta_http import (
     validate_model_id_tier,
 )
 from app.adapters.vision.meta import MetaVisionAdapter
+from app.costs import (
+    PRICE_PER_IMAGE_FLAT_USD,
+    WORST_CASE_TEXT_INPUT_TOKENS,
+    WORST_CASE_TEXT_OUTPUT_TOKENS,
+    WORST_CASE_VISION_INPUT_TOKENS,
+    WORST_CASE_VISION_OUTPUT_TOKENS,
+    calculate_checklist_worst_case,
+    calculate_token_cost,
+    estimate_call_worst_case,
+)
 
 # ---------------------------------------------------------------------------
 # Pricing & Budget Constants
 # ---------------------------------------------------------------------------
 
-PRICE_INPUT_TOKEN_PER_M: float = 1.25  # $1.25 per 1,000,000 input tokens
-PRICE_OUTPUT_TOKEN_PER_M: float = 4.25  # $4.25 per 1,000,000 output tokens
-PRICE_PER_IMAGE_FLAT_USD: float = 0.01  # $0.01 per muse-image-1.0 call
 DEFAULT_BUDGET_USD: float = 5.00
 MAX_CHECKLIST_COST_USD: float = 0.05
-
-# Intended answer caps. Wire output caps also include the configured reasoning reserve.
-WORST_CASE_TEXT_INPUT_TOKENS = 60
-WORST_CASE_TEXT_OUTPUT_TOKENS = 32
-WORST_CASE_VISION_INPUT_TOKENS = 350
-WORST_CASE_VISION_OUTPUT_TOKENS = 64
 
 DEFAULT_LEDGER_PATH = REPO_ROOT / ".live-spend.jsonl"
 DEFAULT_DIAGNOSTICS_PATH = REPO_ROOT / ".live-diagnostics.json"
@@ -137,41 +137,6 @@ def parse_image_dimensions(data: bytes) -> dict[str, int] | None:
             h = 1 + data[27] + (data[28] << 8) + (data[29] << 16)
             return {"width": w, "height": h}
     return None
-
-
-def calculate_token_cost(input_tokens: int, output_tokens: int) -> float:
-    """Calculate estimated USD cost for text/vision tokens on muse-spark-1.3."""
-    in_cost = (input_tokens * PRICE_INPUT_TOKEN_PER_M) / 1_000_000.0
-    out_cost = (output_tokens * PRICE_OUTPUT_TOKEN_PER_M) / 1_000_000.0
-    return in_cost + out_cost
-
-
-def estimate_call_worst_case(
-    stage: str, reserve_tokens: int = DEFAULT_REASONING_RESERVE_TOKENS
-) -> float:
-    """Return conservative worst-case cost estimate for a single checklist step."""
-    if stage == "language":
-        return calculate_token_cost(
-            WORST_CASE_TEXT_INPUT_TOKENS, WORST_CASE_TEXT_OUTPUT_TOKENS + reserve_tokens
-        )
-    if stage == "vision":
-        return calculate_token_cost(
-            WORST_CASE_VISION_INPUT_TOKENS, WORST_CASE_VISION_OUTPUT_TOKENS + reserve_tokens
-        )
-    if stage == "image":
-        return PRICE_PER_IMAGE_FLAT_USD
-    return 0.0
-
-
-def calculate_checklist_worst_case(
-    reserve_tokens: int = DEFAULT_REASONING_RESERVE_TOKENS,
-) -> float:
-    """Return total worst-case cost estimate for entire 3-step checklist."""
-    return (
-        estimate_call_worst_case("language", reserve_tokens)
-        + estimate_call_worst_case("vision", reserve_tokens)
-        + estimate_call_worst_case("image")
-    )
 
 
 # ---------------------------------------------------------------------------

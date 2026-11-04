@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .adapters.factory import AdapterSet, build_adapters_from_env
+from .costs import actual_stage_cost
 from .gen.models import (
     AnalyzeScriptRequest,
     AnalyzeScriptResponse,
@@ -124,7 +125,10 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         profiles, chapters, word_count, warnings = script_service.analyze_script(
             req.script, req.target_chapter_count
         )
-        job_statuses[req.job_id] = {"status": "done", "actual_cost": 0.0}
+        job_statuses[req.job_id] = {
+            "status": "done",
+            "actual_cost": actual_stage_cost("language", wired_adapters.language),
+        }
         return AnalyzeScriptResponse(
             job_id=req.job_id,
             character_profiles=profiles,
@@ -145,7 +149,10 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             hashed_user_id=req.hashed_user_id,
             style=req.style,
         )
-        job_statuses[req.job_id] = {"status": "done", "actual_cost": 0.01}
+        job_statuses[req.job_id] = {
+            "status": "done",
+            "actual_cost": actual_stage_cost("image", wired_adapters.image, model_id),
+        }
         return GenerateCharacterReferenceResponse(
             job_id=req.job_id,
             image_url=url,
@@ -163,7 +170,10 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             chapter_count=req.chapter_count,
             approved_characters=req.approved_characters,
         )
-        job_statuses[req.job_id] = {"status": "done", "actual_cost": 0.0}
+        job_statuses[req.job_id] = {
+            "status": "done",
+            "actual_cost": actual_stage_cost("language", wired_adapters.language),
+        }
         return GenerateChapterOutlineResponse(
             job_id=req.job_id,
             chapters=chapters,
@@ -180,7 +190,10 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             chapter_summary=req.chapter_summary,
             characters=req.characters,
         )
-        job_statuses[req.job_id] = {"status": "done", "actual_cost": 0.0}
+        job_statuses[req.job_id] = {
+            "status": "done",
+            "actual_cost": actual_stage_cost("language", wired_adapters.language),
+        }
         return GeneratePanelTextResponse(
             job_id=req.job_id,
             panels=panels,
@@ -199,7 +212,10 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             hashed_user_id=req.hashed_user_id,
             character_reference_image_urls=req.character_reference_image_urls,
         )
-        job_statuses[req.job_id] = {"status": "done", "actual_cost": 0.01}
+        job_statuses[req.job_id] = {
+            "status": "done",
+            "actual_cost": actual_stage_cost("image", wired_adapters.image, model_id),
+        }
         return GenerateDraftSketchResponse(
             job_id=req.job_id,
             image_url=url,
@@ -221,7 +237,10 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             hashed_user_id=req.hashed_user_id,
             character_reference_image_urls=req.character_reference_image_urls,
         )
-        job_statuses[req.job_id] = {"status": "done", "actual_cost": 0.01}
+        job_statuses[req.job_id] = {
+            "status": "done",
+            "actual_cost": actual_stage_cost("image", wired_adapters.image, model_id),
+        }
         return GenerateLineArtResponse(
             job_id=req.job_id,
             image_url=url,
@@ -238,7 +257,10 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             line_art_image_bytes=b"dummy-line-art-bytes",
             panel_context=req.panel_context,
         )
-        job_statuses[req.job_id] = {"status": "done", "actual_cost": 0.0}
+        job_statuses[req.job_id] = {
+            "status": "done",
+            "actual_cost": actual_stage_cost("vision", wired_adapters.vision),
+        }
         return SuggestColourPaletteResponse(
             job_id=req.job_id,
             theme=theme,

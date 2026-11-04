@@ -245,13 +245,16 @@ CREATE TABLE IF NOT EXISTS exports (
         'pending',
         'running',
         'done',
+        'completed',
         'failed',
         'cancelled'
     )),
     provenance_metadata_preserved BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
-    CONSTRAINT chk_exports_provenance_preserved CHECK (status != 'done' OR provenance_metadata_preserved = TRUE)
+    CONSTRAINT chk_exports_provenance_preserved CHECK (
+        status NOT IN ('done', 'completed') OR provenance_metadata_preserved = TRUE
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_exports_project_id ON exports(project_id);

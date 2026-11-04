@@ -209,7 +209,7 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		OriginalScript: body.OriginalScript,
 		ChapterCount:   body.ChapterCount,
 		ArtStyle:       body.ArtStyle,
-		Status:         "created",
+		Status:         "draft",
 		CreatedAt:      time.Now().UTC(),
 		UpdatedAt:      time.Now().UTC(),
 	}
@@ -825,7 +825,7 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 	actualCost := 0.0
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"chapters": createdChapters})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"chapters": createdChapters, "job_id": job.ID})
 }
 
 // ListChapters handles GET /api/v1/projects/{id}/chapters
@@ -1047,6 +1047,7 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"job_id": job.ID,
 		"panels": panels,
 		"pages":  pages,
 	})
@@ -1919,12 +1920,15 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		ProvenanceMetadataPreserved: pdfResp.ProvenanceMetadataPreserved,
 		CreatedAt:                   time.Now().UTC(),
 	}
-	_ = s.Repo.CreateExport(r.Context(), exp)
+	if err := s.Repo.CreateExport(r.Context(), exp); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save export: %v", err))
+		return
+	}
 
 	actualCost := 0.0
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{"export": exp})
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{"export": exp, "job_id": job.ID})
 }
 
 // GetExport handles GET /api/v1/exports/{id}

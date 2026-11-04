@@ -1,6 +1,7 @@
 """Panel text and chapter outline generation service."""
 
 from ..adapters.language.port import LanguagePort, Message
+from ..costs import WORST_CASE_TEXT_OUTPUT_TOKENS
 from ..gen.models import ChapterOutlineItem, CharacterProfile, PanelTextItem
 
 
@@ -29,6 +30,7 @@ class PanelService:
                 ),
                 Message(role="user", content=script),
             ],
+            max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
         )
 
         char_names = [c.name for c in approved_characters] or ["Protagonist"]
@@ -62,6 +64,7 @@ class PanelService:
                     content=f"Generate 4 panels for {chapter_title}: {chapter_summary}.",
                 ),
             ],
+            max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
         )
 
         char_list = ", ".join(characters) if characters else "Protagonist"
