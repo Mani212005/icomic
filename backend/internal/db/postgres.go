@@ -15,7 +15,8 @@ import (
 
 // PostgresRepository implements Repository backed by PostgreSQL.
 type PostgresRepository struct {
-	db *sql.DB
+	db           *sql.DB
+	transactions TransactionStarter
 }
 
 func NewPostgresRepository(connStr string) (*PostgresRepository, error) {
@@ -29,10 +30,11 @@ func NewPostgresRepository(connStr string) (*PostgresRepository, error) {
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
-	return &PostgresRepository{db: db}, nil
+	return NewPostgresRepositoryWithDB(db), nil
 }
 
 func (p *PostgresRepository) Close() error {
@@ -697,59 +699,14 @@ func (p *PostgresRepository) ListApprovals(ctx context.Context, projectID string
 }
 
 // Generation Jobs & Credit Ledger (Transactional)
-func (p *PostgresRepository) CreateJobWithDebit(ctx context.Context, job *domain.GenerationJob, debitAmount float64) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+// CreateJobWithDebit is retained for repository callers. Generation services use
+// CreateGeneration so they can supply the entity and receive idempotent results.
+func (p *PostgresRepository) CreateJobWithDebit(ctx context.Context, job *domain.GenerationJob, amount float64) error {
+	result, _, err := p.CreateGeneration(ctx, job, GenerationOptions{}, amount)
+	if err == nil {
+		*job = *result
 	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Lock the latest ledger entry to get current balance
-	balQuery := `SELECT balance_after FROM credit_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`
-	var currentBal float64
-	err = tx.QueryRowContext(ctx, balQuery, job.UserID).Scan(&currentBal)
-	if errors.Is(err, sql.ErrNoRows) {
-		currentBal = 100.0 // Default initial balance if not yet seeded
-	} else if err != nil {
-		return fmt.Errorf("read balance: %w", err)
-	}
-
-	if debitAmount > 0 && currentBal < debitAmount {
-		return ErrInsufficientCredit
-	}
-
-	if job.ID == "" {
-		job.ID = uuid.NewString()
-	}
-	now := time.Now()
-	if job.CreatedAt.IsZero() {
-		job.CreatedAt = now
-	}
-
-	newBal := currentBal - debitAmount
-
-	insertJob := `
-		INSERT INTO generation_jobs (id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-	`
-	_, err = tx.ExecContext(ctx, insertJob, job.ID, job.ProjectID, job.UserID, job.JobType, job.Stage, job.ModelID, job.Status, job.IdempotencyKey, job.EstimatedCost, job.ActualCost, job.HashedUserID, job.ErrorMessage, job.CreatedAt)
-	if err != nil {
-		return fmt.Errorf("insert generation job: %w", err)
-	}
-
-	if debitAmount > 0 {
-		insertLedger := `
-			INSERT INTO credit_ledger (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after, created_at)
-			VALUES ($1, $2, $3, $4, 'debit', $5, $6, $7)
-		`
-		ledgerID := uuid.NewString()
-		_, err = tx.ExecContext(ctx, insertLedger, ledgerID, job.UserID, job.ProjectID, job.ID, debitAmount, newBal, now)
-		if err != nil {
-			return fmt.Errorf("insert ledger debit: %w", err)
-		}
-	}
-
-	return tx.Commit()
+	return err
 }
 
 func (p *PostgresRepository) GetJob(ctx context.Context, id string) (*domain.GenerationJob, error) {
@@ -843,82 +800,37 @@ func (p *PostgresRepository) UpdateJob(ctx context.Context, job *domain.Generati
 }
 
 func (p *PostgresRepository) RecordRefund(ctx context.Context, jobID string, amount float64) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var userID string
-	var projectID sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT user_id, project_id FROM generation_jobs WHERE id = $1`, jobID).Scan(&userID, &projectID)
-	if err != nil {
-		return err
-	}
-
-	var currentBal float64
-	err = tx.QueryRowContext(ctx, `SELECT balance_after FROM credit_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, userID).Scan(&currentBal)
-	if err != nil {
-		return err
-	}
-
-	newBal := currentBal + amount
-	now := time.Now().UTC()
-	var projVal any = nil
-	if projectID.Valid {
-		projVal = projectID.String
-	}
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO credit_ledger (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after, created_at)
-		VALUES ($1, $2, $3, $4, 'refund', $5, $6, $7)
-	`, uuid.NewString(), userID, projVal, jobID, amount, newBal, now)
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	_, err := p.RefundGeneration(ctx, jobID, amount)
+	return err
 }
 
 func (p *PostgresRepository) RecordAdjustment(ctx context.Context, userID, projectID string, amount float64) error {
-	tx, err := p.db.BeginTx(ctx, nil)
+	if !validAmount(amount) {
+		return fmt.Errorf("adjustment must be nonnegative")
+	}
+	tx, err := p.transactions.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-
-	var currentBal float64
-	err = tx.QueryRowContext(ctx, `SELECT balance_after FROM credit_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, userID).Scan(&currentBal)
-	if errors.Is(err, sql.ErrNoRows) {
-		currentBal = 100.0
-	} else if err != nil {
+	var locked string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1::uuid FOR UPDATE`, userID).Scan(&locked); err != nil {
 		return err
 	}
-
-	newBal := currentBal + amount
-	now := time.Now().UTC()
-	var projVal any = nil
-	if projectID != "" {
-		projVal = projectID
-	}
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO credit_ledger (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after, created_at)
-		VALUES ($1, $2, $3, NULL, 'adjustment', $4, $5, $6)
-	`, uuid.NewString(), userID, projVal, amount, newBal, now)
+	balance, err := transactionBalance(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
-
+	if _, err := insertCredit(ctx, tx, userID, projectID, "", "adjustment", amount, balance+amount); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (p *PostgresRepository) GetCreditBalance(ctx context.Context, userID string) (float64, error) {
-	query := `SELECT balance_after FROM credit_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`
-	var bal float64
-	err := p.db.QueryRowContext(ctx, query, userID).Scan(&bal)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 100.0, nil
-	}
-	return bal, err
+	var balance float64
+	err := p.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE transaction_type WHEN 'debit' THEN -amount ELSE amount END),0) FROM credit_ledger WHERE user_id=$1::uuid`, userID).Scan(&balance)
+	return balance, err
 }
 
 func (p *PostgresRepository) ListCreditLedger(ctx context.Context, userID string) ([]*domain.CreditLedger, error) {
@@ -957,8 +869,8 @@ func (p *PostgresRepository) ListCreditLedger(ctx context.Context, userID string
 func (p *PostgresRepository) GetUserDailyImageCount(ctx context.Context, userID string, since time.Time) (int, error) {
 	query := `
 		SELECT COUNT(*)
-		FROM generation_jobs
-		WHERE user_id = $1 AND job_type IN ('character_reference', 'draft_sketch', 'final_line_art') AND created_at >= $2
+		FROM image_quota_usage
+		WHERE user_id = $1::uuid AND created_at >= $2::timestamptz
 	`
 	var count int
 	err := p.db.QueryRowContext(ctx, query, userID, since).Scan(&count)
@@ -968,8 +880,8 @@ func (p *PostgresRepository) GetUserDailyImageCount(ctx context.Context, userID 
 func (p *PostgresRepository) GetUserMonthlyImageCount(ctx context.Context, userID string, since time.Time) (int, error) {
 	query := `
 		SELECT COUNT(*)
-		FROM generation_jobs
-		WHERE user_id = $1 AND job_type IN ('character_reference', 'draft_sketch', 'final_line_art') AND created_at >= $2
+		FROM image_quota_usage
+		WHERE user_id = $1::uuid AND created_at >= $2::timestamptz
 	`
 	var count int
 	err := p.db.QueryRowContext(ctx, query, userID, since).Scan(&count)

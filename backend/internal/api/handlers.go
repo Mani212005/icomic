@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"icomic/backend/gen"
 	"icomic/backend/internal/auth"
 	"icomic/backend/internal/credits"
+	"icomic/backend/internal/db"
 	"icomic/backend/internal/domain"
 	"icomic/backend/internal/jobs"
 )
@@ -506,32 +508,25 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 	}
 
 	idempKey := uuid.NewString()
-	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		ProjectID:      proj.ID,
-		UserID:         userID,
-		JobType:        "character_reference",
-		Stage:          "reference",
-		ModelID:        "muse-image-1.0",
-		IdempotencyKey: idempKey,
-		EstimatedCost:  credits.ImageUnitPrice,
-		HashedUserID:   hashedUID,
+	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		EntityID:         ch.ID,
+		DebitAmount:      credits.ImageUnitPrice,
+		KillSwitchActive: s.IsKillSwitchActive(),
+		ProjectID:        proj.ID,
+		UserID:           userID,
+		JobType:          "character_reference",
+		Stage:            "reference",
+		ModelID:          "muse-image-1.0",
+		IdempotencyKey:   idempKey,
+		EstimatedCost:    credits.ImageUnitPrice,
+		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, generationErrorStatus(err), err.Error())
 		return
 	}
-
-	// Debit credit ledger
-	_, err = s.CreditService.Debit(r.Context(), credits.DebitRequest{
-		UserID:          userID,
-		ProjectID:       proj.ID,
-		GenerationJobID: job.ID,
-		Amount:          credits.ImageUnitPrice,
-	})
-	if err != nil {
-		errMsg := err.Error()
-		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-		writeError(w, http.StatusPaymentRequired, fmt.Sprintf("Debit failed: %v", err))
+	if existed {
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": ch.ReferenceImageURL})
 		return
 	}
 
@@ -572,7 +567,15 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 	imgURL := s.ImageHosting.ResolveURL(refResp.ImageURL)
 	now := time.Now().UTC()
 	actualCost := s.aiActualCost(r.Context(), job.ID)
-	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
+	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	job, err = s.JobService.GetJob(r.Context(), job.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	ch.ReferenceImageURL = imgURL
 	ch.ReferenceImageJobID = &job.ID
@@ -663,17 +666,18 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 
 	idempKey := uuid.NewString()
 	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		ProjectID:      proj.ID,
-		UserID:         userID,
-		JobType:        "script_analysis",
-		Stage:          "script",
-		ModelID:        "meta-llama-3.1-8b-instruct",
-		IdempotencyKey: idempKey,
-		EstimatedCost:  0.0,
-		HashedUserID:   hashedUID,
+		KillSwitchActive: s.IsKillSwitchActive(),
+		ProjectID:        proj.ID,
+		UserID:           userID,
+		JobType:          "script_analysis",
+		Stage:            "script",
+		ModelID:          "meta-llama-3.1-8b-instruct",
+		IdempotencyKey:   idempKey,
+		EstimatedCost:    0.0,
+		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, generationErrorStatus(err), err.Error())
 		return
 	}
 
@@ -788,17 +792,19 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 
 	idempKey := uuid.NewString()
 	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		ProjectID:      proj.ID,
-		UserID:         userID,
-		JobType:        "chapter_outline",
-		Stage:          "outline",
-		ModelID:        "meta-llama-3.1-8b-instruct",
-		IdempotencyKey: idempKey,
-		EstimatedCost:  0.0,
-		HashedUserID:   hashedUID,
+		KillSwitchActive: s.IsKillSwitchActive(),
+		ProjectID:        proj.ID,
+		UserID:           userID,
+		EntityID:         proj.ID,
+		JobType:          "chapter_outline",
+		Stage:            "outline",
+		ModelID:          "meta-llama-3.1-8b-instruct",
+		IdempotencyKey:   idempKey,
+		EstimatedCost:    0.0,
+		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, generationErrorStatus(err), err.Error())
 		return
 	}
 
@@ -1013,17 +1019,19 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 
 	idempKey := uuid.NewString()
 	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		ProjectID:      proj.ID,
-		UserID:         userID,
-		JobType:        "panel_text",
-		Stage:          "panels",
-		ModelID:        "meta-llama-3.1-8b-instruct",
-		IdempotencyKey: idempKey,
-		EstimatedCost:  0.0,
-		HashedUserID:   hashedUID,
+		KillSwitchActive: s.IsKillSwitchActive(),
+		ProjectID:        proj.ID,
+		UserID:           userID,
+		EntityID:         c.ID,
+		JobType:          "panel_text",
+		Stage:            "panels",
+		ModelID:          "meta-llama-3.1-8b-instruct",
+		IdempotencyKey:   idempKey,
+		EstimatedCost:    0.0,
+		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, generationErrorStatus(err), err.Error())
 		return
 	}
 
@@ -1347,31 +1355,25 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	}
 
 	idempKey := uuid.NewString()
-	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		ProjectID:      proj.ID,
-		UserID:         userID,
-		JobType:        "draft_sketch",
-		Stage:          "draft",
-		ModelID:        "muse-image-1.0",
-		IdempotencyKey: idempKey,
-		EstimatedCost:  credits.ImageUnitPrice,
-		HashedUserID:   hashedUID,
+	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		EntityID:         pg.ID,
+		DebitAmount:      credits.ImageUnitPrice,
+		KillSwitchActive: s.IsKillSwitchActive(),
+		ProjectID:        proj.ID,
+		UserID:           userID,
+		JobType:          "draft_sketch",
+		Stage:            "draft",
+		ModelID:          "muse-image-1.0",
+		IdempotencyKey:   idempKey,
+		EstimatedCost:    credits.ImageUnitPrice,
+		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, generationErrorStatus(err), err.Error())
 		return
 	}
-
-	_, err = s.CreditService.Debit(r.Context(), credits.DebitRequest{
-		UserID:          userID,
-		ProjectID:       proj.ID,
-		GenerationJobID: job.ID,
-		Amount:          credits.ImageUnitPrice,
-	})
-	if err != nil {
-		errMsg := err.Error()
-		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-		writeError(w, http.StatusPaymentRequired, fmt.Sprintf("Debit failed: %v", err))
+	if existed {
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": pg.DraftImageURL})
 		return
 	}
 
@@ -1406,7 +1408,15 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	imgURL := s.ImageHosting.ResolveURL(draftResp.ImageURL)
 	now := time.Now().UTC()
 	actualCost := s.aiActualCost(r.Context(), job.ID)
-	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
+	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	job, err = s.JobService.GetJob(r.Context(), job.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	pg.DraftImageURL = imgURL
 	pg.DraftImageJobID = &job.ID
@@ -1542,31 +1552,25 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 	idempKey := uuid.NewString()
 	hashedUID := domain.HashUserID(userID)
 
-	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		ProjectID:      proj.ID,
-		UserID:         userID,
-		JobType:        "final_line_art",
-		Stage:          "line_art",
-		ModelID:        "muse-image-1.0",
-		IdempotencyKey: idempKey,
-		EstimatedCost:  credits.ImageUnitPrice,
-		HashedUserID:   hashedUID,
+	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		EntityID:         pg.ID,
+		DebitAmount:      credits.ImageUnitPrice,
+		KillSwitchActive: s.IsKillSwitchActive(),
+		ProjectID:        proj.ID,
+		UserID:           userID,
+		JobType:          "final_line_art",
+		Stage:            "line_art",
+		ModelID:          "muse-image-1.0",
+		IdempotencyKey:   idempKey,
+		EstimatedCost:    credits.ImageUnitPrice,
+		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, generationErrorStatus(err), err.Error())
 		return
 	}
-
-	_, err = s.CreditService.Debit(r.Context(), credits.DebitRequest{
-		UserID:          userID,
-		ProjectID:       proj.ID,
-		GenerationJobID: job.ID,
-		Amount:          credits.ImageUnitPrice,
-	})
-	if err != nil {
-		errMsg := err.Error()
-		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-		writeError(w, http.StatusPaymentRequired, fmt.Sprintf("Debit failed: %v", err))
+	if existed {
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": pg.LineArtImageURL})
 		return
 	}
 
@@ -1602,7 +1606,15 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 	imgURL := s.ImageHosting.ResolveURL(lineArtResp.ImageURL)
 	now := time.Now().UTC()
 	actualCost := s.aiActualCost(r.Context(), job.ID)
-	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
+	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	job, err = s.JobService.GetJob(r.Context(), job.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	pg.LineArtImageURL = imgURL
 	pg.LineArtImageJobID = &job.ID
@@ -1727,31 +1739,29 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 	idempKey := uuid.NewString()
 	hashedUID := domain.HashUserID(userID)
 
-	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		ProjectID:      proj.ID,
-		UserID:         userID,
-		JobType:        "colour_suggestion",
-		Stage:          "colour",
-		ModelID:        "meta-vision-colour",
-		IdempotencyKey: idempKey,
-		EstimatedCost:  credits.ColourSuggestionUnitPrice,
-		HashedUserID:   hashedUID,
+	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		EntityID:         pg.ID,
+		DebitAmount:      credits.ColourSuggestionUnitPrice,
+		KillSwitchActive: s.IsKillSwitchActive(),
+		ProjectID:        proj.ID,
+		UserID:           userID,
+		JobType:          "colour_suggestion",
+		Stage:            "colour",
+		ModelID:          "meta-vision-colour",
+		IdempotencyKey:   idempKey,
+		EstimatedCost:    credits.ColourSuggestionUnitPrice,
+		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, generationErrorStatus(err), err.Error())
 		return
 	}
-
-	_, err = s.CreditService.Debit(r.Context(), credits.DebitRequest{
-		UserID:          userID,
-		ProjectID:       proj.ID,
-		GenerationJobID: job.ID,
-		Amount:          credits.ColourSuggestionUnitPrice,
-	})
-	if err != nil {
-		errMsg := err.Error()
-		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-		writeError(w, http.StatusPaymentRequired, fmt.Sprintf("Debit failed: %v", err))
+	if existed {
+		palette := map[string]interface{}{}
+		if saved, err := s.Repo.GetColourPalette(r.Context(), pageID); err == nil {
+			palette = saved.Palette
+		}
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job_id": job.ID, "palette": palette})
 		return
 	}
 
@@ -1791,7 +1801,10 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actualCost := s.aiActualCost(r.Context(), job.ID)
-	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
+	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"job_id":  job.ID,
@@ -1997,17 +2010,18 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 	idempKey := uuid.NewString()
 
 	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		ProjectID:      proj.ID,
-		UserID:         userID,
-		JobType:        "assemble_pdf",
-		Stage:          "export",
-		ModelID:        "pdf-assembler",
-		IdempotencyKey: idempKey,
-		EstimatedCost:  0.0,
-		HashedUserID:   hashedUID,
+		KillSwitchActive: s.IsKillSwitchActive(),
+		ProjectID:        proj.ID,
+		UserID:           userID,
+		JobType:          "assemble_pdf",
+		Stage:            "export",
+		ModelID:          "pdf-assembler",
+		IdempotencyKey:   idempKey,
+		EstimatedCost:    0.0,
+		HashedUserID:     hashedUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, generationErrorStatus(err), err.Error())
 		return
 	}
 
@@ -2206,4 +2220,20 @@ func (s *Server) DownloadExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeError(w, http.StatusBadGateway, "Failed to retrieve export file from storage")
+}
+
+// Keep the public failure statuses while the service owns the transaction.
+func generationErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, credits.ErrInsufficientCredits), errors.Is(err, db.ErrInsufficientCredit):
+		return http.StatusPaymentRequired
+	case errors.Is(err, domain.ErrKillSwitchActive), errors.Is(err, domain.ErrQuotaExceeded):
+		return http.StatusTooManyRequests
+	case errors.Is(err, domain.ErrMissingPrerequisiteApproval), errors.Is(err, domain.ErrStaleApproval):
+		return http.StatusBadRequest
+	case errors.Is(err, domain.ErrActiveJobExists):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }

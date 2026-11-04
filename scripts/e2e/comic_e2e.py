@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT_DIR = Path("/home/mani/icomic-artifacts/comic-e2e")
 CAP_USD = 2.0
 DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
-API_URL = "http://127.0.0.1:8080"
+API_URL = os.environ.get("ICOMIC_E2E_API_URL", "http://127.0.0.1:8080").rstrip("/")
 
 AI_PATH = REPO_ROOT / "ai"
 sys.path.insert(0, str(AI_PATH))
