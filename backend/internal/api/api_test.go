@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"icomic/backend/gen"
@@ -112,7 +113,10 @@ func TestCreateProject(t *testing.T) {
 }
 
 func TestEstimateCost(t *testing.T) {
-	_, handler, _ := setupTestServer(true, "test-user")
+	_, handler, repo := setupTestServer(true, "test-user")
+	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "estimate-project", UserID: "test-user"}); err != nil {
+		t.Fatal(err)
+	}
 
 	payload := map[string]interface{}{
 		"stage":       "draft_sketch",
@@ -120,7 +124,7 @@ func TestEstimateCost(t *testing.T) {
 	}
 	data, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/proj-123/estimate", bytes.NewReader(data))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/estimate-project/estimate", bytes.NewReader(data))
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -133,6 +137,80 @@ func TestEstimateCost(t *testing.T) {
 	_ = json.NewDecoder(rec.Body).Decode(&resp)
 	if resp["estimated_cost"] != 0.05 {
 		t.Fatalf("expected 0.05 estimated cost, got %v", resp["estimated_cost"])
+	}
+}
+
+func TestPaletteRoutesRequirePageOwnership(t *testing.T) {
+	_, handler, repo := setupTestServer(true, "owner")
+	ctx := context.Background()
+	if err := repo.CreateProject(ctx, &domain.Project{ID: "palette-project", UserID: "owner"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateChapter(ctx, &domain.Chapter{ID: "palette-chapter", ProjectID: "palette-project"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreatePage(ctx, &domain.Page{ID: "palette-page", ChapterID: "palette-chapter"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SaveColourPalette(ctx, &domain.ColourPalette{PageID: "palette-page", Palette: map[string]interface{}{"skin": "#123456"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	request := func(method, path, userID, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("X-User-ID", userID)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := request(http.MethodGet, "/api/v1/pages/palette-page/colour-palette", "owner", ""); rec.Code != http.StatusOK {
+		t.Fatalf("owner GET expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(http.MethodPatch, "/api/v1/pages/palette-page/colour-palette", "owner", `{"palette":{"skin":"#654321"}}`); rec.Code != http.StatusOK {
+		t.Fatalf("owner PATCH expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(http.MethodGet, "/api/v1/pages/palette-page/colour-palette", "other-user", ""); rec.Code != http.StatusForbidden {
+		t.Errorf("nonowner GET expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(http.MethodPatch, "/api/v1/pages/palette-page/colour-palette", "other-user", `{"palette":{"attacker":"#FF0000"}}`); rec.Code != http.StatusForbidden {
+		t.Errorf("nonowner PATCH expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(http.MethodPatch, "/api/v1/pages/missing-page/colour-palette", "owner", `{"palette":{"skin":"#FFFFFF"}}`); rec.Code != http.StatusNotFound {
+		t.Errorf("missing page PATCH expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+	palette, err := repo.GetColourPalette(ctx, "palette-page")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if palette.Palette["skin"] != "#654321" || palette.Palette["attacker"] != nil {
+		t.Errorf("denied PATCH changed palette: %#v", palette.Palette)
+	}
+}
+
+func TestEstimateCostRequiresProjectOwnership(t *testing.T) {
+	_, handler, repo := setupTestServer(true, "owner")
+	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "estimate-owned", UserID: "owner"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "estimate-foreign", UserID: "other-user"}); err != nil {
+		t.Fatal(err)
+	}
+	request := func(projectID, userID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/estimate", strings.NewReader(`{"stage":"draft_sketch","image_count":1}`))
+		req.Header.Set("X-User-ID", userID)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request("estimate-owned", "owner"); rec.Code != http.StatusOK {
+		t.Errorf("owner estimate expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request("estimate-foreign", "attacker"); rec.Code != http.StatusForbidden {
+		t.Errorf("foreign estimate expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request("missing-project", "owner"); rec.Code != http.StatusNotFound {
+		t.Errorf("missing estimate project expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
