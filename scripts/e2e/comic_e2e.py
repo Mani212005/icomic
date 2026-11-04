@@ -3,7 +3,7 @@
 
 Usage: make e2e-comic [E2E_ARGS="--live --cost-cap-usd 2"]
 The default adapter configuration is fake. Live use requires --live, ICOMIC_E2E_LIVE=1,
-and --cost-cap-usd 2; all adapter selection still comes from ADAPTER_* environment.
+and an explicit --cost-cap-usd (at most 2); all adapter selection still comes from ADAPTER_* environment.
 Every run provisions its own user and credit ledger entry in the Compose PostgreSQL
 database. It never reuses or resets the shared development account or its quota.
 """
@@ -61,8 +61,8 @@ def live_authorization_error(
         return "live mode requires the --live flag"
     if environ.get("ICOMIC_E2E_LIVE") != "1":
         return "live mode requires ICOMIC_E2E_LIVE=1"
-    if cost_cap != CAP_USD:
-        return "live mode requires --cost-cap-usd 2"
+    if cost_cap is None or not math.isfinite(cost_cap) or not 0 < cost_cap <= CAP_USD:
+        return "live mode requires --cost-cap-usd greater than 0 and at most 2"
     return None
 
 
@@ -76,6 +76,7 @@ class CostGuard:
         reserve_tokens: int = DEFAULT_REASONING_RESERVE_TOKENS,
         ledger_path: Path | None = None,
         prior_spend: float = 0.0,
+        alert_usd: float = 1.0,
     ):
         self.cap = cap
         self.live = live
@@ -83,6 +84,8 @@ class CostGuard:
         self.stages: list[dict[str, Any]] = []
         self.ledger_path = ledger_path
         self.prior_spend = prior_spend
+        self.alert_usd = alert_usd
+        self.alert_raised = False
         self.provider_report: dict[str, Any] | None = None
         self.current_stage: str | None = None
         self.project_id: str | None = None
@@ -136,8 +139,18 @@ class CostGuard:
             self.provider_report = report
             self.actual = report["actual_spend_usd"]
             self.stages = report["calls"]
+            self.check_alert()
         except (KeyError, TypeError, ValueError, OSError) as exc:
             raise E2EError("Provider cost ledger is invalid; refusing further calls") from exc
+
+    def check_alert(self) -> None:
+        if not self.alert_raised and self.prior_spend + self.actual >= self.alert_usd:
+            self.alert_raised = True
+            print(
+                f"COST ALERT: cumulative observed spend ${self.prior_spend + self.actual:.9f} "
+                f"USD reached ${self.alert_usd:.9f} USD; continuing within the hard cap",
+                flush=True,
+            )
 
     def record(self, stage: str, job_id: str | None, usage_cost: float, estimate: float) -> None:
         if self.ledger_path is not None:
@@ -150,7 +163,8 @@ class CostGuard:
         if self.live and stage in {"language", "vision", "image"} and amount <= 0:
             raise E2EError(f"live {stage} call returned no billable usage record; aborting")
         self.actual += amount
-        if self.actual + self.third_check_reserve > self.cap + 1e-12:
+        self.check_alert()
+        if self.prior_spend + self.actual + self.third_check_reserve > self.cap + 1e-12:
             raise E2EError("recorded usage exceeded the hard cap reserve; aborting")
         self.stages.append(
             {
@@ -462,7 +476,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--cost-cap-usd",
         type=float,
-        help="required hard cap for live mode (exactly 2 USD)",
+        help="required total hard cap for live mode (greater than 0, at most 2 USD)",
     )
     parser.add_argument(
         "--skip-services",
@@ -474,6 +488,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=0.0,
         help="previously accounted spend deducted from the shared live cap",
+    )
+    parser.add_argument(
+        "--alert-usd",
+        type=float,
+        default=1.0,
+        help="log once when cumulative observed spend reaches this USD threshold (default 1)",
+    )
+    parser.add_argument(
+        "--prior-spend-source",
+        default=None,
+        help="source of the explicitly supplied recorded prior spend, saved in the cost report",
     )
     parser.add_argument(
         "--artifact-dir",
@@ -531,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
             "REFUSED: --prior-spend-usd must be a finite non-negative live spend", file=sys.stderr
         )
         return 2
+    if not math.isfinite(args.alert_usd) or args.alert_usd <= 0:
+        print("REFUSED: --alert-usd must be finite and positive", file=sys.stderr)
+        return 2
     if live and args.skip_services:
         print(
             "REFUSED: live mode must configure its provider cost ledger through Compose",
@@ -563,9 +591,14 @@ def main(argv: list[str] | None = None) -> int:
     args.artifact_dir.mkdir(parents=True, exist_ok=True)
     ledger_path = args.artifact_dir / f"provider-costs-{run_id}.json" if live else None
     guard = CostGuard(
-        CAP_USD if live else float("inf"), live, reserve_tokens, ledger_path, args.prior_spend_usd
+        args.cost_cap_usd if live else float("inf"),
+        live,
+        reserve_tokens,
+        ledger_path,
+        args.prior_spend_usd,
+        args.alert_usd,
     )
-    if live and args.prior_spend_usd + guard.third_check_reserve >= CAP_USD:
+    if live and args.prior_spend_usd + guard.third_check_reserve >= args.cost_cap_usd:
         print("REFUSED: prior spend and third-check reserve exhaust the hard cap", file=sys.stderr)
         return 2
     if live:
@@ -573,7 +606,7 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "ICOMIC_E2E_RUN_ID": run_id,
                 "ICOMIC_E2E_COST_DIR": str(args.artifact_dir),
-                "ICOMIC_E2E_COST_CAP_USD": str(CAP_USD),
+                "ICOMIC_E2E_COST_CAP_USD": str(args.cost_cap_usd),
                 "ICOMIC_E2E_PRIOR_SPEND_USD": str(args.prior_spend_usd),
                 "ICOMIC_E2E_THIRD_CHECK_RESERVE_USD": str(round(guard.third_check_reserve, 9)),
             }
@@ -604,7 +637,10 @@ def main(argv: list[str] | None = None) -> int:
         "error_type": failure,
         "failed_stage": guard.current_stage if failure else None,
         "run_id": run_id,
-        "hard_cap_usd": CAP_USD if live else None,
+        "hard_cap_usd": args.cost_cap_usd if live else None,
+        "alert_threshold_usd": args.alert_usd,
+        "alert_raised": guard.alert_raised,
+        "prior_spend_source": args.prior_spend_source,
         "third_check_reserve_usd": round(guard.third_check_reserve, 9),
         "actual_spend_usd": round(guard.actual, 9),
         "prior_spend_usd": args.prior_spend_usd,

@@ -102,6 +102,10 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
                 "2",
                 "--prior-spend-usd",
                 "0.017006",
+                "--prior-spend-source",
+                "recorded-previous-run.md",
+                "--alert-usd",
+                "0.0172",
                 "--artifact-dir",
                 str(tmp_path),
             ]
@@ -112,6 +116,9 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
     assert report["project_id"] == "test-project"
     assert report["actual_spend_usd"] == 0.00029325
     assert report["cumulative_observed_spend_usd"] == 0.01729925
+    assert report["prior_spend_source"] == "recorded-previous-run.md"
+    assert report["alert_threshold_usd"] == 0.0172
+    assert report["alert_raised"] is True
     assert report["provider_cost_report"]["accounted_spend_usd"] == 0.01029325
     assert report["cost_complete"] is False
     assert report["status"] == "failed" and report["pdf_path"] is None
@@ -170,3 +177,31 @@ def test_consecutive_flows_provision_distinct_users_and_use_their_headers(monkey
         credit_ids.append(variables["e2e_credit_id"])
     assert len(set(users)) == len(set(emails)) == len(set(credit_ids)) == 2
     assert authenticated_users == [users[0], users[0], users[1], users[1]]
+
+
+def test_alert_is_logged_once_and_recorded_on_failure(monkeypatch, tmp_path, capsys):
+    def fail(guard, artifact_dir):
+        guard.record("language", "job-1", 0.6, 0.6)
+        assert not guard.alert_raised
+        guard.record("image", "job-2", 0.5, 0.5)
+        guard.check_alert()
+        raise runner.E2EError("Stopped after an unrelated failure")
+
+    monkeypatch.setattr(runner, "ensure_services", lambda: None)
+    monkeypatch.setattr(runner, "run_flow", fail)
+    assert runner.main(["--artifact-dir", str(tmp_path), "--alert-usd", "1"]) == 1
+    report = json.loads((tmp_path / "cost-report.json").read_text())
+    assert report["alert_threshold_usd"] == 1
+    assert report["alert_raised"] is True
+    assert report["cumulative_observed_spend_usd"] == 1.1
+    assert capsys.readouterr().out.count("COST ALERT:") == 1
+
+
+@pytest.mark.parametrize("cap", [0.1, 1, 2])
+def test_live_cap_can_be_lowered_but_never_exceeds_shared_authorization(cap):
+    assert runner.live_authorization_error(True, {"ICOMIC_E2E_LIVE": "1"}, cap) is None
+
+
+@pytest.mark.parametrize("cap", [None, 0, -1, 2.01, float("inf"), float("nan")])
+def test_live_cap_rejects_unbounded_or_excess_authorization(cap):
+    assert runner.live_authorization_error(True, {"ICOMIC_E2E_LIVE": "1"}, cap)

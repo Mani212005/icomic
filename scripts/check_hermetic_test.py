@@ -27,7 +27,7 @@ class TestHermeticGuard(unittest.TestCase):
         self.assertIsNotNone(live_authorization_error(False, {}, None))
         self.assertIsNotNone(live_authorization_error(True, {}, 2.0))
         self.assertIsNotNone(
-            live_authorization_error(True, {"ICOMIC_E2E_LIVE": "1"}, 1.99)
+            live_authorization_error(True, {"ICOMIC_E2E_LIVE": "1"}, 2.01)
         )
         self.assertIsNone(live_authorization_error(True, {"ICOMIC_E2E_LIVE": "1"}, 2.0))
         self.assertIsNotNone(
