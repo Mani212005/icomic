@@ -59,8 +59,8 @@ services:
       ADAPTER_CLOCK: "fake"
       STORAGE_BASE_URL: "http://ai:8000/storage/fake"
       REDIS_URL: "redis://redis:6379/0"
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')\" || exit 1"]
       interval: 5s
