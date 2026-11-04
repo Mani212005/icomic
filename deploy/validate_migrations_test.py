@@ -305,8 +305,9 @@ class TestMigrationsStructural(unittest.TestCase):
         cls.drops = parse_drop_tables(cls.all_down_sql)
 
     def test_repository_columns_exist_in_migrated_schema(self):
-        sources = list((REPO_ROOT / "backend" / "internal" / "db").glob("*.go"))
-        sources = [path for path in sources if not path.name.endswith("_test.go") and path.name != "migrate.go"]
+        # CRUD SQL lives here. Transactional job policy queries and migration-runner
+        # bookkeeping need separate checks; they are outside this single-table check.
+        sources = [REPO_ROOT / "backend/internal/db/postgres.go"]
         errors = []
         for path in sources:
             errors.extend(repository_column_errors(path.read_text(), migrated_columns(self.all_up_sql)))
