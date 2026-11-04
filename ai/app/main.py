@@ -98,6 +98,16 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             request_type = handler.__annotations__["req"]
 
             def execute(payload):
+                def observed_cost(fallback):
+                    ledger = wired_adapters.cost_ledger
+                    if ledger is None:
+                        return fallback
+                    return sum(
+                        call["actual_cost_usd"] or 0.0
+                        for call in ledger.report()["calls"]
+                        if call["job_id"] == str(payload["job_id"])
+                    )
+
                 if adapter is not None and hasattr(adapter, "last_usage"):
                     adapter.last_usage = None
                 token = provider_operation.set((handler.__name__, str(payload["job_id"])))
@@ -106,14 +116,14 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
                 except Exception as exc:
                     usage = getattr(adapter, "last_usage", None)
                     if usage is not None:
-                        exc.actual_cost = cost_from_usage(operation, usage)
+                        exc.actual_cost = observed_cost(cost_from_usage(operation, usage))
                     raise
                 finally:
                     provider_operation.reset(token)
                 cost = 0.0
                 if adapter is not None:
                     cost = actual_stage_cost(operation, adapter, getattr(result, "model_id", None))
-                return result.model_dump(mode="json"), cost
+                return result.model_dump(mode="json"), observed_cost(cost)
 
             worker.register(handler.__name__, execute)
 
@@ -230,6 +240,8 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             chapter_title=req.chapter_title,
             chapter_summary=req.chapter_summary,
             characters=req.characters,
+            panel_count=req.panel_count,
+            chapter_script=req.chapter_script,
         )
         return GeneratePanelTextResponse(
             job_id=str(req.job_id),

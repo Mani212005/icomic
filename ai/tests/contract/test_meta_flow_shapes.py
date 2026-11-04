@@ -13,7 +13,9 @@ from PIL import Image
 
 from app.adapters.factory import build_adapters_from_env
 from app.adapters.image.meta import MetaImageAdapter
+from app.adapters.language.fake import FakeLanguageAdapter
 from app.adapters.language.meta import MetaLanguageAdapter
+from app.adapters.language.port import Message
 from app.adapters.vision.meta import MetaVisionAdapter
 from app.main import create_app
 from app.provider_costs import ProviderCostLedger
@@ -43,7 +45,10 @@ def test_entire_meta_service_flow_with_webp_and_moderation_costs(tmp_path):
                 assert url == "data:image/webp;base64," + base64.b64encode(webp).decode()
                 answer = '{"theme":"Harbour","palette":[{"region_name":"sea","hex_color":"#143C5A","label":"Sea"}]}'
             else:
-                answer = "A safe story."
+                answer = FakeLanguageAdapter().complete(
+                    "fake",
+                    [Message(role=m["role"], content=m["content"]) for m in payload["messages"]],
+                )
             return httpx.Response(
                 200,
                 json={
@@ -184,3 +189,43 @@ def test_entire_meta_service_flow_with_webp_and_moderation_costs(tmp_path):
     assert abs(report["actual_spend_usd"] - (5 * 0.0003375 + 3 * 0.01)) < 1e-12
     saved = (tmp_path / "costs.json").read_text()
     assert "A bird" not in saved and "mock-key" not in saved
+
+
+def test_multicall_script_job_reports_all_observed_provider_usage(tmp_path):
+    def respond(request):
+        payload = json.loads(request.content)
+        answer = FakeLanguageAdapter().complete(
+            "fake", [Message(role=m["role"], content=m["content"]) for m in payload["messages"]]
+        )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": answer}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+            },
+        )
+
+    ledger = ProviderCostLedger(2, path=tmp_path / "costs.json")
+    adapters = build_adapters_from_env()
+    adapters.language = MetaLanguageAdapter(
+        api_key="mock-key",
+        base_url="http://mock.meta.internal/v1",
+        transport=httpx.MockTransport(respond),
+        cost_ledger=ledger,
+    )
+    adapters.cost_ledger = ledger
+    client = TestClient(create_app(adapters))
+    job_id = str(uuid4())
+    response = client.post(
+        "/internal/v1/analyze-script",
+        json={
+            "job_id": job_id,
+            "project_id": str(uuid4()),
+            "hashed_user_id": "hash",
+            "script": "story " * 1001,
+        },
+    )
+    assert response.status_code == 200, response.text
+    status = client.get(f"/internal/v1/job/{job_id}/status").json()
+    assert len(ledger.report()["calls"]) == 3
+    assert abs(status["actual_cost"] - 3 * 0.0003375) < 1e-12

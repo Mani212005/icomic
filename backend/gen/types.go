@@ -206,14 +206,20 @@ type GenerateLineArtResponse struct {
 
 // GeneratePanelTextRequest defines model for GeneratePanelTextRequest.
 type GeneratePanelTextRequest struct {
-	ChapterID      string   `json:"chapter_id"`
-	ChapterNumber  int      `json:"chapter_number"`
+	ChapterID     string `json:"chapter_id"`
+	ChapterNumber int    `json:"chapter_number"`
+
+	// ChapterScript Complete source text for this chapter, without truncation.
+	ChapterScript  *string  `json:"chapter_script,omitempty"`
 	ChapterSummary string   `json:"chapter_summary"`
 	ChapterTitle   string   `json:"chapter_title"`
 	Characters     []string `json:"characters"`
 	HashedUserID   string   `json:"hashed_user_id"`
 	JobID          string   `json:"job_id"`
-	ProjectID      string   `json:"project_id"`
+
+	// PanelCount Total chapter panels; generated in batches of at most five.
+	PanelCount *int   `json:"panel_count,omitempty"`
+	ProjectID  string `json:"project_id"`
 }
 
 // GeneratePanelTextResponse defines model for GeneratePanelTextResponse.

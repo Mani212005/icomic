@@ -38,7 +38,7 @@ func NewServer(
 	maxPanelsPerPage int,
 ) *Server {
 	if maxPanelsPerPage <= 0 {
-		maxPanelsPerPage = 4
+		maxPanelsPerPage = 5
 	}
 	if authenticator == nil {
 		authenticator = auth.NewDevAuthenticator(false, "")
@@ -101,6 +101,12 @@ func (s *Server) CheckKillSwitchAndQuota(r *http.Request, userID string) error {
 			creditMonthly := 0
 			for _, entry := range history {
 				if entry.TransactionType == "debit" {
+					if entry.GenerationJobID != nil {
+						job, err := s.JobService.GetJob(r.Context(), *entry.GenerationJobID)
+						if err == nil && job.JobType != "character_reference" && job.JobType != "draft_sketch" && job.JobType != "final_line_art" {
+							continue
+						}
+					}
 					if entry.CreatedAt.After(sinceDaily) {
 						creditDaily++
 					}

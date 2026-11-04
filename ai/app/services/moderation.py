@@ -1,7 +1,10 @@
 """Prompt pre-moderation service."""
 
+import math
+
 from ..adapters.language.port import LanguagePort, Message
-from ..costs import WORST_CASE_TEXT_OUTPUT_TOKENS
+from ..costs import STORY_INPUT_TOKEN_LIMIT
+from .pacing import SOURCE_WORDS_PER_CALL, split_text
 
 
 class ModerationService:
@@ -19,17 +22,21 @@ class ModerationService:
             if word in clean_prompt:
                 return True, f"Prompt blocked by pre-moderation: keyword '{word}' is prohibited."
 
-        # Pass through language moderation adapter
-        _ = self.language_adapter.complete(
-            self.model_id,
-            [
-                Message(
-                    role="system",
-                    content="Evaluate prompt for safety against Meta content guidelines.",
-                ),
-                Message(role="user", content=prompt),
-            ],
-            max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
-        )
+        for source in split_text(
+            prompt, max(1, math.ceil(len(prompt.split()) / SOURCE_WORDS_PER_CALL))
+        ):
+            if len(source.encode()) + 100 > STORY_INPUT_TOKEN_LIMIT:
+                raise ValueError("Moderation source exceeds the bounded input budget.")
+            self.language_adapter.complete(
+                self.model_id,
+                [
+                    Message(
+                        role="system",
+                        content="Evaluate prompt for safety against Meta content guidelines.",
+                    ),
+                    Message(role="user", content=source),
+                ],
+                max_tokens=32,
+            )
 
         return False, None

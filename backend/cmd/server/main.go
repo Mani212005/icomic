@@ -60,7 +60,7 @@ func main() {
 	devAuthEnabled := os.Getenv("DEV_AUTH_ENABLED") == "true"
 	authenticator := auth.NewDevAuthenticator(devAuthEnabled, "00000000-0000-0000-0000-000000000001")
 
-	maxPanelsPerPage := 4
+	maxPanelsPerPage := 5
 	if mppStr := os.Getenv("MAX_PANELS_PER_PAGE"); mppStr != "" {
 		if mpp, err := strconv.Atoi(mppStr); err == nil {
 			maxPanelsPerPage = mpp

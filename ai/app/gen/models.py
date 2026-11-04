@@ -109,6 +109,12 @@ class GeneratePanelTextRequest(BaseModel):
     chapter_number: int
     chapter_title: str
     chapter_summary: str
+    panel_count: int = Field(
+        4, description="Total chapter panels; generated in batches of at most five.", ge=1
+    )
+    chapter_script: str = Field(
+        "", description="Complete source text for this chapter, without truncation."
+    )
     characters: list[str]
 
 

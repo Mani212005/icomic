@@ -555,6 +555,15 @@ components:
           type: string
         chapter_summary:
           type: string
+        panel_count:
+          type: integer
+          minimum: 1
+          default: 4
+          description: Total chapter panels; generated in batches of at most five.
+        chapter_script:
+          type: string
+          default: ''
+          description: Complete source text for this chapter, without truncation.
         characters:
           type: array
           items:

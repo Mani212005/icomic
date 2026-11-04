@@ -34,8 +34,13 @@ API_URL = os.environ.get("ICOMIC_E2E_API_URL", "http://127.0.0.1:8080").rstrip("
 
 AI_PATH = REPO_ROOT / "ai"
 sys.path.insert(0, str(AI_PATH))
+from app.services.pacing import chapter_count, panel_count, split_text
+
 from app.costs import (
     DEFAULT_REASONING_RESERVE_TOKENS,
+    STORY_INPUT_TOKEN_LIMIT,
+    STORY_OUTPUT_TOKEN_LIMIT,
+    calculate_token_cost,
     calculate_checklist_worst_case,
     estimate_call_worst_case,
 )
@@ -82,6 +87,9 @@ class CostGuard:
         self.current_stage: str | None = None
         self.project_id: str | None = None
         self.user_id: str | None = None
+        self.script_file: Path | None = None
+        self.panel_count = 0
+        self.pdf_page_count = 0
         self.reserve_tokens = reserve_tokens if live else 0
         self.third_check_reserve = (
             calculate_checklist_worst_case(self.reserve_tokens) if live else 0.0
@@ -90,9 +98,16 @@ class CostGuard:
     def before_call(self, stage: str, count: int = 1) -> float:
         self.current_stage = stage
         self.refresh()
-        estimate = (
-            estimate_call_worst_case(stage, self.reserve_tokens) * count if self.live else 0.0
-        )
+        estimate = 0.0
+        if self.live:
+            per_call = (
+                calculate_token_cost(
+                    STORY_INPUT_TOKEN_LIMIT, STORY_OUTPUT_TOKEN_LIMIT + self.reserve_tokens
+                )
+                if stage == "language"
+                else estimate_call_worst_case(stage, self.reserve_tokens)
+            )
+            estimate = per_call * count
         spent = self.provider_report["accounted_spend_usd"] if self.provider_report else self.actual
         if self.prior_spend + spent + estimate + self.third_check_reserve > self.cap + 1e-12:
             raise E2EError(
@@ -165,7 +180,7 @@ def json_request(
         headers=headers,
     )
     try:
-        with urlopen(request, timeout=60) as response:
+        with urlopen(request, timeout=16 * 60) as response:
             body = response.read()
             if "application/pdf" in response.headers.get("Content-Type", ""):
                 return body
@@ -239,14 +254,16 @@ def require(mapping: dict[str, Any], key: str, message: str) -> Any:
     return value
 
 
-def verify_pdf(pdf: bytes, expected_comic_pages: int) -> None:
+def verify_pdf(pdf: bytes, expected_comic_pages: int) -> int:
     if not pdf or not pdf.startswith(b"%PDF-"):
         raise E2EError("download is empty or missing the PDF header")
     page_count = len(re.findall(rb"/Type\s*/Page\b", pdf))
-    if page_count < expected_comic_pages:
+    if page_count != expected_comic_pages + 1:
         raise E2EError(
-            f"PDF contains {page_count} pages; expected at least {expected_comic_pages} generated pages"
+            f"PDF contains {page_count} pages; expected {expected_comic_pages} comic pages plus one cover"
         )
+
+    return page_count
 
 
 def provision_run_user() -> str:
@@ -304,6 +321,10 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
         "The bird lights the dark sea, guiding a lost boat safely home. At sunrise, Nia "
         "sets it free and watches it fly toward the bright horizon."
     )
+    if guard.script_file is not None:
+        script = guard.script_file.read_text()
+    expected_panels = panel_count(len(script.split()))
+    expected_chapters = chapter_count(len(script.split()))
     project_response = json_request(
         "/api/v1/projects",
         "POST",
@@ -311,7 +332,7 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
             "title": f"Lighthouse Bird {datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
             "original_script": script,
             "art_style": "storybook",
-            "chapter_count": 1,
+            "chapter_count": expected_chapters,
         },
     )
     project = require(project_response, "project", "project creation response has no project")
@@ -319,7 +340,13 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
     guard.project_id = project_id
     print(f"PASS project created: {project_id}")
 
-    analysis = checked_call(guard, "language", 1, "POST", f"/api/v1/projects/{project_id}/analyze")
+    analysis = checked_call(
+        guard,
+        "language",
+        math.ceil(len(script.split()) / 500),
+        "POST",
+        f"/api/v1/projects/{project_id}/analyze",
+    )
     characters = analysis.get("character_profiles", [])
     if not characters:
         raise E2EError("script analysis returned no characters")
@@ -334,22 +361,56 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
         json_request(f"/api/v1/characters/{cid}/approve", "POST")
     print(f"PASS character references generated and approved: {len(character_list)}")
 
-    outline = checked_call(guard, "language", 1, "POST", f"/api/v1/projects/{project_id}/chapters")
+    outline_calls = sum(
+        max(1, math.ceil(len(part.split()) / 500)) for part in split_text(script, expected_chapters)
+    )
+    outline = checked_call(
+        guard, "language", outline_calls, "POST", f"/api/v1/projects/{project_id}/chapters"
+    )
     chapters = outline.get("chapters", [])
     if not chapters:
         raise E2EError("chapter generation returned no chapters")
     for chapter in chapters:
         json_request(f"/api/v1/chapters/{chapter['id']}/approve", "POST")
-    chapter_id = chapters[0]["id"]
     print(f"PASS chapter outline generated and approved: {len(chapters)}")
 
-    panel_response = checked_call(
-        guard, "language", 1, "POST", f"/api/v1/chapters/{chapter_id}/panels"
-    )
-    panels = panel_response.get("panels", [])
-    pages = panel_response.get("pages", [])
-    if not panels or not pages:
-        raise E2EError("panel generation did not produce panels and pages")
+    panels = []
+    pages = []
+    expected_pages = 0
+    for index, chapter in enumerate(chapters):
+        chapter_panels = (
+            index + 1
+        ) * expected_panels // expected_chapters - index * expected_panels // expected_chapters
+        chapter_pages = math.ceil(chapter_panels / 5)
+        expected_pages += chapter_pages
+        panel_response = checked_call(
+            guard, "language", chapter_pages, "POST", f"/api/v1/chapters/{chapter['id']}/panels"
+        )
+        generated_panels = panel_response.get("panels", [])
+        generated_pages = panel_response.get("pages", [])
+        if len(generated_panels) != chapter_panels or len(generated_pages) != chapter_pages:
+            raise E2EError("chapter panel/page count differs from the complete script plan")
+        listed_panels = json_request(f"/api/v1/chapters/{chapter['id']}/panels").get("panels", [])
+        listed_pages = json_request(f"/api/v1/chapters/{chapter['id']}/pages").get("pages", [])
+        if len(listed_panels) != chapter_panels or len(listed_pages) != chapter_pages:
+            raise E2EError("persisted panel/page count differs from generation")
+        if sorted(pid for page in generated_pages for pid in page["panel_ids"]) != sorted(
+            p["id"] for p in generated_panels
+        ):
+            raise E2EError("pages dropped or duplicated panels")
+        panels.extend(generated_panels)
+        pages.extend(generated_pages)
+    if (
+        len(chapters) != expected_chapters
+        or len(panels) != expected_panels
+        or len(pages) != expected_pages
+    ):
+        raise E2EError("comic panel/page count differs from the complete script plan")
+    if 3000 <= len(script.split()) <= 6000 and not (
+        50 <= len(panels) <= 60 and 10 <= len(pages) <= 14
+    ):
+        raise E2EError("decent-size script did not produce 50-60 panels across 10-14 pages")
+    guard.panel_count = len(panels)
     print(f"PASS comic pages generated: {len(panels)} panels across {len(pages)} pages")
 
     for page in pages:
@@ -378,7 +439,7 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
     pdf = json_request(f"/api/v1/exports/{export_id}/download")
     if not isinstance(pdf, bytes):
         raise E2EError("download endpoint did not return PDF bytes")
-    verify_pdf(pdf, len(pages))
+    guard.pdf_page_count = verify_pdf(pdf, len(pages))
     artifact_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     staged = artifact_dir / f"latest-{timestamp}.pdf"
@@ -390,6 +451,9 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--script-file", type=Path, help="complete story source; defaults to the short smoke script"
+    )
     parser.add_argument(
         "--live",
         action="store_true",
@@ -514,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
                 "ICOMIC_E2E_THIRD_CHECK_RESERVE_USD": str(round(guard.third_check_reserve, 9)),
             }
         )
+    guard.script_file = args.script_file
     project_id = None
     page_count = 0
     failure = None
@@ -549,6 +614,8 @@ def main(argv: list[str] | None = None) -> int:
         or (guard.provider_report is not None and guard.provider_report["unpriced_calls"] == 0),
         "pdf_path": str(args.artifact_dir / "latest.pdf") if not failure else None,
         "generated_comic_pages": page_count,
+        "generated_panels": guard.panel_count,
+        "pdf_pages": guard.pdf_page_count,
         "stages": guard.stages,
     }
     report_text = json.dumps(report, indent=2) + "\n"

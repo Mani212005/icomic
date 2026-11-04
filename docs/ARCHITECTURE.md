@@ -191,7 +191,7 @@ Each port has a deterministic fake adapter that runs with no network and no key.
 
 | Port | Fake behaviour |
 |---|---|
-| FakeLanguageAdapter | Returns templated deterministic strings seeded from input hash; token counts are fixed |
+| FakeLanguageAdapter | Returns deterministic structured character, outline and panel JSON for story operations; other prompts use an input hash |
 | FakeVisionAdapter | Returns a fixed palette suggestion; review returns a fixed OK string |
 | FakeImageAdapter | Returns a small test PNG (e.g., a 64x64 white image with a border); provenance_metadata is a fixed JSON stub |
 | FakeStorageAdapter | Stores blobs in memory (or a temp dir); returns local file URIs |

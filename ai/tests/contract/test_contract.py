@@ -117,7 +117,7 @@ def test_generate_panel_text_contract():
     model = GeneratePanelTextResponse(**data)
     assert model.job_id == payload["job_id"]
     assert len(model.panels) == 4
-    assert model.panels[0].dialogue != ""
+    assert model.panels[0].scene_description != ""
     assert model.panels[0].image_prompt != ""
 
 

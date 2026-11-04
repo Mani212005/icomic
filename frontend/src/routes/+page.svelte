@@ -339,7 +339,6 @@
 								id="new-proj-chapters"
 								type="number"
 								min="1"
-								max="10"
 								bind:value={newProjectForm.chapter_count}
 							/>
 						</div>

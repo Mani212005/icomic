@@ -1,12 +1,17 @@
 """Script analysis service."""
 
-from ..adapters.language.port import LanguagePort, Message
-from ..costs import WORST_CASE_TEXT_OUTPUT_TOKENS
+import math
+
+from pydantic import TypeAdapter
+
+from ..adapters.language.port import LanguagePort
 from ..gen.models import CharacterProfile
+from .pacing import SOURCE_WORDS_PER_CALL, chapter_count, split_text
+from .structured import complete_json
 
 
 class ScriptService:
-    """Business logic for script analysis and character extraction."""
+    """Extract characters in bounded source chunks and preserve every chunk."""
 
     def __init__(self, language_adapter: LanguagePort, model_id: str = ""):
         self.language_adapter = language_adapter
@@ -15,46 +20,29 @@ class ScriptService:
     def analyze_script(
         self, script: str, target_chapter_count: int | None = None
     ) -> tuple[list[CharacterProfile], int, int, list[str]]:
-        """Analyze script text, extract character profiles, and suggest chapter breakdown."""
-        clean_script = script.strip()
-        if not clean_script:
+        if not script.strip():
             raise ValueError("Script input cannot be empty.")
-
-        words = clean_script.split()
-        word_count = len(words)
-
-        suggested_chapters = target_chapter_count or max(1, min(10, word_count // 200 + 1))
-        warnings: list[str] = []
-        if word_count < 50:
-            warnings.append("Script is very short; fewer panels will be generated.")
-        elif word_count > 5000:
-            warnings.append("Script is very long; consider splitting into multiple projects.")
-
-        # Complete language analysis via LanguagePort
-        _ = self.language_adapter.complete(
-            self.model_id,
-            [
-                Message(
-                    role="system",
-                    content="Extract character profiles and chapter breakdown from the script.",
-                ),
-                Message(role="user", content=clean_script),
-            ],
-            max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
-        )
-
-        # Build extracted character profiles
-        profiles = [
-            CharacterProfile(
-                name="Protagonist",
-                description="The central figure described in the script",
-                age_range="20-30",
-                appearance="Determined expression, medium build",
-                hair_style="Dark wavy hair",
-                clothing="Trenchcoat and durable boots",
-                personality="Observant and persistent",
-                visual_attributes={"palette": "earth-tones", "signature_prop": "notebook"},
+        word_count = len(script.split())
+        profiles: dict[str, CharacterProfile] = {}
+        schema = TypeAdapter(list[CharacterProfile])
+        for source in split_text(script, max(1, math.ceil(word_count / SOURCE_WORDS_PER_CALL))):
+            extracted = complete_json(
+                self.language_adapter,
+                self.model_id,
+                "characters",
+                {"source": source},
+                schema.json_schema(),
             )
-        ]
-
-        return profiles, suggested_chapters, word_count, warnings
+            for profile in schema.validate_python(extracted):
+                profiles.setdefault(profile.name.casefold(), profile)
+        if not profiles:
+            raise ValueError("Script analysis returned no character profiles.")
+        warnings = (
+            ["Script is very short; fewer panels will be generated."] if word_count < 50 else []
+        )
+        return (
+            list(profiles.values()),
+            target_chapter_count or chapter_count(word_count),
+            word_count,
+            warnings,
+        )

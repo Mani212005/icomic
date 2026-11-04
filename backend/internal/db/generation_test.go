@@ -327,3 +327,19 @@ func TestPageGenerationApprovalReadFailuresRollBack(t *testing.T) {
 		})
 	}
 }
+
+func TestImageQuotaDoesNotBlockTextOrExport(t *testing.T) {
+	for _, kind := range []string{"script_analysis", "chapter_outline", "panel_text", "export"} {
+		t.Run(kind, func(t *testing.T) {
+			repo, state, job := newGenerationFixture()
+			state.daily, state.monthly = 25, 250
+			job.JobType = kind
+			if _, _, err := repo.CreateGeneration(context.Background(), job, GenerationOptions{}, 0); err != nil {
+				t.Fatal(err)
+			}
+			if state.daily != 25 || state.monthly != 250 {
+				t.Fatal("non-image generation changed image quota")
+			}
+		})
+	}
+}

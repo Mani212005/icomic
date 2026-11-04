@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"icomic/backend/internal/domain"
 	"time"
 )
 
@@ -196,7 +198,7 @@ func (f *FakeAIServiceClient) AnalyzeScript(ctx context.Context, req AnalyzeScri
 	if f.AnalyzeScriptFunc != nil {
 		return f.AnalyzeScriptFunc(ctx, req)
 	}
-	chapterCount := 3
+	chapterCount := domain.SuggestedChapterCount(len(strings.Fields(req.Script)))
 	if req.TargetChapterCount != nil && *req.TargetChapterCount > 0 {
 		chapterCount = *req.TargetChapterCount
 	}
@@ -278,7 +280,7 @@ func (f *FakeAIServiceClient) GenerateChapterOutline(ctx context.Context, req Ge
 	}
 	count := req.ChapterCount
 	if count <= 0 {
-		count = 2
+		count = domain.SuggestedChapterCount(len(strings.Fields(req.Script)))
 	}
 	var chapters []ChapterOutlineItem
 	for i := 1; i <= count; i++ {
@@ -302,7 +304,11 @@ func (f *FakeAIServiceClient) GeneratePanelText(ctx context.Context, req Generat
 		return f.GeneratePanelTextFunc(ctx, req)
 	}
 	var panels []PanelTextItem
-	for i := 1; i <= 4; i++ {
+	count := 4
+	if req.PanelCount != nil && *req.PanelCount > 0 {
+		count = *req.PanelCount
+	}
+	for i := 1; i <= count; i++ {
 		panels = append(panels, PanelTextItem{
 			PanelNumber:      i,
 			SceneDescription: fmt.Sprintf("Panel %d: Scene description for chapter %d", i, req.ChapterNumber),

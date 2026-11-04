@@ -41,13 +41,13 @@ def test_script_service_empty_validation():
         svc.analyze_script("   \n\t  ")
 
 
-def test_script_service_long_script_warning():
+def test_script_service_long_script_is_supported():
     lang = FakeLanguageAdapter()
     svc = ScriptService(lang)
     long_script = "word " * 5005
     _, _, word_count, warnings = svc.analyze_script(long_script)
     assert word_count == 5005
-    assert any("Script is very long" in w for w in warnings)
+    assert warnings == []
 
 
 def test_character_service():

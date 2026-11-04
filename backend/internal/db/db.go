@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -315,6 +316,7 @@ func (m *InMemoryRepository) ListChapters(_ context.Context, projectID string) (
 			res = append(res, &cpy)
 		}
 	}
+	sort.Slice(res, func(i, j int) bool { return res[i].ChapterNumber < res[j].ChapterNumber })
 	return res, nil
 }
 
@@ -427,6 +429,7 @@ func (m *InMemoryRepository) ListPanels(_ context.Context, chapterID string) ([]
 			res = append(res, &cpy)
 		}
 	}
+	sort.Slice(res, func(i, j int) bool { return res[i].PanelNumber < res[j].PanelNumber })
 	return res, nil
 }
 
@@ -482,6 +485,7 @@ func (m *InMemoryRepository) ListPages(_ context.Context, chapterID string) ([]*
 			res = append(res, &cpy)
 		}
 	}
+	sort.Slice(res, func(i, j int) bool { return res[i].PageNumber < res[j].PageNumber })
 	return res, nil
 }
 

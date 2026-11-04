@@ -87,14 +87,16 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 		}
 	}
 	now := time.Now().UTC()
-	var daily, monthly int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FILTER (WHERE created_at >= $2::timestamptz), COUNT(*)
-        FROM image_quota_usage
-        WHERE user_id=$1::uuid AND created_at >= $3::timestamptz`, job.UserID, now.Add(-24*time.Hour), now.Add(-30*24*time.Hour)).Scan(&daily, &monthly); err != nil {
-		return nil, false, err
-	}
-	if err := domain.CheckKillSwitchAndQuota(false, float64(daily), float64(dailyLimit), float64(monthly), float64(monthlyLimit)); err != nil {
-		return nil, false, err
+	if imageJob(job.JobType) {
+		var daily, monthly int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FILTER (WHERE created_at >= $2::timestamptz), COUNT(*)
+	        FROM image_quota_usage
+	        WHERE user_id=$1::uuid AND created_at >= $3::timestamptz`, job.UserID, now.Add(-24*time.Hour), now.Add(-30*24*time.Hour)).Scan(&daily, &monthly); err != nil {
+			return nil, false, err
+		}
+		if err := domain.CheckKillSwitchAndQuota(false, float64(daily), float64(dailyLimit), float64(monthly), float64(monthlyLimit)); err != nil {
+			return nil, false, err
+		}
 	}
 	if err := checkGenerationApproval(ctx, tx, job, opts.EntityID); err != nil {
 		return nil, false, err

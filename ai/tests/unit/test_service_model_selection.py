@@ -5,7 +5,9 @@ import json
 import httpx
 import pytest
 
+from app.adapters.language.fake import FakeLanguageAdapter
 from app.adapters.language.meta import MetaLanguageAdapter
+from app.adapters.language.port import Message
 from app.adapters.vision.meta import MetaVisionAdapter
 from app.services.colour import ColourService
 from app.services.moderation import ModerationService
@@ -31,7 +33,13 @@ def test_services_honor_adapter_model_selection(monkeypatch, operation, configur
         requests.append(payload)
         if payload["model"] != expected_model:
             return httpx.Response(404, json={"error": {"message": "Unknown model"}})
-        content = '{"theme":"Ocean","palette":[]}' if operation == "palette" else "Safe story"
+        content = (
+            '{"theme":"Ocean","palette":[]}'
+            if operation == "palette"
+            else FakeLanguageAdapter().complete(
+                "fake", [Message(role=m["role"], content=m["content"]) for m in payload["messages"]]
+            )
+        )
         return httpx.Response(
             200,
             json={
