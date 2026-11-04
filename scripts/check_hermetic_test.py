@@ -1,13 +1,49 @@
 """Unit tests for the hermetic guard script."""
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from check_hermetic import check_file
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "ai"))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "e2e"))
+from app.costs import actual_stage_cost
+from comic_e2e import CostGuard, live_authorization_error
+
 
 class TestHermeticGuard(unittest.TestCase):
+    def test_comic_live_guard_requires_flag_environment_and_cap(self):
+        self.assertIsNotNone(live_authorization_error(False, {}, None))
+        self.assertIsNotNone(live_authorization_error(True, {}, 2.0))
+        self.assertIsNotNone(
+            live_authorization_error(True, {"ICOMIC_E2E_LIVE": "1"}, 1.99)
+        )
+        self.assertIsNone(live_authorization_error(True, {"ICOMIC_E2E_LIVE": "1"}, 2.0))
+        self.assertIsNotNone(
+            live_authorization_error(True, {"CI": "true", "ICOMIC_E2E_LIVE": "1"}, 2.0)
+        )
+
+    def test_comic_cost_guard_refuses_call_above_remaining_cap(self):
+        guard = CostGuard(cap=0.02, live=True)
+        with self.assertRaisesRegex(RuntimeError, "cost guard refused"):
+            guard.before_call("image")
+
+    def test_actual_cost_uses_observed_tokens_and_meta_image_price(self):
+        usage = SimpleNamespace(input_tokens=10, output_tokens=20)
+        self.assertAlmostEqual(
+            actual_stage_cost("language", SimpleNamespace(last_usage=usage)), 0.0000975
+        )
+        self.assertEqual(
+            actual_stage_cost("image", SimpleNamespace(), "muse-image-1.0-fake"), 0.0
+        )
+        self.assertEqual(
+            actual_stage_cost("image", SimpleNamespace(), "muse-image-1.0"), 0.01
+        )
+
     def test_clean_file_passes(self):
         with tempfile.NamedTemporaryFile("w+", suffix="_test.py") as f:
             f.write("def test_health():\n    assert 1 == 1\n")
@@ -42,7 +78,7 @@ class TestHermeticGuard(unittest.TestCase):
         cases = [
             'api_key = os.environ.get("META_API_KEY")',
             'apiKey := os.Getenv("META_API_KEY")',
-            'const key = process.env.META_API_KEY;',
+            "const key = process.env.META_API_KEY;",
         ]
         for idx, case in enumerate(cases):
             with tempfile.NamedTemporaryFile("w+", suffix=f"case_{idx}.py") as f:
@@ -50,7 +86,9 @@ class TestHermeticGuard(unittest.TestCase):
                 f.flush()
                 violations = check_file(Path(f.name))
                 self.assertTrue(
-                    any(v.rule == "NO_META_API_KEY_IN_CODE_OR_TESTS" for v in violations),
+                    any(
+                        v.rule == "NO_META_API_KEY_IN_CODE_OR_TESTS" for v in violations
+                    ),
                     f"Failed to detect in {case}",
                 )
 
@@ -73,10 +111,14 @@ class TestHermeticGuard(unittest.TestCase):
 
     def test_test_db_connect_detected(self):
         with tempfile.NamedTemporaryFile("w+", suffix="_test.go") as f:
-            f.write('db, err := sql.Open("postgres", "postgres://localhost:5432/test")\n')
+            f.write(
+                'db, err := sql.Open("postgres", "postgres://localhost:5432/test")\n'
+            )
             f.flush()
             violations = check_file(Path(f.name))
-            self.assertTrue(any(v.rule == "NO_LIVE_DB_CONNECTIONS_IN_TESTS" for v in violations))
+            self.assertTrue(
+                any(v.rule == "NO_LIVE_DB_CONNECTIONS_IN_TESTS" for v in violations)
+            )
 
     def test_allowed_meta_http_file_permits_host_and_key(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -126,7 +168,9 @@ class TestHermeticGuard(unittest.TestCase):
                 file_path.write_text('key = os.getenv("META_API_KEY")\n')
                 violations = check_file(file_path)
                 self.assertTrue(
-                    any(v.rule == "NO_META_API_KEY_IN_CODE_OR_TESTS" for v in violations),
+                    any(
+                        v.rule == "NO_META_API_KEY_IN_CODE_OR_TESTS" for v in violations
+                    ),
                     f"Allowed META_API_KEY in disallowed path: {parts}",
                 )
 

@@ -187,3 +187,16 @@ Validate GitHub Actions workflow syntax locally with `actionlint`:
 ```bash
 actionlint .github/workflows/ci.yml .github/workflows/lint-openapi.yml
 ```
+
+### 10. One-Command Comic E2E Run
+
+Run the end-user comic flow through the Go API and download a verified PDF:
+
+```bash
+make e2e-comic
+```
+
+The target starts PostgreSQL, Redis, the AI service, and the Go API with Docker Compose, using fake adapters by default.
+It creates a project, analyzes the script, generates and colours pages, exports and verifies the PDF, then writes `/home/mani/icomic-artifacts/comic-e2e/latest.pdf`, a timestamped PDF copy, and a cost report.
+Use `make e2e-comic E2E_ARGS="--skip-services"` when the local Compose services are already running.
+The runner supports an explicitly gated live mode for later manual use; CI and hermetic tests exercise only the refusal guards and never start live adapters.

@@ -1,4 +1,4 @@
-.PHONY: all test lint build check guard-hermetic test-contracts test-migrations test-backend test-ai test-frontend test-e2e fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
+.PHONY: all test lint build check guard-hermetic test-contracts test-migrations test-backend test-ai test-frontend test-e2e e2e-comic fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
 
 all: check
 
@@ -23,6 +23,9 @@ test-frontend:
 
 test-e2e:
 	( cd ai && uv run --frozen pytest -v -c ../tests/e2e/pytest.ini ../tests/e2e )
+
+e2e-comic:
+	python3 scripts/e2e/comic_e2e.py $(E2E_ARGS)
 
 test: guard-hermetic test-contracts test-migrations test-backend test-ai test-frontend
 

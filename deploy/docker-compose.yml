@@ -51,12 +51,15 @@ services:
     container_name: icomic-ai
     environment:
       PORT: "8000"
-      ADAPTER_LANGUAGE: "fake"
-      ADAPTER_VISION: "fake"
-      ADAPTER_IMAGE: "fake"
-      ADAPTER_STORAGE: "fake"
-      ADAPTER_QUEUE: "fake"
-      ADAPTER_CLOCK: "fake"
+      ADAPTER_LANGUAGE: "${ADAPTER_LANGUAGE:-fake}"
+      ADAPTER_VISION: "${ADAPTER_VISION:-fake}"
+      ADAPTER_IMAGE: "${ADAPTER_IMAGE:-fake}"
+      ADAPTER_STORAGE: "${ADAPTER_STORAGE:-fake}"
+      ADAPTER_QUEUE: "${ADAPTER_QUEUE:-fake}"
+      ADAPTER_CLOCK: "${ADAPTER_CLOCK:-fake}"
+      META_API_KEY: "${META_API_KEY:-}"
+      META_REASONING_EFFORT: "${META_REASONING_EFFORT:-low}"
+      META_REASONING_RESERVE_TOKENS: "${META_REASONING_RESERVE_TOKENS:-1024}"
       STORAGE_BASE_URL: "http://ai:8000/storage/fake"
       REDIS_URL: "redis://redis:6379/0"
     expose:
