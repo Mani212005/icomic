@@ -8,8 +8,8 @@ The primary CI pipeline is defined in `.github/workflows/ci.yml`. It runs on pus
 
 ### Design Principles
 
-- **Hermeticity**: All tests run in isolated environments without live network calls, live external APIs, or background database dependencies.
-- **Modularity**: One stable job per component (`hermetic-guard`, `contracts`, `backend`, `ai-service`, `frontend`), allowing other pipelines (such as database migrations or structural checks) to add jobs without altering existing ones.
+- **Hermeticity**: Default tests run without live network calls, external APIs, or database dependencies. Tagged PostgreSQL integration tests run in a separate job against a local service container.
+- **Modularity**: One stable job per component (`hermetic-guard`, `contracts`, `backend`, `backend-realdb`, `ai-service`, `frontend`), with database integration isolated from the hermetic backend suite.
 - **Pinned Toolchains**: Tool versions are explicitly pinned and synchronized across configuration files (`go.mod`, `pyproject.toml`, `package.json`, `package-lock.json`, `uv.lock`, and `contracts/requirements.txt`).
 - **Dependency Caching**: Native GitHub Actions caching is configured for Go modules, Python wheels / uv dependencies, and npm packages.
 - **Least-Privilege Security**: Workflows explicitly specify `permissions: contents: read`.
@@ -20,11 +20,12 @@ The primary CI pipeline is defined in `.github/workflows/ci.yml`. It runs on pus
 
 | Job ID | Job Name | Responsibility |
 | --- | --- | --- |
-| `hermetic-guard` | Hermetic Guard | Scans codebase and workflows to ensure zero live API markers, zero real Meta hosts, zero `META_API_KEY` reads in code/tests, and zero live Postgres/Redis dependencies; tests the generated-model drift comparator. |
+| `hermetic-guard` | Hermetic Guard | Scans codebase and workflows to ensure zero live API markers, zero real Meta hosts, zero `META_API_KEY` reads in code/tests, and no database dependencies outside the tagged PostgreSQL job; tests the generated-model drift comparator. |
 | `contracts` | Contracts & Schemas Validation | Validates OpenAPI 3.1 specifications and JSON schemas against test suites. |
 | `contract-models` | OpenAPI Generated Model Drift Check | Regenerates Go and Python contract models with pinned generator versions and fails if checked-in output differs. |
 | `database` | Database Migrations & Schema Validation | Runs hermetic PostgreSQL migration structural validation without live database dependencies. |
 | `backend` | Go Backend Checks & Tests | Runs Go format verification (`gofmt`), static analysis (`go vet`), unit and contract tests with race detection (`go test -race`), and binary compilation (`go build`). |
+| `backend-realdb` | PostgreSQL Integration Tests | Runs Go integration tests tagged `realdb` against a PostgreSQL service, with a fresh schema per test; exercises migration up/down, transactional generation, credits, quotas, approvals, and concurrency. |
 | `ai-service` | Python AI Service Checks & Tests | Syncs locked dependencies via `uv`, runs Ruff linting and format checks, and executes pytest boundary contract tests. |
 | `frontend` | Svelte Frontend Checks & Tests | Installs npm dependencies via `npm ci`, runs Svelte type and syntax checking (`svelte-check`), executes unit tests, and compiles the production bundle (`vite build`). |
 | `e2e` | End-to-End API Integration Suite | Starts real Python AI service on fakes and real Go API server on ephemeral ports, testing full project lifecycle from dev sign-in to downloaded PDF verification, plus negative paths (stale approvals, kill switch, quota exhaustion, prompt moderation). |
@@ -130,6 +131,14 @@ make test-backend
 make build-backend
 # Or: ( cd backend && go build -v ./... )
 ```
+
+The default backend tests remain database-free. Run the real PostgreSQL integration suite locally with Docker Compose:
+
+```bash
+make test-backend-realdb
+```
+
+The target starts and removes an isolated PostgreSQL 16 test container. It also accepts `TEST_DATABASE_URL` when an already-running local PostgreSQL service is available; the test rejects non-loopback database hosts. CI runs the tagged suite in the separate `backend-realdb` service-container job.
 
 ### 6. Python AI Service
 

@@ -1,4 +1,4 @@
-.PHONY: all test lint build check guard-hermetic test-contracts test-migrations test-backend test-ai test-frontend test-e2e e2e-comic generate-contract-models check-contract-models install-contract-codegen fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
+.PHONY: all test lint build check guard-hermetic test-contracts test-migrations test-backend test-backend-realdb test-ai test-frontend test-e2e e2e-comic generate-contract-models check-contract-models install-contract-codegen fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
 
 OAPI_CODEGEN_VERSION := v2.6.0
 DATAMODEL_CODEGEN_VERSION := 0.89.0
@@ -40,6 +40,16 @@ test-migrations:
 
 test-backend:
 	( cd backend && go test -v -race ./... )
+
+# Starts an isolated local PostgreSQL container unless CI supplies its service URL.
+test-backend-realdb:
+	@if [ -n "$${TEST_DATABASE_URL:-}" ]; then \
+	  ( cd backend && go test -v -race -tags=realdb -count=1 ./internal/db ); \
+	else \
+	  docker compose -f deploy/docker-compose.realdb.yml up -d --wait || exit 1; \
+	  trap 'docker compose -f deploy/docker-compose.realdb.yml down -v' EXIT; \
+	  ( cd backend && TEST_DATABASE_URL='postgres://icomic@127.0.0.1:55432/icomic_test?sslmode=disable' go test -v -race -tags=realdb -count=1 ./internal/db ); \
+	fi
 
 test-ai:
 	( cd ai && uv run --frozen pytest -v )
