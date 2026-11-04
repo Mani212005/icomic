@@ -57,7 +57,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 func (s *Server) aiActualCost(ctx context.Context, jobID string) float64 {
 	status, err := s.AIClient.GetJobStatus(ctx, jobID)
-	if err != nil || status == nil || status.Status != "done" || status.ActualCost == nil {
+	if err != nil || status == nil || (status.Status != "done" && status.Status != "failed") || status.ActualCost == nil {
 		return 0
 	}
 	return *status.ActualCost

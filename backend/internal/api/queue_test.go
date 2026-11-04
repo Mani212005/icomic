@@ -62,6 +62,15 @@ func TestHTTPQueueDispatchReplayAndRefund(t *testing.T) {
 			dispatcher := &committedDispatcher{JobService: s.JobService, ledger: s.CreditService}
 			s.JobService = dispatcher
 			calls := 0
+			providerCost := 0.01
+			providerStatus := "done"
+			if fail {
+				providerCost = 0.0042
+				providerStatus = "failed"
+			}
+			s.AIClient.(*gen.FakeAIServiceClient).GetJobStatusFunc = func(ctx context.Context, id string) (*gen.JobStatusResponse, error) {
+				return &gen.JobStatusResponse{JobID: id, Status: gen.JobStatusResponseStatus(providerStatus), ActualCost: &providerCost}, nil
+			}
 			s.AIClient.(*gen.FakeAIServiceClient).GenerateCharacterReferenceFunc = func(ctx context.Context, req gen.GenerateCharacterReferenceRequest) (*gen.GenerateCharacterReferenceResponse, error) {
 				calls++
 				if fail {
@@ -101,6 +110,10 @@ func TestHTTPQueueDispatchReplayAndRefund(t *testing.T) {
 			}
 			if calls != 1 || dispatcher.dispatched != 1 {
 				t.Fatalf("generation calls=%d dispatches=%d", calls, dispatcher.dispatched)
+			}
+			saved, err := s.JobService.GetJob(context.Background(), jobID)
+			if err != nil || saved.ActualCost == nil || *saved.ActualCost != providerCost {
+				t.Fatalf("provider cost lost: job=%+v err=%v", saved, err)
 			}
 			for i := 0; i < 2; i++ {
 				rec := httptest.NewRecorder()

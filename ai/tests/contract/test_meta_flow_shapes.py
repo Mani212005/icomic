@@ -8,6 +8,7 @@ from io import BytesIO
 from uuid import uuid4
 
 import httpx
+import jsonschema
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -51,6 +52,14 @@ def test_entire_meta_service_flow_with_webp_and_moderation_costs(tmp_path):
                     "fake",
                     [Message(role=m["role"], content=m["content"]) for m in payload["messages"]],
                 )
+                operation = (
+                    json.loads(content).get("operation") if content.startswith("{") else None
+                )
+                if operation in {"characters", "outline", "panels"}:
+                    output_format = payload["response_format"]
+                    assert output_format["type"] == "json_schema"
+                    assert output_format["json_schema"]["name"] == operation
+                    jsonschema.validate(json.loads(answer), output_format["json_schema"]["schema"])
             return httpx.Response(
                 200,
                 json={
@@ -233,3 +242,54 @@ def test_multicall_script_job_reports_all_observed_provider_usage(tmp_path):
     status = client.get(f"/internal/v1/job/{job_id}/status").json()
     assert len(ledger.report()["calls"]) == 3
     assert abs(status["actual_cost"] - 3 * 0.0003375) < 1e-12
+
+
+def test_schema_echo_stops_chunked_analysis_and_retains_failed_job_cost(tmp_path):
+    generated = []
+
+    def respond(request):
+        if request.url.path.endswith("/responses/input_tokens"):
+            return httpx.Response(200, json={"input_tokens": 100})
+        payload = json.loads(request.content)
+        generated.append(payload)
+        answer = FakeLanguageAdapter().complete(
+            "fake", [Message(role=m["role"], content=m["content"]) for m in payload["messages"]]
+        )
+        if len(generated) == 2:
+            # A provider can still violate its contract. Never accept a schema
+            # document as story data or make another paid call to repair it.
+            answer = json.dumps(payload["response_format"]["json_schema"]["schema"])
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": answer}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+            },
+        )
+
+    ledger = ProviderCostLedger(2, path=tmp_path / "costs.json")
+    adapters = build_adapters_from_env()
+    adapters.language = MetaLanguageAdapter(
+        api_key="mock-key",
+        base_url="http://mock.meta.internal/v1",
+        transport=httpx.MockTransport(respond),
+        cost_ledger=ledger,
+    )
+    adapters.cost_ledger = ledger
+    client = TestClient(create_app(adapters))
+    payload = {
+        "job_id": str(uuid4()),
+        "project_id": str(uuid4()),
+        "hashed_user_id": "hash",
+        "script": "story " * 1001,
+    }
+    response = client.post("/internal/v1/analyze-script", json=payload)
+    assert response.status_code == 400
+    assert "Input should be a valid list" in response.text
+    status = client.get(f"/internal/v1/job/{payload['job_id']}/status").json()
+    assert status["status"] == "failed"
+    assert status["actual_cost"] == ledger.report()["actual_spend_usd"] == 2 * 0.0003375
+    assert ledger.report()["unpriced_calls"] == 0
+    # Neither a later source chunk nor a redelivery repeats generation.
+    assert client.post("/internal/v1/analyze-script", json=payload).status_code == 400
+    assert len(generated) == 2
