@@ -28,7 +28,7 @@ func scanJob(row Row) (*domain.GenerationJob, error) {
 	return &j, err
 }
 func existingGeneration(ctx context.Context, tx Transaction, job *domain.GenerationJob) (*domain.GenerationJob, error) {
-	existing, err := scanJob(tx.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM generation_jobs WHERE idempotency_key=$1`, job.IdempotencyKey))
+	existing, err := scanJob(tx.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM generation_jobs WHERE idempotency_key=$1::varchar`, job.IdempotencyKey))
 	if err == nil && (existing.UserID != job.UserID || existing.ProjectID != job.ProjectID || existing.JobType != job.JobType) {
 		return nil, ErrConflict
 	}
@@ -66,7 +66,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 		return nil, false, err
 	}
 	var userID string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, job.UserID).Scan(&userID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1::uuid FOR UPDATE`, job.UserID).Scan(&userID); err != nil {
 		return nil, false, err
 	}
 	// A concurrent request may have committed while we waited for the policy lock.
@@ -88,9 +88,9 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 	}
 	now := time.Now().UTC()
 	var daily, monthly int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FILTER (WHERE created_at >= $2), COUNT(*)
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FILTER (WHERE created_at >= $2::timestamptz), COUNT(*)
         FROM image_quota_usage
-        WHERE user_id=$1 AND created_at >= $3`, job.UserID, now.Add(-24*time.Hour), now.Add(-30*24*time.Hour)).Scan(&daily, &monthly); err != nil {
+        WHERE user_id=$1::uuid AND created_at >= $3::timestamptz`, job.UserID, now.Add(-24*time.Hour), now.Add(-30*24*time.Hour)).Scan(&daily, &monthly); err != nil {
 		return nil, false, err
 	}
 	if err := domain.CheckKillSwitchAndQuota(false, float64(daily), float64(dailyLimit), float64(monthly), float64(monthlyLimit)); err != nil {
@@ -101,7 +101,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 	}
 	if opts.EntityID != "" {
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM generation_jobs WHERE project_id=$1 AND entity_id=$2 AND job_type=$3 AND status IN ('pending','running'))`, job.ProjectID, opts.EntityID, job.JobType).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM generation_jobs WHERE project_id=$1::uuid AND entity_id=$2::uuid AND job_type=$3::varchar AND status IN ('pending','running'))`, job.ProjectID, opts.EntityID, job.JobType).Scan(&exists); err != nil {
 			return nil, false, err
 		}
 		if exists {
@@ -122,7 +122,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 	job.Status = "pending"
 	var inserted string
 	err = tx.QueryRowContext(ctx, `INSERT INTO generation_jobs (id,project_id,user_id,job_type,stage,model_id,status,idempotency_key,estimated_cost,hashed_user_id,created_at,entity_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::uuid)
+        VALUES ($1::uuid,$2::uuid,$3::uuid,$4::varchar,$5::varchar,$6::varchar,$7::varchar,$8::varchar,$9::numeric,$10::varchar,$11::timestamptz,NULLIF($12::text,'')::uuid)
         ON CONFLICT (idempotency_key) DO NOTHING
         RETURNING id`, job.ID, job.ProjectID, job.UserID, job.JobType, job.Stage, job.ModelID, job.Status, job.IdempotencyKey, job.EstimatedCost, job.HashedUserID, now, opts.EntityID).Scan(&inserted)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -138,7 +138,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 		}
 	}
 	if imageJob(job.JobType) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO image_quota_usage (user_id,generation_job_id,created_at) VALUES ($1,$2,$3)`, job.UserID, job.ID, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO image_quota_usage (user_id,generation_job_id,created_at) VALUES ($1::uuid,$2::uuid,$3::timestamptz)`, job.UserID, job.ID, now); err != nil {
 			return nil, false, err
 		}
 	}
@@ -156,7 +156,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 
 func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.GenerationJob, entityID string) error {
 	var script string
-	if err := tx.QueryRowContext(ctx, `SELECT original_script FROM projects WHERE id=$1 AND user_id=$2 FOR UPDATE`, job.ProjectID, job.UserID).Scan(&script); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT original_script FROM projects WHERE id=$1::uuid AND user_id=$2::uuid FOR UPDATE`, job.ProjectID, job.UserID).Scan(&script); err != nil {
 		return err
 	}
 	prereqs := domain.ApprovedPrereqs{HasScript: len(script) > 0}
@@ -168,7 +168,7 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
 	}
 	if job.JobType == "character_reference" {
 		var id string
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM characters WHERE id=$1 AND project_id=$2 FOR SHARE`, entityID, job.ProjectID).Scan(&id); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM characters WHERE id=$1::uuid AND project_id=$2::uuid FOR SHARE`, entityID, job.ProjectID).Scan(&id); err != nil {
 			return err
 		}
 		_, err := domain.ValidateScript(script)
@@ -179,14 +179,14 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
 	}
 	var chapterID string
 	var pageUpdated time.Time
-	if err := tx.QueryRowContext(ctx, `SELECT p.chapter_id,p.updated_at FROM pages p JOIN chapters c ON c.id=p.chapter_id WHERE p.id=$1 AND c.project_id=$2 FOR SHARE OF p,c`, entityID, job.ProjectID).Scan(&chapterID, &pageUpdated); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT p.chapter_id,p.updated_at FROM pages p JOIN chapters c ON c.id=p.chapter_id WHERE p.id=$1::uuid AND c.project_id=$2::uuid FOR SHARE OF p,c`, entityID, job.ProjectID).Scan(&chapterID, &pageUpdated); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `SELECT id FROM panels WHERE id::text IN (SELECT jsonb_array_elements_text(panel_ids) FROM pages WHERE id=$1) FOR SHARE`, entityID); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT id FROM panels WHERE id::text IN (SELECT jsonb_array_elements_text(panel_ids) FROM pages WHERE id=$1::uuid) FOR SHARE`, entityID); err != nil {
 		return err
 	}
 	var panelUpdated sql.NullTime
-	if err := tx.QueryRowContext(ctx, `SELECT MAX(updated_at) FROM panels WHERE id::text IN (SELECT jsonb_array_elements_text(panel_ids) FROM pages WHERE id=$1)`, entityID).Scan(&panelUpdated); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(updated_at) FROM panels WHERE id::text IN (SELECT jsonb_array_elements_text(panel_ids) FROM pages WHERE id=$1::uuid)`, entityID).Scan(&panelUpdated); err != nil {
 		return err
 	}
 	if panelUpdated.Valid && panelUpdated.Time.After(pageUpdated) {
@@ -195,7 +195,7 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
 
 	if job.JobType == "draft_sketch" {
 		// Hold the prerequisite rows against edits through commit. Approvals are append-only.
-		if _, err := tx.ExecContext(ctx, `SELECT id FROM characters WHERE project_id=$1 FOR SHARE`, job.ProjectID); err != nil {
+		if _, err := tx.ExecContext(ctx, `SELECT id FROM characters WHERE project_id=$1::uuid FOR SHARE`, job.ProjectID); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*)>0
@@ -214,12 +214,12 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
         AND j.status='done'
         AND (j.entity_id=c.id OR j.id=c.reference_image_job_id)),c.updated_at)))),FALSE)
         FROM characters c
-        WHERE c.project_id=$1`, job.ProjectID).Scan(&prereqs.AllCharactersApproved); err != nil {
+        WHERE c.project_id=$1::uuid`, job.ProjectID).Scan(&prereqs.AllCharactersApproved); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1
         FROM stage_approvals a JOIN chapters c ON c.id=a.entity_id
-        WHERE c.id=$1
+        WHERE c.id=$1::uuid
         AND a.project_id=c.project_id
         AND a.entity_type='chapter_outline'
         AND NOT EXISTS (SELECT 1 FROM generation_jobs active
@@ -240,17 +240,17 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
 		var approved bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1
         FROM stage_approvals a
-        WHERE a.project_id=$1
-        AND a.entity_id=$2
-        AND a.entity_type=$3
+        WHERE a.project_id=$1::uuid
+        AND a.entity_id=$2::uuid
+        AND a.entity_type=$3::varchar
         AND NOT EXISTS (SELECT 1 FROM generation_jobs active
-            WHERE active.project_id=$1 AND active.entity_id=$2
-            AND active.job_type=$5 AND active.status IN ('pending','running'))
+            WHERE active.project_id=$1::uuid AND active.entity_id=$2::uuid
+            AND active.job_type=$5::varchar AND active.status IN ('pending','running'))
         AND a.approved_at>GREATEST($4::timestamptz,COALESCE((SELECT MAX(j.completed_at)
         FROM generation_jobs j
-        WHERE j.project_id=$1
-        AND j.entity_id=$2
-        AND j.job_type=$5
+        WHERE j.project_id=$1::uuid
+        AND j.entity_id=$2::uuid
+        AND j.job_type=$5::varchar
         AND j.status='done'),$4::timestamptz)))`, job.ProjectID, entityID, approvalType, pageUpdated, previousJob).Scan(&approved); err != nil {
 			return err
 		}
@@ -267,7 +267,7 @@ func (p *PostgresRepository) TransitionGeneration(ctx context.Context, id, statu
 	}
 	defer func() { _ = tx.Rollback() }()
 	var current string
-	err = tx.QueryRowContext(ctx, `SELECT status FROM generation_jobs WHERE id=$1 FOR UPDATE`, id).Scan(&current)
+	err = tx.QueryRowContext(ctx, `SELECT status FROM generation_jobs WHERE id=$1::uuid FOR UPDATE`, id).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -286,8 +286,8 @@ func (p *PostgresRepository) TransitionGeneration(ctx context.Context, id, statu
 		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE generation_jobs
-        SET status=$2, actual_cost=COALESCE($3,actual_cost),error_message=COALESCE($4,error_message),completed_at=CASE WHEN $2 IN ('done','failed','cancelled') THEN COALESCE(completed_at,clock_timestamp()) ELSE completed_at END
-        WHERE id=$1`, id, status, cost, msg)
+        SET status=$2::varchar, actual_cost=COALESCE($3::numeric,actual_cost),error_message=COALESCE($4::text,error_message),completed_at=CASE WHEN $2::varchar IN ('done','failed','cancelled') THEN COALESCE(completed_at,clock_timestamp()) ELSE completed_at END
+        WHERE id=$1::uuid`, id, status, cost, msg)
 	if err != nil {
 		return err
 	}

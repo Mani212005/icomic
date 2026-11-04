@@ -16,7 +16,7 @@ import (
 // alone is unsafe: another transaction can append a newer row while we wait.
 func transactionBalance(ctx context.Context, tx Transaction, userID string) (float64, error) {
 	var balance float64
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE transaction_type WHEN 'debit' THEN -amount ELSE amount END),0) FROM credit_ledger WHERE user_id=$1`, userID).Scan(&balance)
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE transaction_type WHEN 'debit' THEN -amount ELSE amount END),0) FROM credit_ledger WHERE user_id=$1::uuid`, userID).Scan(&balance)
 	return balance, err
 }
 func insertCredit(ctx context.Context, tx Transaction, userID, projectID, jobID, kind string, amount, balance float64) (*domain.CreditLedger, error) {
@@ -25,7 +25,7 @@ func insertCredit(ctx context.Context, tx Transaction, userID, projectID, jobID,
 		entry.GenerationJobID = &jobID
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO credit_ledger (id,user_id,project_id,generation_job_id,transaction_type,amount,balance_after,created_at)
-        VALUES ($1,$2,NULLIF($3,'')::uuid,NULLIF($4,'')::uuid,$5,$6,$7,$8)`, entry.ID, userID, projectID, jobID, kind, amount, entry.BalanceAfter, entry.CreatedAt)
+        VALUES ($1::uuid,$2::uuid,NULLIF($3::text,'')::uuid,NULLIF($4::text,'')::uuid,$5::varchar,$6::numeric,$7::numeric,$8::timestamptz)`, entry.ID, userID, projectID, jobID, kind, amount, entry.BalanceAfter, entry.CreatedAt)
 	return entry, err
 }
 
@@ -46,7 +46,7 @@ func (p *PostgresRepository) RefundGeneration(ctx context.Context, jobID string,
 		return nil, err
 	}
 	var userID, projectID string
-	err = tx.QueryRowContext(ctx, `SELECT user_id,project_id FROM generation_jobs WHERE id=$1`, jobID).Scan(&userID, &projectID)
+	err = tx.QueryRowContext(ctx, `SELECT user_id,project_id FROM generation_jobs WHERE id=$1::uuid`, jobID).Scan(&userID, &projectID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -54,11 +54,11 @@ func (p *PostgresRepository) RefundGeneration(ctx context.Context, jobID string,
 		return nil, err
 	}
 	var locked string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&locked); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1::uuid FOR UPDATE`, userID).Scan(&locked); err != nil {
 		return nil, err
 	}
 	var debit float64
-	if err := tx.QueryRowContext(ctx, `SELECT amount FROM credit_ledger WHERE generation_job_id=$1 AND transaction_type='debit'`, jobID).Scan(&debit); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT amount FROM credit_ledger WHERE generation_job_id=$1::uuid AND transaction_type='debit'`, jobID).Scan(&debit); err != nil {
 		return nil, err
 	}
 	if amount > debit {
@@ -66,7 +66,7 @@ func (p *PostgresRepository) RefundGeneration(ctx context.Context, jobID string,
 	}
 	existing, err := scanCredit(tx.QueryRowContext(ctx, `SELECT id,user_id,project_id,generation_job_id,transaction_type,amount,balance_after,created_at
         FROM credit_ledger
-        WHERE generation_job_id=$1
+        WHERE generation_job_id=$1::uuid
         AND transaction_type='refund'`, jobID))
 	if err == nil {
 		if existing.Amount != amount {
@@ -106,6 +106,6 @@ func scanCredit(row Row) (*domain.CreditLedger, error) {
 func (p *PostgresRepository) GenerationDebit(ctx context.Context, jobID string) (*domain.CreditLedger, error) {
 	return scanCredit(p.db.QueryRowContext(ctx, `SELECT id,user_id,project_id,generation_job_id,transaction_type,amount,balance_after,created_at
         FROM credit_ledger
-        WHERE generation_job_id=$1
+        WHERE generation_job_id=$1::uuid
         AND transaction_type='debit'`, jobID))
 }

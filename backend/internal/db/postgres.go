@@ -814,7 +814,7 @@ func (p *PostgresRepository) RecordAdjustment(ctx context.Context, userID, proje
 	}
 	defer func() { _ = tx.Rollback() }()
 	var locked string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&locked); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1::uuid FOR UPDATE`, userID).Scan(&locked); err != nil {
 		return err
 	}
 	balance, err := transactionBalance(ctx, tx, userID)
@@ -829,7 +829,7 @@ func (p *PostgresRepository) RecordAdjustment(ctx context.Context, userID, proje
 
 func (p *PostgresRepository) GetCreditBalance(ctx context.Context, userID string) (float64, error) {
 	var balance float64
-	err := p.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE transaction_type WHEN 'debit' THEN -amount ELSE amount END),0) FROM credit_ledger WHERE user_id=$1`, userID).Scan(&balance)
+	err := p.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE transaction_type WHEN 'debit' THEN -amount ELSE amount END),0) FROM credit_ledger WHERE user_id=$1::uuid`, userID).Scan(&balance)
 	return balance, err
 }
 
@@ -870,7 +870,7 @@ func (p *PostgresRepository) GetUserDailyImageCount(ctx context.Context, userID 
 	query := `
 		SELECT COUNT(*)
 		FROM image_quota_usage
-		WHERE user_id = $1 AND created_at >= $2
+		WHERE user_id = $1::uuid AND created_at >= $2::timestamptz
 	`
 	var count int
 	err := p.db.QueryRowContext(ctx, query, userID, since).Scan(&count)
@@ -881,7 +881,7 @@ func (p *PostgresRepository) GetUserMonthlyImageCount(ctx context.Context, userI
 	query := `
 		SELECT COUNT(*)
 		FROM image_quota_usage
-		WHERE user_id = $1 AND created_at >= $2
+		WHERE user_id = $1::uuid AND created_at >= $2::timestamptz
 	`
 	var count int
 	err := p.db.QueryRowContext(ctx, query, userID, since).Scan(&count)

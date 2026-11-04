@@ -63,7 +63,7 @@ go test -v -race ./...
 `DATABASE_URL` selects PostgreSQL for the repository, job service and credit
 service together. Without it, all three remain in-memory fakes. Apply all pending
 migrations with `cmd/migrate` before starting a PostgreSQL-backed server, including
-`000003_generation_persistence`, which adds entity identity and durable runtime
+`000004_generation_persistence`, which adds entity identity and durable runtime
 policy. No schema changes happen at server startup.
 
 `jobs.GenerationStore.CreateGeneration` is the commit boundary. It locks the
@@ -97,3 +97,12 @@ each creation boundary and at refund writes, including commit failures.
 `NewPostgresRepositoryWithDB` accepts a caller-owned `*sql.DB` for isolated
 PostgreSQL integration coverage without changing the production service wiring.
 The default suites require no running database.
+
+PostgreSQL statement parameters use explicit SQL casts, including nullable inputs
+and repeated placeholders. The hermetic SQL parameter guard enforces this for
+the generation and credit transaction statements to prevent PostgreSQL inference
+errors from leaving jobs pending.
+
+For an isolated fake Compose stack on a different localhost port, set
+`ICOMIC_E2E_API_URL` when running `make e2e-comic` with `--skip-services` and
+`--artifact-dir` pointing to the task's evidence directory.
