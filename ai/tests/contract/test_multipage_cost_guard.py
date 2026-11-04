@@ -58,7 +58,10 @@ def test_long_fixture_with_recorded_costs_completes_under_shared_cap(
     generated = []
     language_requests = []
     ledger = ProviderCostLedger(
-        2, prior="0.080775", reserve=calculate_checklist_worst_case(), path=tmp_path / "costs.json"
+        2,
+        prior="0.080775",
+        reserve=round(calculate_checklist_worst_case(), 9),
+        path=tmp_path / "costs.json",
     )
 
     spec = importlib.util.spec_from_file_location(
