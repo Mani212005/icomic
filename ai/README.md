@@ -76,7 +76,7 @@ The image adapter detects real media types (PNG, JPEG, WebP, GIF) by magic numbe
 - `LineArtService`: Closed-contour black-and-white inking generation from approved draft.
 - `ColourService`: Region-based palette suggestions using multimodal vision models.
 - `ModerationService`: Pre-moderation screening against prohibited content guidelines.
-- `PdfAssemblyService`: Assembles completed comic book pages into an exportable PDF preserving provenance and AI disclosures, natively embedding JPEG (DCTDecode) and PNG (FlateDecode) while raising `UnsupportedImageMediaError` on WebP.
+- `PdfAssemblyService`: Exports JPEG, PNG and WebP pages with AI disclosures. JPEG bytes are embedded directly; WebP is decoded with Pillow for display. PNG and WebP originals are attached unchanged to preserve their embedded provenance alongside the PDF's metadata.
 
 ## Policy Seams and Owner Decisions (`app/policies.py`)
 

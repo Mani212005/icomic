@@ -47,6 +47,7 @@ class GenerationWorker:
                     "status": "failed",
                     "error_message": str(exc),
                     "http_status": 400 if isinstance(exc, ValueError) else 500,
+                    "actual_cost": getattr(exc, "actual_cost", None),
                 },
             )
         else:

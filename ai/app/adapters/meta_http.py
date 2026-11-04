@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 from typing_extensions import Self
 
+from ..provider_costs import ProviderCostLedger
 from .image.port import ImageResult
 from .language.port import Message, TokenUsage
 from .vision.port import ColourItem, PaletteSuggestion
@@ -441,6 +442,49 @@ def build_chat_completion_request(
     else:
         kwargs.pop("max_tokens", None)  # Drop None value if present
 
+    if not formatted_messages or not any(
+        m.get("role") in {"user", "tool"} for m in formatted_messages
+    ):
+        raise MetaConfigurationError("messages must contain at least one user or tool message")
+    for message in formatted_messages:
+        if message.get("role") not in {"system", "developer", "user", "assistant", "tool"}:
+            raise MetaConfigurationError("Unsupported chat message role")
+        if not message.get("content"):
+            raise MetaConfigurationError("Chat message content must not be empty")
+        if isinstance(message["content"], list):
+            for part in message["content"]:
+                if not isinstance(part, dict) or part.get("type") not in {"text", "image_url"}:
+                    raise MetaConfigurationError("Unsupported chat content part")
+                if part["type"] == "text" and not str(part.get("text", "")).strip():
+                    raise MetaConfigurationError("Chat text parts must not be empty")
+                if part["type"] == "image_url":
+                    if message["role"] != "user":
+                        raise MetaConfigurationError("Image content requires the user role")
+                    image_url = part.get("image_url")
+                    url = image_url.get("url") if isinstance(image_url, dict) else None
+                    if not isinstance(url, str) or not url.startswith(
+                        ("data:", "https://", "http://")
+                    ):
+                        raise MetaConfigurationError("Invalid image URL content part")
+                    if url.startswith("data:"):
+                        try:
+                            header, encoded = url.split(",", 1)
+                            raw = base64.b64decode(encoded, validate=True)
+                        except (ValueError, TypeError) as exc:
+                            raise MetaConfigurationError("Invalid image data URL") from exc
+                        media_type = detect_image_media_type(raw)
+                        if (
+                            media_type == "application/octet-stream"
+                            or header != f"data:{media_type};base64"
+                        ):
+                            raise MetaConfigurationError(
+                                "Image data URL media type disagrees with its bytes"
+                            )
+
+    # The adapters implement non-streaming, single-completion text/vision calls.
+    if set(kwargs) - {"temperature", "top_p", "seed", "stop", "response_format"}:
+        raise MetaConfigurationError("Unsupported chat completion parameter")
+
     if user:
         payload[user_field] = user
     for k, v in kwargs.items():
@@ -516,6 +560,9 @@ def parse_chat_completion_response(
         total_tokens=tot_tokens,
         reasoning_tokens=reasoning_tokens,
         finish_reason=finish_reason,
+        cached_input_tokens=int(
+            (usage_data.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+        ),
     )
 
     usage_metadata = {
@@ -549,12 +596,18 @@ def build_responses_image_request(
     previous_response_id: str | None = None,
 ) -> dict[str, Any]:
     """Pure function to build Responses API request for image generation."""
+    if not prompt.strip():
+        raise MetaConfigurationError("Image prompt must not be empty")
     content_parts: list[dict[str, Any]] = []
 
     if reference_images:
         for ref_bytes in reference_images:
             b64_data = base64.b64encode(ref_bytes).decode("ascii")
             ref_media_type = detect_image_media_type(ref_bytes)
+            if ref_media_type not in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+                raise MetaConfigurationError(
+                    "Reference must contain image bytes, not a URL or text"
+                )
             content_parts.append(
                 {
                     "type": "input_image",
@@ -722,6 +775,8 @@ class MetaHttpClient:
         rate_limiter: TokenBucket | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         timeout: float = DEFAULT_HTTP_TIMEOUT,
+        cost_ledger: ProviderCostLedger | None = None,
+        cost_stage: str = "language",
     ) -> None:
         # Lazy read of key from environment if not explicitly passed
         resolved_key = api_key if api_key is not None else os.getenv("META_API_KEY")
@@ -740,7 +795,9 @@ class MetaHttpClient:
 
         self._clock = clock or time.monotonic
         self._sleeper = sleeper or time.sleep
-        self.max_retries = max_retries
+        self.max_retries = 0 if cost_ledger is not None else max_retries
+        self.cost_ledger = cost_ledger
+        self.cost_stage = cost_stage
         self.timeout = timeout
         self.rate_limiter = rate_limiter
 
@@ -823,8 +880,24 @@ class MetaHttpClient:
         while True:
             attempt += 1
             request_id: str | None = None
+            reservation = (
+                self.cost_ledger.before_call(self.cost_stage, json_body)
+                if self.cost_ledger
+                else None
+            )
             try:
-                response = self._client.post(url, json=json_body)
+                try:
+                    response = self._client.post(url, json=json_body)
+                except Exception:
+                    if reservation is not None:
+                        self.cost_ledger.finish_call(reservation, None)
+                    raise
+                if reservation is not None:
+                    try:
+                        usage_data = response.json()
+                    except (ValueError, json.JSONDecodeError):
+                        usage_data = None
+                    self.cost_ledger.finish_call(reservation, response.status_code, usage_data)
                 request_id = response.headers.get("x-request-id")
 
                 # Successful HTTP 2xx

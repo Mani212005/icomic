@@ -1,6 +1,7 @@
 """Prompt pre-moderation service."""
 
 from ..adapters.language.port import LanguagePort, Message
+from ..costs import WORST_CASE_TEXT_OUTPUT_TOKENS
 
 
 class ModerationService:
@@ -28,6 +29,7 @@ class ModerationService:
                 ),
                 Message(role="user", content=prompt),
             ],
+            max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,
         )
 
         return False, None

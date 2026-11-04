@@ -4,18 +4,22 @@
 Usage: make e2e-comic [E2E_ARGS="--live --cost-cap-usd 2"]
 The default adapter configuration is fake. Live use requires --live, ICOMIC_E2E_LIVE=1,
 and --cost-cap-usd 2; all adapter selection still comes from ADAPTER_* environment.
+Every run provisions its own user and credit ledger entry in the Compose PostgreSQL
+database. It never reuses or resets the shared development account or its quota.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,7 +29,7 @@ from urllib.request import Request, urlopen
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT_DIR = Path("/home/mani/icomic-artifacts/comic-e2e")
 CAP_USD = 2.0
-DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
+RUN_USER_ID: str | None = None
 API_URL = os.environ.get("ICOMIC_E2E_API_URL", "http://127.0.0.1:8080").rstrip("/")
 
 AI_PATH = REPO_ROOT / "ai"
@@ -65,23 +69,32 @@ class CostGuard:
         cap: float,
         live: bool,
         reserve_tokens: int = DEFAULT_REASONING_RESERVE_TOKENS,
+        ledger_path: Path | None = None,
+        prior_spend: float = 0.0,
     ):
         self.cap = cap
         self.live = live
         self.actual = 0.0
         self.stages: list[dict[str, Any]] = []
+        self.ledger_path = ledger_path
+        self.prior_spend = prior_spend
+        self.provider_report: dict[str, Any] | None = None
+        self.current_stage: str | None = None
+        self.project_id: str | None = None
+        self.user_id: str | None = None
         self.reserve_tokens = reserve_tokens if live else 0
         self.third_check_reserve = (
             calculate_checklist_worst_case(self.reserve_tokens) if live else 0.0
         )
 
     def before_call(self, stage: str, count: int = 1) -> float:
+        self.current_stage = stage
+        self.refresh()
         estimate = (
-            estimate_call_worst_case(stage, self.reserve_tokens) * count
-            if self.live
-            else 0.0
+            estimate_call_worst_case(stage, self.reserve_tokens) * count if self.live else 0.0
         )
-        if self.actual + estimate + self.third_check_reserve > self.cap + 1e-12:
+        spent = self.provider_report["accounted_spend_usd"] if self.provider_report else self.actual
+        if self.prior_spend + spent + estimate + self.third_check_reserve > self.cap + 1e-12:
             raise E2EError(
                 f"cost guard refused {stage}: actual ${self.actual:.6f} + "
                 f"worst-case ${estimate:.6f} + third-check reserve "
@@ -89,14 +102,38 @@ class CostGuard:
             )
         return estimate
 
-    def record(
-        self, stage: str, job_id: str | None, usage_cost: float, estimate: float
-    ) -> None:
+    def refresh(self) -> None:
+        if self.ledger_path is None:
+            return
+        if not self.ledger_path.exists():
+            raise E2EError("Provider cost ledger is unavailable; refusing further calls")
+        try:
+            report = json.loads(self.ledger_path.read_text())
+            for name in ("actual_spend_usd", "accounted_spend_usd"):
+                if not math.isfinite(report[name]) or report[name] < 0:
+                    raise ValueError("invalid cost")
+            if (
+                report["hard_cap_usd"] != self.cap
+                or report["prior_spend_usd"] != self.prior_spend
+                or report["third_check_reserve_usd"] != round(self.third_check_reserve, 9)
+            ):
+                raise ValueError("budget mismatch")
+            self.provider_report = report
+            self.actual = report["actual_spend_usd"]
+            self.stages = report["calls"]
+        except (KeyError, TypeError, ValueError, OSError) as exc:
+            raise E2EError("Provider cost ledger is invalid; refusing further calls") from exc
+
+    def record(self, stage: str, job_id: str | None, usage_cost: float, estimate: float) -> None:
+        if self.ledger_path is not None:
+            self.refresh()
+            print(
+                f"Cumulative observed spend: ${self.prior_spend + self.actual:.9f} USD after {stage}"
+            )
+            return
         amount = max(0.0, usage_cost)
         if self.live and stage in {"language", "vision", "image"} and amount <= 0:
-            raise E2EError(
-                f"live {stage} call returned no billable usage record; aborting"
-            )
+            raise E2EError(f"live {stage} call returned no billable usage record; aborting")
         self.actual += amount
         if self.actual + self.third_check_reserve > self.cap + 1e-12:
             raise E2EError("recorded usage exceeded the hard cap reserve; aborting")
@@ -118,11 +155,14 @@ def json_request(
     payload: dict[str, Any] | None = None,
 ) -> Any:
     data = json.dumps(payload).encode() if payload is not None else None
+    headers = {"Content-Type": "application/json"}
+    if RUN_USER_ID is not None:
+        headers["X-User-ID"] = RUN_USER_ID
     request = Request(
         f"{API_URL}{path}",
         data=data,
         method=method,
-        headers={"X-User-ID": DEV_USER_ID, "Content-Type": "application/json"},
+        headers=headers,
     )
     try:
         with urlopen(request, timeout=60) as response:
@@ -209,10 +249,55 @@ def verify_pdf(pdf: bytes, expected_comic_pages: int) -> None:
         )
 
 
+def provision_run_user() -> str:
+    """Create an isolated fixture without changing existing users or quota policy."""
+    user_id = str(uuid.uuid4())
+    command = [
+        "docker",
+        "compose",
+        "-f",
+        "deploy/docker-compose.yml",
+        "exec",
+        "-T",
+        "postgres",
+        "psql",
+        "-U",
+        "icomic",
+        "-d",
+        "icomic",
+        "--single-transaction",
+        "--file=-",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "--set",
+        f"e2e_user_id={user_id}",
+        "--set",
+        f"e2e_email=comic-e2e-{uuid.uuid4().hex}@example.invalid",
+        "--set",
+        f"e2e_credit_id={uuid.uuid4()}",
+    ]
+    # psql's quoted variables bind literals safely. A new user and opening credit
+    # commit together; no upsert, cleanup, quota reset or policy override occurs.
+    sql = """
+INSERT INTO users (id, email, password_hash, plan_id)
+VALUES (:'e2e_user_id'::uuid, :'e2e_email', '!', 'free');
+INSERT INTO credit_ledger
+    (id, user_id, project_id, generation_job_id, transaction_type, amount, balance_after)
+VALUES (:'e2e_credit_id'::uuid, :'e2e_user_id'::uuid, NULL, NULL, 'adjustment', 100, 100);
+"""
+    subprocess.run(command, cwd=REPO_ROOT, input=sql, text=True, capture_output=True, check=True)
+    return user_id
+
+
 def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, str]:
+    global RUN_USER_ID
+    guard.current_stage = "provision_user"
+    RUN_USER_ID = provision_run_user()
+    guard.user_id = RUN_USER_ID
+    print(f"PASS isolated run user created: {RUN_USER_ID}")
     usage = json_request("/api/v1/me/credit-usage")
     if float(usage.get("balance", 0)) < 10:
-        raise E2EError("dev account has insufficient starting credits")
+        raise E2EError("isolated run user has insufficient starting credits")
 
     script = (
         "Nia, a young lighthouse keeper, discovers a tiny brass bird during a storm. "
@@ -229,36 +314,27 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
             "chapter_count": 1,
         },
     )
-    project = require(
-        project_response, "project", "project creation response has no project"
-    )
+    project = require(project_response, "project", "project creation response has no project")
     project_id = require(project, "id", "created project has no id")
+    guard.project_id = project_id
     print(f"PASS project created: {project_id}")
 
-    analysis = checked_call(
-        guard, "language", 1, "POST", f"/api/v1/projects/{project_id}/analyze"
-    )
+    analysis = checked_call(guard, "language", 1, "POST", f"/api/v1/projects/{project_id}/analyze")
     characters = analysis.get("character_profiles", [])
     if not characters:
         raise E2EError("script analysis returned no characters")
     print(f"PASS script written and analyzed: {len(characters)} characters")
 
-    character_list = json_request(f"/api/v1/projects/{project_id}/characters").get(
-        "characters", []
-    )
+    character_list = json_request(f"/api/v1/projects/{project_id}/characters").get("characters", [])
     if len(character_list) != len(characters):
         raise E2EError("character list does not match script analysis")
     for character in character_list:
         cid = require(character, "id", "generated character has no id")
-        checked_call(
-            guard, "image", 1, "POST", f"/api/v1/characters/{cid}/reference-image"
-        )
+        checked_call(guard, "image", 1, "POST", f"/api/v1/characters/{cid}/reference-image")
         json_request(f"/api/v1/characters/{cid}/approve", "POST")
     print(f"PASS character references generated and approved: {len(character_list)}")
 
-    outline = checked_call(
-        guard, "language", 1, "POST", f"/api/v1/projects/{project_id}/chapters"
-    )
+    outline = checked_call(guard, "language", 1, "POST", f"/api/v1/projects/{project_id}/chapters")
     chapters = outline.get("chapters", [])
     if not chapters:
         raise E2EError("chapter generation returned no chapters")
@@ -292,6 +368,7 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
         json_request(f"/api/v1/pages/{page_id}/colour/approve", "POST")
     print(f"PASS pages inked and coloured: {len(pages)}")
 
+    guard.current_stage = "export"
     exported = json_request(f"/api/v1/projects/{project_id}/export", "POST")
     export = require(exported, "export", "export response has no export record")
     export_id = require(export, "id", "export response has no id")
@@ -329,6 +406,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="use already-running local services",
     )
     parser.add_argument(
+        "--prior-spend-usd",
+        type=float,
+        default=0.0,
+        help="previously accounted spend deducted from the shared live cap",
+    )
+    parser.add_argument(
         "--artifact-dir",
         type=Path,
         default=ARTIFACT_DIR,
@@ -338,6 +421,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global RUN_USER_ID
+    RUN_USER_ID = None
     args = parse_args(argv)
     if args.live:
         error = live_authorization_error(args.live, dict(os.environ), args.cost_cap_usd)
@@ -373,6 +458,21 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     live = bool(args.live)
+    if (
+        not math.isfinite(args.prior_spend_usd)
+        or args.prior_spend_usd < 0
+        or (not live and args.prior_spend_usd)
+    ):
+        print(
+            "REFUSED: --prior-spend-usd must be a finite non-negative live spend", file=sys.stderr
+        )
+        return 2
+    if live and args.skip_services:
+        print(
+            "REFUSED: live mode must configure its provider cost ledger through Compose",
+            file=sys.stderr,
+        )
+        return 2
     reserve_tokens = 0
     if live:
         try:
@@ -394,27 +494,70 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-    if not args.skip_services:
-        ensure_services()
-    guard = CostGuard(CAP_USD if live else float("inf"), live, reserve_tokens)
+    run_id = uuid.uuid4().hex
+    args.artifact_dir = args.artifact_dir.resolve()
+    args.artifact_dir.mkdir(parents=True, exist_ok=True)
+    ledger_path = args.artifact_dir / f"provider-costs-{run_id}.json" if live else None
+    guard = CostGuard(
+        CAP_USD if live else float("inf"), live, reserve_tokens, ledger_path, args.prior_spend_usd
+    )
+    if live and args.prior_spend_usd + guard.third_check_reserve >= CAP_USD:
+        print("REFUSED: prior spend and third-check reserve exhaust the hard cap", file=sys.stderr)
+        return 2
+    if live:
+        os.environ.update(
+            {
+                "ICOMIC_E2E_RUN_ID": run_id,
+                "ICOMIC_E2E_COST_DIR": str(args.artifact_dir),
+                "ICOMIC_E2E_COST_CAP_USD": str(CAP_USD),
+                "ICOMIC_E2E_PRIOR_SPEND_USD": str(args.prior_spend_usd),
+                "ICOMIC_E2E_THIRD_CHECK_RESERVE_USD": str(round(guard.third_check_reserve, 9)),
+            }
+        )
+    project_id = None
+    page_count = 0
+    failure = None
     try:
+        if not args.skip_services:
+            ensure_services()
+        guard.refresh()
         page_count, project_id = run_flow(guard, args.artifact_dir)
-    except (E2EError, subprocess.CalledProcessError) as exc:
+    except (E2EError, subprocess.CalledProcessError, OSError, ValueError, TimeoutError) as exc:
+        failure = type(exc).__name__
         print(f"FAILED: {exc}", file=sys.stderr)
-        return 1
+    finally:
+        try:
+            guard.refresh()
+        except E2EError:
+            if failure is None:
+                failure = "ProviderLedgerUnavailable"
     report = {
-        "project_id": project_id,
+        "user_id": guard.user_id,
+        "project_id": project_id or guard.project_id,
         "live": live,
+        "status": "failed" if failure else "passed",
+        "error_type": failure,
+        "failed_stage": guard.current_stage if failure else None,
+        "run_id": run_id,
         "hard_cap_usd": CAP_USD if live else None,
         "third_check_reserve_usd": round(guard.third_check_reserve, 9),
         "actual_spend_usd": round(guard.actual, 9),
+        "prior_spend_usd": args.prior_spend_usd,
+        "cumulative_observed_spend_usd": round(args.prior_spend_usd + guard.actual, 9),
+        "provider_cost_report": guard.provider_report,
+        "cost_complete": not live
+        or (guard.provider_report is not None and guard.provider_report["unpriced_calls"] == 0),
+        "pdf_path": str(args.artifact_dir / "latest.pdf") if not failure else None,
         "generated_comic_pages": page_count,
         "stages": guard.stages,
     }
-    (args.artifact_dir / "cost-report.json").write_text(json.dumps(report, indent=2) + "\n")
+    report_text = json.dumps(report, indent=2) + "\n"
+    (args.artifact_dir / f"cost-report-{run_id}.json").write_text(report_text)
+    (args.artifact_dir / "cost-report.json").write_text(report_text)
     print(f"Cost report: {args.artifact_dir / 'cost-report.json'}")
-    print(str(args.artifact_dir / "latest.pdf"))
-    return 0
+    if not failure:
+        print(str(args.artifact_dir / "latest.pdf"))
+    return 1 if failure else 0
 
 
 if __name__ == "__main__":
