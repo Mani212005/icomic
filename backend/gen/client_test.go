@@ -11,12 +11,30 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"icomic/backend/gen"
 )
+
+type synchronizedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 func findAIDir(t *testing.T) string {
 	wd, err := os.Getwd()
@@ -227,7 +245,7 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 		"ADAPTER_QUEUE=fake",
 		"PYTHONPATH=.",
 	)
-	var logBuf bytes.Buffer
+	var logBuf synchronizedBuffer
 	cmd.Stdout = &logBuf
 	cmd.Stderr = &logBuf
 
@@ -252,7 +270,7 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 
 	// Wait for server readiness
 	var ready bool
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 150; i++ {
 		resp, err := http.Get(healthURL)
 		if err == nil {
 			_ = resp.Body.Close()

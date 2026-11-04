@@ -63,7 +63,7 @@ func realDatabaseWithMigrations(t *testing.T, applyMigrations bool) (*sql.DB, *d
 	if err != nil {
 		t.Fatalf("open schema-scoped PostgreSQL pool: %v", err)
 	}
-	pool.SetMaxOpenConns(8)
+	pool.SetMaxOpenConns(32)
 	t.Cleanup(func() { _ = pool.Close() })
 	if err := pool.PingContext(ctx); err != nil {
 		t.Fatalf("connect to schema-scoped PostgreSQL: %v", err)
