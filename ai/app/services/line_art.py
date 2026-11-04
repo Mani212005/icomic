@@ -5,6 +5,7 @@ from typing import Any
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
 from ..gen.models import PanelTextItem
+from .images import store_image
 
 
 class LineArtService:
@@ -35,14 +36,10 @@ class LineArtService:
             refs = ", ".join(character_reference_image_urls)
             prompt += f". Character references: {refs}"
 
-        reference_images: list[bytes] = []
+        reference_images: list[bytes] = [self.storage_adapter.get(draft_image_url)]
         if character_reference_image_urls:
             for ref_url in character_reference_image_urls:
-                try:
-                    blob = self.storage_adapter.get(ref_url)
-                    reference_images.append(blob)
-                except (KeyError, ValueError, OSError):
-                    reference_images.append(ref_url.encode("utf-8"))
+                reference_images.append(self.storage_adapter.get(ref_url))
 
         result = self.image_adapter.generate(
             prompt=prompt,
@@ -51,6 +48,7 @@ class LineArtService:
             style=style,
         )
 
-        key = f"pages/{page_id}/line_art_page_{page_number}.png"
-        url = self.storage_adapter.put(key, result.image_bytes, "image/png")
+        url = store_image(
+            self.storage_adapter, f"pages/{page_id}/line_art_page_{page_number}", result
+        )
         return url, result.model_id, result.provenance_metadata

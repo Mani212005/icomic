@@ -17,6 +17,7 @@ class TokenUsage:
     total_tokens: int
     reasoning_tokens: int | None = None
     finish_reason: str | None = None
+    cached_input_tokens: int = 0
 
 
 @runtime_checkable

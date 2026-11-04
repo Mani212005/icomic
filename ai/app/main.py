@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .adapters.factory import AdapterSet, build_adapters_from_env, get_media_fetch_adapter
-from .costs import actual_stage_cost
+from .costs import actual_stage_cost, cost_from_usage
 from .gen.models import (
     AnalyzeScriptRequest,
     AnalyzeScriptResponse,
@@ -35,6 +35,7 @@ from .gen.models import (
     SuggestColourPaletteResponse,
 )
 from .policies import DirectStoragePolicy
+from .provider_costs import provider_operation
 from .services.character import CharacterService
 from .services.colour import ColourService
 from .services.draft import DraftService
@@ -97,7 +98,18 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             request_type = handler.__annotations__["req"]
 
             def execute(payload):
-                result = handler(request_type.model_validate(payload))
+                if adapter is not None and hasattr(adapter, "last_usage"):
+                    adapter.last_usage = None
+                token = provider_operation.set((handler.__name__, str(payload["job_id"])))
+                try:
+                    result = handler(request_type.model_validate(payload))
+                except Exception as exc:
+                    usage = getattr(adapter, "last_usage", None)
+                    if usage is not None:
+                        exc.actual_cost = cost_from_usage(operation, usage)
+                    raise
+                finally:
+                    provider_operation.reset(token)
                 cost = 0.0
                 if adapter is not None:
                     cost = actual_stage_cost(operation, adapter, getattr(result, "model_id", None))
@@ -288,7 +300,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         "/internal/v1/moderate-prompt",
         response_model=ModeratePromptResponse,
     )
-    @queued("moderation")
+    @queued("language", wired_adapters.language)
     def moderate_prompt(req: ModeratePromptRequest):
         blocked, reason = moderation_service.moderate_prompt(req.prompt)
         return ModeratePromptResponse(

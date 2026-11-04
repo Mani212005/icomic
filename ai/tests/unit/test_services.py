@@ -17,7 +17,7 @@ from app.services.draft import DraftService
 from app.services.line_art import LineArtService
 from app.services.moderation import ModerationService
 from app.services.panel import PanelService
-from app.services.pdf import PdfAssemblyService, UnsupportedImageMediaError
+from app.services.pdf import PdfAssemblyService
 from app.services.script import ScriptService
 
 
@@ -255,6 +255,8 @@ def test_line_art_service_without_character_references():
             image_prompt="Panel 1",
         )
     ]
+    draft_bytes = b"\x89PNG\r\n\x1a\ndraft"
+    storage.put("pages/page-101/draft_page_1.png", draft_bytes, "image/png")
     url, model_id, prov = svc.generate_line_art(
         page_id="page-101",
         page_number=1,
@@ -267,7 +269,7 @@ def test_line_art_service_without_character_references():
     assert model_id == "muse-image-1.0-fake"
     assert "c2pa" in prov
     assert len(img.recorded_calls) == 1
-    assert len(img.recorded_calls[0]["reference_images"]) == 0
+    assert img.recorded_calls[0]["reference_images"] == [draft_bytes]
 
 
 def test_line_art_service_character_consistency_anchoring():
@@ -278,6 +280,8 @@ def test_line_art_service_character_consistency_anchoring():
     char_bytes = b"\x89PNG\r\n\x1a\nleo-ref-bytes"
     char_url = storage.put("characters/leo/reference.png", char_bytes, "image/png")
     draft_url = "http://localhost:8000/storage/fake/pages/page-303/draft_page_1.png"
+    draft_bytes = b"\x89PNG\r\n\x1a\ndraft"
+    storage.put(draft_url, draft_bytes, "image/png")
 
     panels = [
         PanelTextItem(
@@ -308,8 +312,7 @@ def test_line_art_service_character_consistency_anchoring():
     call = img.recorded_calls[0]
 
     # Verify approved character reference image bytes passed as reference inputs
-    assert len(call["reference_images"]) == 1
-    assert call["reference_images"][0] == char_bytes
+    assert call["reference_images"] == [draft_bytes, char_bytes]
 
     # Verify approved character reference URLs and draft URL in prompt
     assert char_url in call["prompt"]
@@ -868,7 +871,7 @@ def test_pdf_service_native_jpeg_embedding():
     assert preserved is True
 
 
-def test_pdf_service_unsupported_webp_raises():
+def test_pdf_service_invalid_webp_raises():
     storage = FakeStorageAdapter()
     svc = PdfAssemblyService(storage)
 
@@ -884,7 +887,7 @@ def test_pdf_service_unsupported_webp_raises():
         )
     ]
 
-    with pytest.raises(UnsupportedImageMediaError) as exc_info:
+    with pytest.raises(OSError):
         svc.assemble_pdf(
             project_id="proj-webp",
             title="WebP Comic",
@@ -892,8 +895,3 @@ def test_pdf_service_unsupported_webp_raises():
             include_ai_disclosure=True,
             pages=pages,
         )
-
-    err = str(exc_info.value)
-    assert "Unsupported image format 'image/webp'" in err
-    assert "strip C2PA provenance metadata" in err
-    assert "owner decision" in err

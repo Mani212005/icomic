@@ -9,7 +9,11 @@ import json
 import struct
 import zlib
 from datetime import datetime, timezone
+from io import BytesIO
 from typing import Any, ClassVar
+from xml.sax.saxutils import escape
+
+from PIL import Image
 
 from ..adapters.storage.port import StoragePort
 from ..gen.models import PageExportItem
@@ -225,6 +229,7 @@ class PdfWriter:
         font_res_str = f"<< /F1 {font_f1} 0 R /F2 {font_f2} 0 R /F3 {font_f3} 0 R >>"
 
         page_ids: list[int] = []
+        source_files: list[str] = []
 
         # -----------------------------------------------------------------
         # Page 1: Cover Page
@@ -371,18 +376,40 @@ class PdfWriter:
                 and len(img_bytes) >= 12
                 and img_bytes[8:12] == b"WEBP"
             ):
-                page_num = p.get("page_number", idx)
-                raise UnsupportedImageMediaError(
-                    f"Unsupported image format 'image/webp' on page {page_num}. "
-                    "Native PDF embedding supports image/png and image/jpeg. Conversion to PNG/JPEG "
-                    "would strip C2PA provenance metadata and requires an owner decision."
+                # PDF has no native WebP filter. Render decoded pixels and attach
+                # the untouched source so any embedded provenance remains intact.
+                with Image.open(BytesIO(img_bytes)) as image:
+                    rgba = image.convert("RGBA")
+                    rgb = Image.new("RGB", rgba.size, "white")
+                    rgb.paste(rgba, mask=rgba.getchannel("A"))
+                    img_w, img_h = rgb.size
+                    compressed_rgb = zlib.compress(rgb.tobytes())
+                img_xobj_id = self._add_object(
+                    f"<< /Type /XObject /Subtype /Image /Width {img_w} /Height {img_h} "
+                    f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode "
+                    f"/Length {len(compressed_rgb)} >>\nstream\n".encode()
+                    + compressed_rgb
+                    + b"\nendstream"
                 )
             else:
                 page_num = p.get("page_number", idx)
                 raise UnsupportedImageMediaError(
                     f"Unsupported image format on page {page_num}. "
-                    "Native PDF embedding supports image/png and image/jpeg."
+                    "PDF export supports PNG, JPEG and WebP."
                 )
+
+            if not img_bytes.startswith(b"\xff\xd8"):
+                extension = "png" if img_bytes.startswith(b"\x89PNG") else "webp"
+                source_id = self._add_object(
+                    f"<< /Type /EmbeddedFile /Subtype /image#2F{extension} /Length {len(img_bytes)} >>\nstream\n".encode()
+                    + img_bytes
+                    + b"\nendstream"
+                )
+                filename = f"page-{idx}-original.{extension}"
+                file_id = self._add_object(
+                    f"<< /Type /Filespec /F ({filename}) /EF << /F {source_id} 0 R >> >>".encode()
+                )
+                source_files.append(f"({filename}) {file_id} 0 R")
 
             # Scale and center image
             avail_w = self.width - 100
@@ -511,15 +538,15 @@ class PdfWriter:
             f'<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
             f' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
             f'  <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
-            f'   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">{title}</rdf:li></rdf:Alt></dc:title>\n'
+            f'   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">{escape(title)}</rdf:li></rdf:Alt></dc:title>\n'
             f"   <dc:creator><rdf:Seq><rdf:li>Icomic AI</rdf:li></rdf:Seq></dc:creator>\n"
             f'   <dc:description><rdf:Alt><rdf:li xml:lang="x-default">'
             f"AI-Generated Comic Book with Meta C2PA Provenance Preserved"
             f"</rdf:li></rdf:Alt></dc:description>\n"
             f"  </rdf:Description>\n"
             f'  <rdf:Description rdf:about="" xmlns:icomic="https://icomic.app/schema/provenance/1.0">\n'
-            f"   <icomic:projectId>{project_id}</icomic:projectId>\n"
-            f"   <icomic:provenanceRecords>{json.dumps(provenance_records)}</icomic:provenanceRecords>\n"
+            f"   <icomic:projectId>{escape(project_id)}</icomic:projectId>\n"
+            f"   <icomic:provenanceRecords>{escape(json.dumps(provenance_records))}</icomic:provenanceRecords>\n"
             f"   <icomic:aiDisclosure>{include_ai_disclosure!s}</icomic:aiDisclosure>\n"
             f"  </rdf:Description>\n"
             f" </rdf:RDF>\n"
@@ -534,9 +561,14 @@ class PdfWriter:
         )
 
         # Catalog Object
+        attachments = (
+            f" /Names << /EmbeddedFiles << /Names [{' '.join(sorted(source_files))}] >> >>"
+            if source_files
+            else ""
+        )
         self._set_object(
             catalog_id,
-            f"<< /Type /Catalog /Pages {pages_root_id} 0 R /Metadata {metadata_id} 0 R >>".encode(),
+            f"<< /Type /Catalog /Pages {pages_root_id} 0 R /Metadata {metadata_id} 0 R{attachments} >>".encode(),
         )
 
         # Document Info Dictionary

@@ -59,7 +59,11 @@ class PanelService:
             [
                 Message(
                     role="system",
-                    content=f"Generate 4 panels for {chapter_title}: {chapter_summary}.",
+                    content="Generate four comic panels with scene descriptions and dialogue.",
+                ),
+                Message(
+                    role="user",
+                    content=f"Chapter {chapter_number}, {chapter_title}: {chapter_summary}. Characters: {', '.join(characters)}",
                 ),
             ],
             max_tokens=WORST_CASE_TEXT_OUTPUT_TOKENS,

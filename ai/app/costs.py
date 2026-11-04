@@ -3,6 +3,7 @@
 DEFAULT_REASONING_RESERVE_TOKENS = 1024
 
 PRICE_INPUT_TOKEN_PER_M = 1.25
+PRICE_CACHED_INPUT_TOKEN_PER_M = 0.15
 PRICE_OUTPUT_TOKEN_PER_M = 4.25
 PRICE_PER_IMAGE_FLAT_USD = 0.01
 
@@ -12,8 +13,12 @@ WORST_CASE_VISION_INPUT_TOKENS = 350
 WORST_CASE_VISION_OUTPUT_TOKENS = 64
 
 
-def calculate_token_cost(input_tokens: int, output_tokens: int) -> float:
-    input_cost = input_tokens * PRICE_INPUT_TOKEN_PER_M
+def calculate_token_cost(
+    input_tokens: int, output_tokens: int, cached_input_tokens: int = 0
+) -> float:
+    input_cost = (
+        input_tokens - cached_input_tokens
+    ) * PRICE_INPUT_TOKEN_PER_M + cached_input_tokens * PRICE_CACHED_INPUT_TOKEN_PER_M
     output_cost = output_tokens * PRICE_OUTPUT_TOKEN_PER_M
     return (input_cost + output_cost) / 1_000_000.0
 
@@ -50,7 +55,9 @@ def cost_from_usage(stage: str, usage: object | None) -> float:
         return 0.0
     input_tokens = int(getattr(usage, "input_tokens", 0))
     output_tokens = int(getattr(usage, "output_tokens", 0))
-    return calculate_token_cost(input_tokens, output_tokens)
+    return calculate_token_cost(
+        input_tokens, output_tokens, int(getattr(usage, "cached_input_tokens", 0))
+    )
 
 
 def actual_stage_cost(stage: str, adapter: object, model_id: str = "") -> float:

@@ -535,7 +535,7 @@ def test_vision_adapter_refuses_contributor_tier_unless_permitted(monkeypatch):
     with pytest.raises(ValueError) as exc:
         adapter.review(
             model="muse-spark-1.3-contributor",
-            image_bytes=b"fake-bytes",
+            image_bytes=b"\x89PNG\r\n\x1a\nfake-bytes",
             prompt="Review this",
         )
     assert "contributor tier trains Meta models on user prompts and completions" in str(exc.value)
@@ -543,7 +543,7 @@ def test_vision_adapter_refuses_contributor_tier_unless_permitted(monkeypatch):
     with pytest.raises(ValueError) as exc:
         adapter.suggest_palette(
             model="muse-spark-1.3-contributor",
-            image_bytes=b"fake-bytes",
+            image_bytes=b"\x89PNG\r\n\x1a\nfake-bytes",
             panel_context="dark alley scene",
         )
     assert "contributor tier trains Meta models on user prompts and completions" in str(exc.value)
@@ -566,7 +566,7 @@ def test_vision_adapter_refuses_contributor_tier_unless_permitted(monkeypatch):
     )
     rev = allowed_adapter.review(
         model="muse-spark-1.3-contributor",
-        image_bytes=b"fake-bytes",
+        image_bytes=b"\x89PNG\r\n\x1a\nfake-bytes",
         prompt="Review this",
     )
     assert len(rev) > 0
@@ -622,8 +622,8 @@ def call_chat_method(adapter, method, **kwargs):
     if method == "complete":
         return adapter.complete("", [Message(role="user", content="Hi")], **kwargs)
     if method == "review":
-        return adapter.review("", b"image", "Hi", **kwargs)
-    return adapter.suggest_palette("", b"image", "Hi", **kwargs)
+        return adapter.review("", b"\x89PNG\r\n\x1a\nimage", "Hi", **kwargs)
+    return adapter.suggest_palette("", b"\x89PNG\r\n\x1a\nimage", "Hi", **kwargs)
 
 
 @pytest.mark.parametrize("method", ["complete", "review", "suggest_palette"])

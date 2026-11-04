@@ -62,8 +62,15 @@ services:
       META_API_KEY: "${META_API_KEY:-}"
       META_REASONING_EFFORT: "${META_REASONING_EFFORT:-low}"
       META_REASONING_RESERVE_TOKENS: "${META_REASONING_RESERVE_TOKENS:-1024}"
+      ICOMIC_E2E_LIVE: "${ICOMIC_E2E_LIVE:-0}"
+      ICOMIC_E2E_RUN_ID: "${ICOMIC_E2E_RUN_ID:-}"
+      ICOMIC_E2E_COST_CAP_USD: "${ICOMIC_E2E_COST_CAP_USD:-0}"
+      ICOMIC_E2E_PRIOR_SPEND_USD: "${ICOMIC_E2E_PRIOR_SPEND_USD:-0}"
+      ICOMIC_E2E_THIRD_CHECK_RESERVE_USD: "${ICOMIC_E2E_THIRD_CHECK_RESERVE_USD:-0}"
       STORAGE_BASE_URL: "http://ai:8000/storage/fake"
       REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - "${ICOMIC_E2E_COST_DIR:-/tmp/icomic-e2e-costs}:/var/lib/icomic-e2e"
     expose:
       - "8000"
     healthcheck:

@@ -4,6 +4,7 @@ from typing import Any
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
+from .images import store_image
 
 
 class CharacterService:
@@ -34,6 +35,5 @@ class CharacterService:
             style=style,
         )
 
-        key = f"characters/{character_id}/reference.png"
-        url = self.storage_adapter.put(key, result.image_bytes, "image/png")
+        url = store_image(self.storage_adapter, f"characters/{character_id}/reference", result)
         return url, result.model_id, result.provenance_metadata
