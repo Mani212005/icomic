@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2000" viewBox="0 0 1600 2000" role="img" aria-labelledby="title desc">
+  <title id="title">Icomic watercolor comic poster</title>
+  <desc id="desc">An inked comic book page opens into a moonlit city, painted in indigo, teal and coral watercolor.</desc>
+  <defs>
+    <linearGradient id="paper" x2=".16" y2="1">
+      <stop stop-color="#fff8e8"/>
+      <stop offset="1" stop-color="#f1dfbd"/>
+    </linearGradient>
+    <linearGradient id="night" x2=".1" y2="1">
+      <stop stop-color="#24395d"/>
+      <stop offset=".48" stop-color="#315d70"/>
+      <stop offset="1" stop-color="#d78064"/>
+    </linearGradient>
+    <linearGradient id="book" x2="0" y2="1">
+      <stop stop-color="#fffdf5"/>
+      <stop offset="1" stop-color="#e9d9bc"/>
+    </linearGradient>
+    <radialGradient id="moon">
+      <stop stop-color="#fff8d8" stop-opacity=".98"/>
+      <stop offset=".66" stop-color="#f5d69a" stop-opacity=".82"/>
+      <stop offset="1" stop-color="#f5d69a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="washCoral">
+      <stop stop-color="#e77d68" stop-opacity=".65"/>
+      <stop offset="1" stop-color="#e77d68" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="washTeal">
+      <stop stop-color="#72a9a0" stop-opacity=".54"/>
+      <stop offset="1" stop-color="#72a9a0" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="paper-grain" x="-.1" y="-.1" width="1.2" height="1.2">
+      <feTurbulence type="fractalNoise" baseFrequency=".72" numOctaves="3" seed="8" result="noise"/>
+      <feColorMatrix in="noise" type="saturate" values="0"/>
+      <feComponentTransfer>
+        <feFuncA type="table" tableValues="0 .13"/>
+      </feComponentTransfer>
+      <feBlend in="SourceGraphic" mode="multiply"/>
+    </filter>
+    <filter id="wash-edge" x="-.12" y="-.12" width="1.24" height="1.24">
+      <feTurbulence type="fractalNoise" baseFrequency=".022" numOctaves="2" seed="13" result="paper"/>
+      <feDisplacementMap in="SourceGraphic" in2="paper" scale="10" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="soft-shadow" x="-.3" y="-.3" width="1.6" height="1.6">
+      <feGaussianBlur stdDeviation="20"/>
+    </filter>
+    <clipPath id="upper-page">
+      <path d="M236 248 Q780 187 1363 255 L1352 1116 Q808 1047 253 1124Z"/>
+    </clipPath>
+    <clipPath id="lower-page">
+      <path d="M250 1137 Q800 1079 1350 1143 L1356 1616 Q804 1568 245 1628Z"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1600" height="2000" fill="url(#paper)" filter="url(#paper-grain)"/>
+  <path d="M80 132 Q310 55 488 123 T844 104 Q1062 151 1224 91 T1514 137 L1482 283 Q1250 232 1080 282 T735 268 Q432 230 92 296Z" fill="url(#washTeal)" filter="url(#wash-edge)"/>
+  <path d="M91 1527 Q288 1448 474 1506 T847 1478 Q1050 1522 1230 1473 T1515 1528 L1482 1700 Q1258 1654 1081 1703 T736 1673 Q432 1643 93 1691Z" fill="url(#washCoral)" filter="url(#wash-edge)"/>
+  <g fill="none" stroke="#29354a" stroke-linecap="round" opacity=".72">
+    <path d="M103 359 Q172 331 231 358" stroke-width="4"/>
+    <path d="M1370 380 Q1436 348 1495 378" stroke-width="4"/>
+    <path d="M95 1420 Q167 1385 228 1412" stroke-width="3"/>
+    <path d="M1371 1404 Q1431 1374 1502 1405" stroke-width="3"/>
+  </g>
+
+  <g transform="rotate(-1.2 800 975)">
+    <path d="M209 223 Q793 140 1394 224 L1394 1644 Q809 1579 207 1660Z" fill="#1a2738" opacity=".24" filter="url(#soft-shadow)"/>
+    <path d="M187 204 Q790 123 1412 211 L1401 1659 Q802 1587 188 1676Z" fill="#26314a"/>
+    <path d="M208 224 Q792 146 1392 231 L1382 1636 Q802 1571 210 1653Z" fill="url(#book)" stroke="#243047" stroke-width="8"/>
+    <path d="M800 176 Q779 840 799 1575" fill="none" stroke="#aa9374" stroke-width="12" opacity=".62"/>
+    <path d="M817 180 Q835 843 816 1575" fill="none" stroke="#fffaf0" stroke-width="13" opacity=".85"/>
+    <g clip-path="url(#upper-page)">
+      <rect x="220" y="180" width="1180" height="980" fill="url(#night)"/>
+      <ellipse cx="1125" cy="485" rx="280" ry="280" fill="url(#moon)"/>
+      <circle cx="1121" cy="475" r="112" fill="#f4dfaa" opacity=".9"/>
+      <path d="M870 473 Q910 435 954 475 M981 447 Q1010 427 1039 450" fill="none" stroke="#d2b982" stroke-width="8" opacity=".45"/>
+      <path d="M935 537 Q976 566 1013 531" fill="none" stroke="#d2b982" stroke-width="6" opacity=".42"/>
+      <g fill="#f7e8bd" opacity=".9">
+        <circle cx="342" cy="392" r="5"/><circle cx="408" cy="319" r="4"/><circle cx="568" cy="421" r="5"/>
+        <circle cx="713" cy="332" r="4"/><circle cx="789" cy="465" r="4"/><circle cx="1286" cy="335" r="5"/>
+        <circle cx="1260" cy="642" r="4"/><circle cx="492" cy="570" r="4"/><circle cx="640" cy="629" r="3"/>
+      </g>
+      <path d="M212 776 L323 644 407 698 509 567 611 670 724 554 827 681 911 607 1010 689 1114 574 1213 671 1315 570 1402 644 1402 1160 213 1160Z" fill="#334e62" opacity=".83"/>
+      <path d="M209 851 L324 757 408 797 520 704 612 800 707 700 811 790 915 700 1007 796 1115 700 1216 793 1303 708 1403 765 1403 1160 209 1160Z" fill="#27384d"/>
+      <g fill="#efbd81" opacity=".78">
+        <path d="M284 810h18v44h-18zM373 783h24v58h-24zM558 748h17v45h-17zM658 773h23v61h-23zM878 762h19v54h-19zM1041 748h22v62h-22zM1193 762h18v50h-18zM1334 795h16v52h-16z"/>
+      </g>
+      <path d="M215 932 Q383 876 536 922 T849 913 Q1031 867 1190 921 T1402 905 L1404 1167 212 1167Z" fill="#d87965" opacity=".65" filter="url(#wash-edge)"/>
+      <path d="M215 1002 Q433 954 625 1005 T1010 990 Q1218 950 1401 998 L1401 1170 215 1170Z" fill="#e8a178" opacity=".65"/>
+      <path d="M219 1070 Q431 1030 649 1069 T1054 1058 Q1251 1023 1396 1057 L1395 1177 218 1177Z" fill="#37485b"/>
+      <g stroke="#f3d4a2" stroke-width="7" opacity=".85">
+        <path d="M279 1060v50M314 1054v57M361 1046v65M1294 1041v71M1334 1048v63"/>
+      </g>
+      <g fill="#19283b" stroke="#152338" stroke-linejoin="round">
+        <path d="M704 1022 Q684 947 709 880 Q725 831 785 821 Q842 832 861 882 Q883 945 849 1021 L898 1135 642 1136Z" stroke-width="10"/>
+        <path d="M724 866 Q728 794 786 785 Q850 793 861 866 Q830 838 809 838 Q776 869 724 866Z" fill="#d67b69" stroke-width="8"/>
+        <path d="M729 907 Q784 926 850 904 L862 947 Q802 980 720 945Z" fill="#f1bc7f" stroke-width="7"/>
+        <path d="M714 1008 Q667 1040 640 1100 M854 1005 Q898 1035 925 1100" fill="none" stroke="#19283b" stroke-width="28"/>
+        <path d="M641 1090 Q779 1121 912 1088 L930 1164 631 1164Z" fill="#315f6b" stroke-width="8"/>
+      </g>
+      <path d="M813 889 Q827 896 838 889" fill="none" stroke="#27384b" stroke-width="5" stroke-linecap="round"/>
+      <path d="M694 852 Q646 820 620 777 M887 847 Q936 802 957 755" fill="none" stroke="#fff0ca" stroke-width="6" opacity=".75"/>
+      <g fill="#fff5dd" opacity=".96">
+        <path d="M589 712 l10 25 25 10-25 10-10 25-10-25-25-10 25-10z"/>
+        <path d="M1001 830 l7 17 17 7-17 7-7 17-7-17-17-7 17-7z"/>
+        <path d="M519 933 l6 14 14 6-14 6-6 14-6-14-14-6 14-6z"/>
+      </g>
+      <path d="M325 485 Q473 443 610 489 L601 684 Q451 647 322 690Z" fill="#f0d8ad" opacity=".14" stroke="#fff2d4" stroke-width="5"/>
+      <path d="M373 528 Q463 499 553 529 M372 560 Q465 532 544 561 M372 592 Q433 574 512 592" fill="none" stroke="#fff0d2" stroke-width="5" opacity=".48"/>
+      <path d="M238 246 Q788 183 1361 255 L1351 1116 Q805 1050 254 1122Z" fill="none" stroke="#18273b" stroke-width="16"/>
+      <path d="M262 271 Q792 214 1337 279 L1329 1091 Q808 1031 278 1097Z" fill="none" stroke="#f6e6c8" stroke-width="5" opacity=".75"/>
+    </g>
+    <g clip-path="url(#lower-page)">
+      <rect x="226" y="1089" width="1180" height="570" fill="#e6d5b7"/>
+      <ellipse cx="400" cy="1320" rx="370" ry="260" fill="url(#washTeal)"/>
+      <ellipse cx="1202" cy="1410" rx="335" ry="260" fill="url(#washCoral)"/>
+      <path d="M275 1141 Q800 1091 1327 1149 L1329 1590 Q807 1546 270 1604Z" fill="none" stroke="#28364b" stroke-width="13"/>
+      <path d="M332 1201 Q800 1165 1278 1209 M329 1523 Q804 1490 1278 1533" fill="none" stroke="#796d5a" stroke-width="2" opacity=".44"/>
+      <g fill="#2a3549" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif">
+        <text x="800" y="1290" font-size="37" letter-spacing="12" fill="#9b594b">MAKE ROOM FOR</text>
+        <text x="800" y="1416" font-size="113" font-weight="700" letter-spacing="1">Icomic</text>
+        <path d="M632 1459 Q800 1490 968 1459" fill="none" stroke="#c17b61" stroke-width="8" stroke-linecap="round"/>
+      </g>
+      <g fill="none" stroke="#28364b" stroke-width="5" opacity=".76">
+        <path d="M516 1348 q-35-23-68-6 21 32 56 30 M1083 1341 q35-23 68-6-21 32-56 30"/>
+        <path d="M550 1260 q25-30 54-16 M996 1244 q29-23 54 3"/>
+      </g>
+      <path d="M250 1137 Q800 1079 1350 1143 L1356 1616 Q804 1568 245 1628Z" fill="none" stroke="#18273b" stroke-width="15"/>
+    </g>
+    <g fill="#f6e8ca" stroke="#26344a" stroke-width="5">
+      <circle cx="223" cy="253" r="12"/><circle cx="1372" cy="266" r="12"/>
+      <circle cx="223" cy="1627" r="12"/><circle cx="1368" cy="1613" r="12"/>
+    </g>
+  </g>
+  <g fill="none" stroke="#344458" stroke-linecap="round" opacity=".56">
+    <path d="M94 718 q52-26 103 0 M1404 759 q52-26 103 0" stroke-width="5"/>
+    <path d="M111 737 q37-14 77 0 M1417 778 q38-15 75 0" stroke-width="2"/>
+  </g>
+  <rect width="1600" height="2000" fill="#735d46" opacity=".055" filter="url(#paper-grain)" pointer-events="none"/>
+</svg>
