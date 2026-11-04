@@ -63,7 +63,7 @@ go test -v -race ./...
 `DATABASE_URL` selects PostgreSQL for the repository, job service and credit
 service together. Without it, all three remain in-memory fakes. Apply all pending
 migrations with `cmd/migrate` before starting a PostgreSQL-backed server, including
-`000002_generation_persistence`, which adds entity identity and durable runtime
+`000003_generation_persistence`, which adds entity identity and durable runtime
 policy. No schema changes happen at server startup.
 
 `jobs.GenerationStore.CreateGeneration` is the commit boundary. It locks the
