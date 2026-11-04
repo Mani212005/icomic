@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"icomic/backend/internal/credits"
 	"icomic/backend/internal/domain"
 )
 
@@ -30,14 +31,17 @@ var (
 )
 
 type CreateJobRequest struct {
-	ProjectID      string
-	UserID         string
-	JobType        string
-	Stage          string
-	ModelID        string
-	IdempotencyKey string
-	EstimatedCost  float64
-	HashedUserID   string
+	EntityID         string
+	DebitAmount      float64
+	KillSwitchActive bool
+	ProjectID        string
+	UserID           string
+	JobType          string
+	Stage            string
+	ModelID          string
+	IdempotencyKey   string
+	EstimatedCost    float64
+	HashedUserID     string
 }
 
 // JobService defines generation job lifecycle management (SPEC 8.3, 8.5, ARCHITECTURE 5).
@@ -57,6 +61,7 @@ type JobService interface {
 
 // InMemoryJobService is a thread-safe in-memory job store with full lifecycle support.
 type InMemoryJobService struct {
+	creditService  credits.CreditService
 	mu             sync.Mutex
 	jobsByID       map[string]*domain.GenerationJob
 	jobsByIdempKey map[string]*domain.GenerationJob
@@ -69,6 +74,13 @@ func NewInMemoryJobService() *InMemoryJobService {
 		jobsByIdempKey: make(map[string]*domain.GenerationJob),
 		cancelFuncs:    make(map[string]context.CancelFunc),
 	}
+}
+
+// SetCreditService attaches the fake ledger so creation can fail without publishing a job.
+func (s *InMemoryJobService) SetCreditService(c credits.CreditService) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.creditService = c
 }
 
 func generateJobID() string {
@@ -93,7 +105,8 @@ func (s *InMemoryJobService) CreateJob(ctx context.Context, req CreateJobRequest
 	defer s.mu.Unlock()
 
 	if existing, found := s.jobsByIdempKey[req.IdempotencyKey]; found {
-		return existing, true, nil
+		copy := *existing
+		return &copy, true, nil
 	}
 
 	job := &domain.GenerationJob{
@@ -110,9 +123,18 @@ func (s *InMemoryJobService) CreateJob(ctx context.Context, req CreateJobRequest
 		CreatedAt:      time.Now().UTC(),
 	}
 
+	if req.DebitAmount > 0 {
+		if s.creditService == nil {
+			return nil, false, errors.New("credit service is required")
+		}
+		if _, err := s.creditService.Debit(ctx, credits.DebitRequest{UserID: req.UserID, ProjectID: req.ProjectID, GenerationJobID: job.ID, Amount: req.DebitAmount}); err != nil {
+			return nil, false, err
+		}
+	}
 	s.jobsByID[job.ID] = job
 	s.jobsByIdempKey[req.IdempotencyKey] = job
-	return job, false, nil
+	copy := *job
+	return &copy, false, nil
 }
 
 // GetJob retrieves a generation job by its ID.

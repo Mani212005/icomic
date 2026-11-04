@@ -297,7 +297,7 @@ class TestMigrationsStructural(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.up_files = sorted(MIGRATIONS_DIR.glob("*.up.sql"))
-        cls.down_files = sorted(MIGRATIONS_DIR.glob("*.down.sql"))
+        cls.down_files = sorted(MIGRATIONS_DIR.glob("*.down.sql"), reverse=True)
         cls.all_up_sql = "\n".join(f.read_text(encoding="utf-8") for f in cls.up_files)
         cls.all_down_sql = "\n".join(f.read_text(encoding="utf-8") for f in cls.down_files)
         cls.tables = parse_create_tables(cls.all_up_sql)

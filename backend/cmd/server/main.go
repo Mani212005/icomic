@@ -22,18 +22,24 @@ func main() {
 	}
 
 	var repo db.Repository
+	var creditSvc credits.CreditService
+	var jobSvc jobs.JobService
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL != "" {
-		log.Printf("Connecting to PostgreSQL at %s...", dbURL)
+		log.Println("Connecting to PostgreSQL...")
 		pgRepo, err := db.NewPostgresRepository(dbURL)
 		if err != nil {
 			log.Fatalf("Failed to initialize PostgreSQL repository: %v", err)
 		}
 		defer pgRepo.Close()
 		repo = pgRepo
+		creditSvc = credits.NewPersistentCreditService(pgRepo)
+		jobSvc = jobs.NewPersistentJobService(pgRepo)
 	} else {
 		log.Println("Using in-memory repository fake...")
 		repo = db.NewInMemoryRepository()
+		creditSvc = credits.NewInMemoryCreditService(map[string]float64{"00000000-0000-0000-0000-000000000001": 100.0})
+		jobSvc = jobs.NewInMemoryJobService()
 	}
 
 	var aiClient gen.AIService
@@ -53,11 +59,6 @@ func main() {
 	// Authentication seam: in dev, allow dev auth only if DEV_AUTH_ENABLED=true
 	devAuthEnabled := os.Getenv("DEV_AUTH_ENABLED") == "true"
 	authenticator := auth.NewDevAuthenticator(devAuthEnabled, "00000000-0000-0000-0000-000000000001")
-
-	creditSvc := credits.NewInMemoryCreditService(map[string]float64{
-		"00000000-0000-0000-0000-000000000001": 100.0,
-	})
-	jobSvc := jobs.NewInMemoryJobService()
 
 	maxPanelsPerPage := 4
 	if mppStr := os.Getenv("MAX_PANELS_PER_PAGE"); mppStr != "" {

@@ -55,6 +55,9 @@ func NewServer(
 		allowedOrigin = "http://localhost:5173"
 	}
 
+	if memoryJobs, ok := jobService.(*jobs.InMemoryJobService); ok {
+		memoryJobs.SetCreditService(creditService)
+	}
 	return &Server{
 		Repo:              repo,
 		CreditService:     creditService,
@@ -80,6 +83,12 @@ func (s *Server) IsKillSwitchActive() bool {
 
 // CheckKillSwitchAndQuota checks global spend protection and per-user image generation quotas (SPEC 5.5).
 func (s *Server) CheckKillSwitchAndQuota(r *http.Request, userID string) error {
+	// Durable policy and quota reads belong to CreateGeneration's transaction.
+	// The memory path keeps its existing guard for hermetic API callers.
+	if policy, ok := s.JobService.(interface{ EnforcesPolicyTransactionally() bool }); ok && policy.EnforcesPolicyTransactionally() {
+		return nil
+	}
+
 	dailyCount, _ := s.Repo.GetUserDailyImageCount(r.Context(), userID, time.Now().UTC().Add(-24*time.Hour))
 	monthlyCount, _ := s.Repo.GetUserMonthlyImageCount(r.Context(), userID, time.Now().UTC().Add(-30*24*time.Hour))
 
