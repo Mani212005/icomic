@@ -227,15 +227,13 @@
 				class="tool-btn"
 				class:active={activeTool === 'bucket'}
 				on:click={() => (activeTool = 'bucket')}
-				title="Bucket fill"
 			>
-				🪣 Bucket Fill
+				🪣 Fill
 			</button>
 			<button
 				class="tool-btn"
 				class:active={activeTool === 'eyedropper'}
 				on:click={() => (activeTool = 'eyedropper')}
-				title="Eyedropper"
 			>
 				💉 Eyedropper
 			</button>
@@ -243,20 +241,19 @@
 				class="tool-btn"
 				class:active={activeTool === 'brush'}
 				on:click={() => (activeTool = 'brush')}
-				title="Close gaps"
 			>
-				✏️ Gap Closer
+				✏️ Close gaps
 			</button>
 		</div>
 
 		<div class="settings-group">
-			<label class="setting-item" title="Fill tolerance">
-				<span>Tolerance: {tolerance}</span>
+			<label class="setting-item" title="Tolerance">
+				<span>Tol: {tolerance}</span>
 				<input type="range" min="0" max="100" bind:value={tolerance} />
 			</label>
-			<label class="setting-item checkbox" title="Auto-close gaps">
-				<input type="checkbox" bind:checked={gapClosing} aria-label="Auto Gap-Close" />
-				<span>Auto-close</span>
+			<label class="setting-item checkbox">
+				<input type="checkbox" bind:checked={gapClosing} aria-label="Auto-close gaps" />
+				<span>Auto</span>
 			</label>
 		</div>
 
@@ -270,7 +267,7 @@
 		</div>
 
 		<div class="action-group">
-			<button class="approve-btn" on:click={onApprove} aria-label="✓ Approve Colouring">
+			<button class="approve-btn" on:click={onApprove}>
 				✓ Approve
 			</button>
 		</div>
@@ -292,8 +289,8 @@
 		</div>
 
 		<div class="custom-picker">
-			<input type="color" bind:value={customColour} on:change={addCustomColour} title="Custom color" aria-label="Choose custom color" />
-			<button class="small-btn" on:click={addCustomColour} aria-label="Set Color">Set</button>
+			<input type="color" bind:value={customColour} on:change={addCustomColour} aria-label="Choose color" />
+			<button class="small-btn" on:click={addCustomColour} aria-label="Set color">Set</button>
 		</div>
 	</div>
 

@@ -53,37 +53,35 @@
 
 	<div class="compliance-notice">
 		<div class="badge">ℹ️ AI disclosure</div>
-		<p>
-			AI-generated with Meta AI (muse-image-1.0, Llama). C2PA included.
-		</p>
+			<p>AI-generated: Meta AI (muse-image-1.0, Llama); C2PA included.</p>
 	</div>
 
 	<div class="options-grid">
 		<div class="option-card">
 			<label for="format-select">Format</label>
-			<select id="format-select" bind:value={format} aria-label="Export Format">
+			<select id="format-select" bind:value={format}>
 				<option value={EXPORT_FORMATS.PDF}>PDF</option>
 				<option value={EXPORT_FORMATS.PNG}>PNG (.zip)</option>
 			</select>
-			<small>PDF has cover, panels, dialogue, and page numbers.</small>
+			<small>PDF: cover, panels, text, pages.</small>
 		</div>
 
 		<div class="option-card">
 			<label for="pagesize-select">Size</label>
-			<select id="pagesize-select" bind:value={pageSize} aria-label="Page Size">
+			<select id="pagesize-select" bind:value={pageSize}>
 				<option value={PAGE_SIZES.A4}>A4 (210 × 297 mm)</option>
 				<option value={PAGE_SIZES.US_LETTER}>US Letter (8.5 × 11 in)</option>
 				<option value={PAGE_SIZES.CUSTOM}>Custom (6.625 × 10.25 in)</option>
 			</select>
-			<small>Print-ready sizes.</small>
+			<small>Print-ready.</small>
 		</div>
 	</div>
 
 	<div class="preview-section">
-		<h4>Preview ({pages.length})</h4>
+		<h4>Pages ({pages.length})</h4>
 		<div class="pages-strip">
 			{#if pages.length === 0}
-				<div class="empty-pages">No pages yet.</div>
+				<div class="empty-pages">None.</div>
 			{:else}
 				{#each pages as page, i}
 					<div class="page-card">
@@ -108,12 +106,12 @@
 	<div class="export-actions">
 		<button
 			class="export-btn"
-			aria-label={isExporting ? `Assembling ${format.toUpperCase()}...` : `🚀 Generate & Assemble Comic ${format.toUpperCase()}`}
+			aria-label={isExporting ? `Exporting ${format.toUpperCase()}` : `🚀 Export ${format.toUpperCase()}`}
 			on:click={handleExport}
 			disabled={isExporting}
 		>
 			{#if isExporting}
-				<span class="spinner"></span> Assembling {format.toUpperCase()}...
+				<span class="spinner"></span> Exporting {format.toUpperCase()}...
 			{:else}
 				🚀 Export {format.toUpperCase()}
 			{/if}
@@ -121,7 +119,7 @@
 
 		{#if downloadUrl}
 			<a class="download-link" href={downloadUrl} target="_blank" rel="noopener noreferrer" download>
-				📥 Download {format.toUpperCase()} Comic
+				📥 Download {format.toUpperCase()}
 			</a>
 		{/if}
 	</div>

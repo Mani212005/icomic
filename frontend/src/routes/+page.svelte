@@ -19,10 +19,10 @@
 	let isCreatingProject = false;
 	let createError = null;
 	let newProjectForm = {
-		title: 'Untitled Comic',
+		title: 'Untitled',
 		art_style: 'cyberpunk-noir',
 		chapter_count: 3,
-		script: 'In a rain-slicked metropolis bathed in neon, two investigators uncover a conspiracy.'
+		script: 'Two investigators uncover a conspiracy.'
 	};
 
 	let activeStage = 'script';
@@ -51,7 +51,7 @@
 				activeProject = null;
 			}
 		} catch (err) {
-			console.error('Failed to load projects:', err);
+			console.error('Projects:', err);
 			projectError = formatApiError(err);
 		} finally {
 			isLoadingProjects = false;
@@ -88,11 +88,11 @@
 		const script = newProjectForm.script.trim();
 
 		if (!title) {
-			createError = 'Project title is required.';
+			createError = 'Enter title.';
 			return;
 		}
 		if (!script) {
-			createError = 'Script text is required to initialize project.';
+			createError = 'Add script.';
 			return;
 		}
 
@@ -114,7 +114,7 @@
 				switchProject(created.id);
 			}
 		} catch (err) {
-			createError = (err && err.message) || 'Failed to create project.';
+			createError = (err && err.message) || 'Could not create project.';
 		} finally {
 			isCreatingProject = false;
 		}
@@ -122,7 +122,7 @@
 
 	async function handleDeleteCurrentProject() {
 		if (!activeProject || !activeProject.id) return;
-		if (!confirm(`Are you sure you want to delete project "${activeProject.title}"?`)) return;
+		if (!confirm(`Delete project "${activeProject.title}"?`)) return;
 
 		try {
 			await apiClient.deleteProject(activeProject.id);
@@ -151,12 +151,11 @@
 			<span class="logo">🎨</span>
 			<div class="brand-text">
 				<h1>Icomic</h1>
-				<span class="tagline">Comic Studio</span>
 			</div>
 		</div>
 
 		<div class="nav-status">
-			<div class="status-pill global-pill" title="Global access">
+			<div class="status-pill global-pill">
 				<span class="indicator green"></span>
 				<span>Global</span>
 			</div>
@@ -166,23 +165,23 @@
 			</div>
 
 			{#if authMode === 'mock'}
-				<div class="status-pill mock-pill" title="Mock API">
+				<div class="status-pill mock-pill">
 					<span class="badge blue">Mock API</span>
 				</div>
 			{:else if authMode === 'dev'}
-				<div class="status-pill dev-pill" title="Dev identity">
+				<div class="status-pill dev-pill">
 					<span class="indicator green"></span>
 					<span class="dev-label">Dev</span>
 				</div>
 			{:else if authMode === 'bearer'}
-				<div class="status-pill bearer-pill" title="Bearer auth">
+				<div class="status-pill bearer-pill">
 					<span class="indicator green"></span>
-					<span>Bearer Token</span>
+					<span>Token</span>
 				</div>
 			{:else}
-				<div class="status-pill unauth-pill" title="No credentials">
+				<div class="status-pill unauth-pill">
 					<span class="indicator amber"></span>
-					<span class="unauth-label">Unauthenticated</span>
+					<span class="unauth-label">Signed out</span>
 				</div>
 			{/if}
 		</div>
@@ -193,16 +192,16 @@
 			<div class="unauth-content">
 				<span class="unauth-icon">🔒</span>
 				<div class="unauth-text">
-					<strong>Sign in:</strong> For local use, enable <code>DEV_AUTH_ENABLED=true</code> and <code>PUBLIC_DEV_MODE=true</code>.
+					<strong>Sign in:</strong> Enable <code>DEV_AUTH_ENABLED=true</code> and <code>PUBLIC_DEV_MODE=true</code>.
 				</div>
 			</div>
-			<button class="enable-dev-btn" on:click={enableDevIdentity} aria-label="⚡ Enable Local Dev Identity">
+			<button class="enable-dev-btn" on:click={enableDevIdentity} aria-label="⚡ Enable dev identity">
 				⚡ Enable dev identity
 			</button>
 		</div>
 	{/if}
 
-		<section class="project-bar" aria-label="Project Selection & Actions">
+	<section class="project-bar" aria-label="Project">
 		<div class="project-selector-group">
 			<label for="project-select" class="selector-label">Project:</label>
 			{#if isLoadingProjects}
@@ -234,7 +233,7 @@
 		{/if}
 
 		<div class="project-actions">
-			<button class="action-btn create-btn" on:click={openCreateModal} aria-label="➕ New Project">
+			<button class="action-btn create-btn" on:click={openCreateModal}>
 				➕ New
 			</button>
 
@@ -242,7 +241,6 @@
 				<button
 					class="action-btn delete-btn"
 					on:click={handleDeleteCurrentProject}
-					title="Delete current project"
 				>
 					🗑️ Delete
 				</button>
@@ -251,7 +249,6 @@
 			<button
 				class="action-btn refresh-btn"
 				on:click={loadProjects}
-				 title="Reload projects from API"
 			>
 				🔄 Refresh
 			</button>
@@ -282,9 +279,7 @@
 		{:else}
 			<div class="empty-state-card">
 				<div class="empty-icon">📖</div>
-				<h2>No comics</h2>
-				<p>Create a comic to begin.</p>
-				<button class="primary-btn large" on:click={openCreateModal} aria-label="🚀 Create Your First Comic Project">
+				<button class="primary-btn large" on:click={openCreateModal}>
 					🚀 Create project
 				</button>
 			</div>
@@ -306,7 +301,7 @@
 				tabindex="-1"
 			>
 				<header class="modal-header">
-					<h3 id="modal-title" aria-label="Create New Comic Project">New project</h3>
+					<h3 id="modal-title">New project</h3>
 					<button class="close-btn" on:click={closeCreateModal} aria-label="Close dialog">✕</button>
 				</header>
 
@@ -318,11 +313,10 @@
 
 				<form class="modal-form" on:submit|preventDefault={handleCreateProject}>
 					<div class="form-group">
-						<label for="new-proj-title">Project Title *</label>
+						<label for="new-proj-title">Title *</label>
 						<input
 							id="new-proj-title"
 							type="text"
-							placeholder="e.g. Neon Horizon"
 							bind:value={newProjectForm.title}
 							required
 						/>
@@ -330,12 +324,12 @@
 
 					<div class="form-row">
 						<div class="form-group">
-							<label for="new-proj-style">Art Style</label>
+						<label for="new-proj-style">Style</label>
 							<select id="new-proj-style" bind:value={newProjectForm.art_style}>
-								<option value="cyberpunk-noir">Cyberpunk Noir</option>
-								<option value="classic-superhero">Classic Superhero</option>
-								<option value="manga-ink">Manga Shonen Ink</option>
-								<option value="indie-graphic-novel">Indie Graphic Novel</option>
+							<option value="cyberpunk-noir">Cyberpunk</option>
+							<option value="classic-superhero">Superhero</option>
+							<option value="manga-ink">Shonen ink</option>
+							<option value="indie-graphic-novel">Indie novel</option>
 							</select>
 						</div>
 
@@ -352,11 +346,11 @@
 					</div>
 
 					<div class="form-group">
-						<label for="new-proj-script">Initial Script / Outline *</label>
+						<label for="new-proj-script">Script *</label>
 						<textarea
 							id="new-proj-script"
 							rows="5"
-							placeholder="Describe your story…"
+							placeholder="Story…"
 							bind:value={newProjectForm.script}
 							required
 						></textarea>
@@ -374,7 +368,7 @@
 						<button
 							type="submit"
 							class="primary-btn"
-							aria-label="Create Project"
+							aria-label="Create"
 							disabled={isCreatingProject}
 						>
 							{isCreatingProject ? 'Creating…' : 'Create'}
@@ -422,10 +416,6 @@
 		font-weight: 800;
 		color: #0f172a;
 		letter-spacing: -0.025em;
-	}
-	.tagline {
-		font-size: 0.75rem;
-		color: #64748b;
 	}
 	.nav-status {
 		display: flex;
@@ -547,6 +537,19 @@
 		background: #ffffff;
 		cursor: pointer;
 	}
+	@media (max-width: 600px) {
+		.project-bar {
+			padding-inline: 1rem;
+		}
+		.project-selector-group {
+			flex: 1 1 100%;
+			min-width: 0;
+		}
+		.project-select {
+			flex: 1;
+			min-width: 0;
+		}
+	}
 	.loading-label,
 	.no-projects-label {
 		font-size: 0.8125rem;
@@ -661,17 +664,6 @@
 	}
 	.empty-icon {
 		font-size: 3rem;
-	}
-	.empty-state-card h2 {
-		margin: 0;
-		font-size: 1.25rem;
-		color: #0f172a;
-	}
-	.empty-state-card p {
-		margin: 0;
-		color: #64748b;
-		font-size: 0.875rem;
-		line-height: 1.5;
 	}
 	.primary-btn {
 		background: #0284c7;

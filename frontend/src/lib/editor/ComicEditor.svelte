@@ -6,7 +6,7 @@
 
 	export let project = {
 		id: 'proj-demo-1',
-		title: 'The Quantum Detective',
+		title: 'Demo',
 		art_style: 'cyberpunk-noir',
 		chapter_count: 3,
 		script: '',
@@ -43,10 +43,10 @@
 		{ id: STAGES.SCRIPT, label: '1. Script' },
 		{ id: STAGES.CHARACTERS, label: '2. Characters' },
 		{ id: STAGES.CHAPTERS, label: '3. Outline' },
-		{ id: STAGES.PANELS, label: '4. Pages & Panels' },
-		{ id: STAGES.DRAFT, label: '5. Draft Sketches' },
-		{ id: STAGES.LINE_ART, label: '6. Line Art' },
-		{ id: STAGES.COLOUR, label: '7. Colouring' },
+		{ id: STAGES.PANELS, label: '4. Panels' },
+		{ id: STAGES.DRAFT, label: '5. Drafts' },
+		{ id: STAGES.LINE_ART, label: '6. Lines' },
+		{ id: STAGES.COLOUR, label: '7. Colour' },
 		{ id: STAGES.EXPORT, label: '8. Export' }
 	];
 
@@ -104,7 +104,7 @@
 				pages = [];
 			}
 		} catch (e) {
-			console.error('Failed to load project data:', e);
+			console.error('Project:', e);
 			jobError = formatApiError(e);
 		}
 	}
@@ -114,7 +114,7 @@
 	async function runScriptAnalysis() {
 		const scriptText = (project.original_script || project.script || '').trim();
 		if (!scriptText) {
-			jobError = formatApiError('Script cannot be empty.');
+			jobError = formatApiError('Add script.');
 			return;
 		}
 		jobError = null;
@@ -151,8 +151,8 @@
 	async function regenerateCharacterReference(charId) {
 		jobError = null;
 		isJobActive = true;
-		activeJobType = 'Character Reference Generation';
-		currentJobStatus = 'Rendering ($0.01)…';
+		activeJobType = 'Reference';
+		currentJobStatus = 'Rendering…';
 
 		try {
 			const res = await apiClient.generateCharacterReference(charId);
@@ -272,8 +272,8 @@
 	async function generateDraft(pageId) {
 		jobError = null;
 		isJobActive = true;
-		activeJobType = 'Draft Sketch Generation';
-		currentJobStatus = 'Generating drafts ($0.01)…';
+		activeJobType = 'Draft';
+		currentJobStatus = 'Generating…';
 
 		try {
 			const res = await apiClient.generateDraft(pageId);
@@ -301,8 +301,8 @@
 	async function generateLineArt(pageId) {
 		jobError = null;
 		isJobActive = true;
-		activeJobType = 'Final Line Art Generation';
-		currentJobStatus = 'Generating line art ($0.01)…';
+		activeJobType = 'Line art';
+		currentJobStatus = 'Generating…';
 
 		try {
 			const res = await apiClient.generateLineArt(pageId);
@@ -341,8 +341,8 @@
 	async function suggestNewPalette(pageId) {
 		jobError = null;
 		isJobActive = true;
-		activeJobType = 'AI Palette Suggestion';
-		currentJobStatus = 'Suggesting palette…';
+		activeJobType = 'Palette';
+		currentJobStatus = 'Suggesting…';
 
 		try {
 			const res = await apiClient.suggestColourPalette(pageId);
@@ -369,7 +369,7 @@
 
 <div class="comic-editor-container">
 
-	<nav class="stepper-nav" aria-label="Pipeline Stages">
+	<nav class="stepper-nav" aria-label="Stages">
 		{#each stageList as stage}
 			<button
 				class="step-item"
@@ -411,34 +411,34 @@
 	{#if activeStage === STAGES.SCRIPT}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 1: Script</h3>
-				<span class="meta-info">Words: <strong>{scriptWordCount}</strong> words</span>
+				<h3>Script</h3>
+				<span class="meta-info">Words: <strong>{scriptWordCount}</strong></span>
 			</header>
 
 			<div class="form-grid">
 				<div class="form-group">
-					<label for="comic-title">Comic Title</label>
+					<label for="comic-title">Title</label>
 					<input id="comic-title" type="text" bind:value={project.title} />
 				</div>
 
 				<div class="form-group">
-					<label for="art-style">Art Style</label>
+					<label for="art-style">Style</label>
 					<select id="art-style" bind:value={project.art_style}>
-						<option value="cyberpunk-noir">Cyberpunk Noir</option>
-						<option value="classic-superhero">Classic Superhero</option>
-						<option value="manga-ink">Manga Shonen Ink</option>
-						<option value="indie-graphic-novel">Indie Graphic Novel</option>
+						<option value="cyberpunk-noir">Cyberpunk</option>
+						<option value="classic-superhero">Superhero</option>
+						<option value="manga-ink">Shonen ink</option>
+						<option value="indie-graphic-novel">Indie novel</option>
 					</select>
 				</div>
 
 				<div class="form-group">
-					<label for="chapter-count">Number of Chapters</label>
+					<label for="chapter-count">Chapters</label>
 					<input id="chapter-count" type="number" min="1" max="10" bind:value={project.chapter_count} />
 				</div>
 			</div>
 
 			<div class="form-group full-width">
-				<label for="script-textarea">Comic Script (Plain text, Markdown, or Dialogue)</label>
+				<label for="script-textarea">Script</label>
 				<textarea
 					id="script-textarea"
 					rows="8"
@@ -450,11 +450,11 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
-					aria-label="⚡ Analyze Script & Extract Characters"
+					aria-label="⚡ Analyze script"
 					on:click={runScriptAnalysis}
 					disabled={isJobActive || scriptWordCount === 0}
 				>
-					⚡ Analyze script
+					⚡ Analyze
 				</button>
 			</div>
 		</section>
@@ -462,13 +462,13 @@
 	{:else if activeStage === STAGES.CHARACTERS}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 2: Characters</h3>
+				<h3>Characters</h3>
 				<div class="header-tags">
 					{#if anyCharacterStale}
 						<span class="approval-tag stale">⚠️ Stale</span>
 					{:else}
 						<span class="approval-tag" class:approved={allCharactersApproved}>
-							{allCharactersApproved ? '✓ All Characters Approved' : 'Approval needed'}
+							{allCharactersApproved ? '✓ Approved' : 'Pending'}
 						</span>
 					{/if}
 				</div>
@@ -476,13 +476,9 @@
 
 			{#if anyCharacterStale}
 				<div class="stale-stage-banner">
-					<strong>⚠️ Character edits:</strong> Re-approve to continue.
+					<strong>⚠️ Edited:</strong> Re-approve.
 				</div>
 			{/if}
-
-			<p class="section-desc">
-				Review characters. Re-approve edits to continue.
-			</p>
 
 			<div class="cards-grid">
 				{#each characters as char}
@@ -491,18 +487,18 @@
 							{#if char.reference_image_url}
 								<img src={char.reference_image_url} alt={char.name} class="char-img" />
 							{:else}
-								<div class="placeholder-avatar">No Image</div>
+								<div class="placeholder-avatar">No image</div>
 							{/if}
 						</div>
 
 						{#if editingCharId === char.id}
 							<div class="char-edit-form">
 								<label>Name: <input type="text" bind:value={editCharForm.name} /></label>
-								<label>Description: <textarea rows="2" bind:value={editCharForm.description}></textarea></label>
-								<label>Appearance: <input type="text" bind:value={editCharForm.appearance} /></label>
-								<label>Clothing: <input type="text" bind:value={editCharForm.clothing} /></label>
+								<label>Bio: <textarea rows="2" bind:value={editCharForm.description}></textarea></label>
+								<label>Look: <input type="text" bind:value={editCharForm.appearance} /></label>
+								<label>Clothes: <input type="text" bind:value={editCharForm.clothing} /></label>
 								<div class="edit-actions">
-									<button class="primary-btn small" on:click={() => saveEditChar(char.id)}>Save Changes</button>
+									<button class="primary-btn small" on:click={() => saveEditChar(char.id)}>Save</button>
 									<button class="secondary-btn small" on:click={cancelEditChar}>Cancel</button>
 								</div>
 							</div>
@@ -510,22 +506,22 @@
 							<div class="char-details">
 								<div class="char-title-row">
 									<h4>{char.name} <span class="age-badge">{char.visual_attributes?.age_range || char.age_range || ''}</span></h4>
-									<button class="edit-icon-btn" on:click={() => startEditChar(char)} title="Edit character details">✏️ Edit</button>
+									<button class="edit-icon-btn" on:click={() => startEditChar(char)}>✏️ Edit</button>
 								</div>
-								<p><strong>Description:</strong> {char.description}</p>
-								<p><strong>Appearance:</strong> {char.visual_attributes?.appearance || char.appearance || 'Standard'}</p>
-								<p><strong>Clothing:</strong> {char.visual_attributes?.clothing || char.clothing || 'Standard'}</p>
+								<p><strong>Bio:</strong> {char.description}</p>
+								<p><strong>Look:</strong> {char.visual_attributes?.appearance || char.appearance || 'Standard'}</p>
+								<p><strong>Clothes:</strong> {char.visual_attributes?.clothing || char.clothing || 'Standard'}</p>
 							</div>
 						{/if}
 
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)} aria-label="🔄 Regenerate Reference ($0.01)">
-								🔄 Regenerate ($0.01)
+							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)} aria-label="🔄 Regenerate ref ($0.01)">
+								🔄 Regen ($0.01)
 							</button>
 
 							{#if isApprovalStale(char.approved_at, char.updated_at)}
 								<div class="stale-action-box">
-									<span class="stale-warning-text">⚠️ Modified after approval</span>
+									<span class="stale-warning-text">⚠️ Edited</span>
 									<button class="reapprove-btn" on:click={() => approveCharacter(char.id)}>
 										Re-approve
 									</button>
@@ -534,7 +530,7 @@
 								<span class="status-approved">✓ Approved</span>
 							{:else}
 								<button class="approve-btn" on:click={() => approveCharacter(char.id)}>
-									Approve Character
+									Approve
 								</button>
 							{/if}
 						</div>
@@ -545,7 +541,7 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
-					aria-label="Proceed to Chapter Outline"
+					aria-label="Next: outline"
 					on:click={() => (activeStage = STAGES.CHAPTERS)}
 					disabled={!allCharactersApproved}
 				>
@@ -557,13 +553,13 @@
 	{:else if activeStage === STAGES.CHAPTERS}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 3: Outline</h3>
+				<h3>Outline</h3>
 				<div class="header-tags">
 					{#if anyChapterStale}
 						<span class="approval-tag stale">⚠️ Stale</span>
 					{:else}
 						<span class="approval-tag" class:approved={allChaptersApproved}>
-							{allChaptersApproved ? '✓ Outline Approved' : 'Approval needed'}
+							{allChaptersApproved ? '✓ Approved' : 'Pending'}
 						</span>
 					{/if}
 				</div>
@@ -571,7 +567,7 @@
 
 			{#if anyChapterStale}
 				<div class="stale-stage-banner">
-					<strong>⚠️ Chapter edits:</strong> Re-approve to continue.
+					<strong>⚠️ Edited.</strong> Re-approve.
 				</div>
 			{/if}
 
@@ -592,7 +588,7 @@
 
 							<div class="chap-approval-box">
 								{#if isApprovalStale(chap.approved_at, chap.updated_at)}
-									<span class="stale-warning-text">⚠️ Modified after approval</span>
+									<span class="stale-warning-text">⚠️ Edited</span>
 									<button class="reapprove-btn" on:click={() => approveChapter(chap.id)}>
 										Re-approve
 									</button>
@@ -600,7 +596,7 @@
 									<span class="status-approved">✓ Approved</span>
 								{:else}
 									<button class="approve-btn" on:click={() => approveChapter(chap.id)}>
-										Approve Chapter
+										Approve
 									</button>
 								{/if}
 							</div>
@@ -618,7 +614,7 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
-					aria-label="Proceed to Panels & Pagination"
+					aria-label="Next: panels"
 					on:click={() => (activeStage = STAGES.PANELS)}
 					disabled={!allChaptersApproved}
 				>
@@ -630,11 +626,8 @@
 	{:else if activeStage === STAGES.PANELS}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 4: Panels</h3>
+				<h3>Panels</h3>
 			</header>
-			<p class="section-desc">
-				Edit panels. Changes reset page draft approval.
-			</p>
 
 			<div class="panels-list">
 				{#each panels as panel}
@@ -669,7 +662,7 @@
 			</div>
 
 			<div class="section-actions">
-				<button class="primary-btn" on:click={() => (activeStage = STAGES.DRAFT)} aria-label="Proceed to Draft Sketches">
+				<button class="primary-btn" on:click={() => (activeStage = STAGES.DRAFT)} aria-label="Next: drafts">
 					Continue →
 				</button>
 			</div>
@@ -678,13 +671,13 @@
 	{:else if activeStage === STAGES.DRAFT}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 5: Drafts</h3>
+				<h3>Drafts</h3>
 				<div class="header-tags">
 					{#if anyDraftStale}
 						<span class="approval-tag stale">⚠️ Stale</span>
 					{:else}
 						<span class="approval-tag" class:approved={allDraftsApproved}>
-							{allDraftsApproved ? '✓ All Drafts Approved' : 'Approval needed'}
+							{allDraftsApproved ? '✓ Approved' : 'Pending'}
 						</span>
 					{/if}
 				</div>
@@ -692,13 +685,11 @@
 
 			{#if anyDraftStale}
 				<div class="stale-stage-banner">
-					<strong>⚠️ Page edits:</strong> Approve before line art.
+					<strong>⚠️ Edited:</strong> Re-approve.
 				</div>
 			{/if}
 
-			<p class="section-desc">
-				Approve each page draft before line art ($0.01 per attempt).
-			</p>
+			<p class="section-desc">Approve each draft.</p>
 
 			<div class="page-grid">
 				{#each pages as page}
@@ -712,22 +703,22 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => generateDraft(page.id)} aria-label="🔄 Regenerate Draft ($0.01)">
-								🔄 Regenerate ($0.01)
+			<button class="secondary-btn" on:click={() => generateDraft(page.id)} aria-label="🔄 Regen draft ($0.01)">
+								🔄 Regen ($0.01)
 							</button>
 
 							{#if isApprovalStale(page.draft_approved_at, page.updated_at)}
 								<div class="stale-action-box">
-									<span class="stale-warning-text">⚠️ Modified after approval</span>
+									<span class="stale-warning-text">⚠️ Edited</span>
 									<button class="reapprove-btn" on:click={() => approveDraft(page.id)}>
-										Re-approve Draft
+										Re-approve
 									</button>
 								</div>
 							{:else if page.draft_approved_at}
-								<span class="status-approved">✓ Draft Approved</span>
+								<span class="status-approved">✓ Approved</span>
 							{:else}
 								<button class="approve-btn" on:click={() => approveDraft(page.id)}>
-									Approve Draft
+									Approve
 								</button>
 							{/if}
 						</div>
@@ -738,7 +729,7 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
-					aria-label="Proceed to Final Line Art"
+					aria-label="Next: line art"
 					on:click={() => (activeStage = STAGES.LINE_ART)}
 					disabled={!allDraftsApproved}
 				>
@@ -750,13 +741,13 @@
 	{:else if activeStage === STAGES.LINE_ART}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 6: Line Art</h3>
+				<h3>Line art</h3>
 				<div class="header-tags">
 					{#if anyLineArtStale}
 						<span class="approval-tag stale">⚠️ Stale</span>
 					{:else}
 						<span class="approval-tag" class:approved={allLineArtApproved}>
-							{allLineArtApproved ? '✓ Line Art Approved' : 'Approval needed'}
+							{allLineArtApproved ? '✓ Approved' : 'Pending'}
 						</span>
 					{/if}
 				</div>
@@ -764,13 +755,9 @@
 
 			{#if anyLineArtStale}
 				<div class="stale-stage-banner">
-					<strong>⚠️ Line art changed:</strong> Re-approve to colour.
+					<strong>⚠️ Edited:</strong> Re-approve.
 				</div>
 			{/if}
-
-			<p class="section-desc">
-				Bold outlines for colouring.
-			</p>
 
 			<div class="page-grid">
 				{#each pages as page}
@@ -784,22 +771,22 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => generateLineArt(page.id)} aria-label="🔄 Regenerate Line Art ($0.01)">
-								🔄 Regenerate ($0.01)
+			<button class="secondary-btn" on:click={() => generateLineArt(page.id)} aria-label="🔄 Regen line art ($0.01)">
+								🔄 Regen ($0.01)
 							</button>
 
 							{#if isApprovalStale(page.line_art_approved_at, page.updated_at)}
 								<div class="stale-action-box">
-									<span class="stale-warning-text">⚠️ Regenerated after approval</span>
+									<span class="stale-warning-text">⚠️ Edited</span>
 									<button class="reapprove-btn" on:click={() => approveLineArt(page.id)}>
-										Re-approve Line Art
+										Re-approve
 									</button>
 								</div>
 							{:else if page.line_art_approved_at}
-								<span class="status-approved">✓ Line Art Approved</span>
+								<span class="status-approved">✓ Approved</span>
 							{:else}
 								<button class="approve-btn" on:click={() => approveLineArt(page.id)}>
-									Approve Line Art
+									Approve
 								</button>
 							{/if}
 						</div>
@@ -810,7 +797,7 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
-					aria-label="Proceed to Colouring Studio"
+					aria-label="Next: colour"
 					on:click={() => (activeStage = STAGES.COLOUR)}
 					disabled={!allLineArtApproved}
 				>
@@ -822,14 +809,11 @@
 	{:else if activeStage === STAGES.COLOUR}
 		<section class="stage-section">
 			<header class="section-header">
-				<h3>Stage 7: Colour</h3>
-				<button class="secondary-btn" on:click={() => suggestNewPalette(pages[0]?.id)} aria-label="🎨 Suggest AI Palette">
+				<h3>Colour</h3>
+				<button class="secondary-btn" on:click={() => suggestNewPalette(pages[0]?.id)}>
 					🎨 Suggest palette
 				</button>
 			</header>
-			<p class="section-desc">
-				Fill areas, undo, or close outline gaps.
-			</p>
 
 			<ColourEditor
 				lineArtUrl={pages[0]?.line_art_image_url || pages[0]?.line_art_url || ''}
@@ -1332,6 +1316,20 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
+	}
+	@media (max-width: 600px) {
+		.chap-header {
+			flex-wrap: wrap;
+		}
+		.chap-header h4 {
+			flex: 1 1 100%;
+		}
+		.chap-header .edit-icon-btn {
+			margin-left: auto;
+		}
+		.chap-approval-box {
+			margin-left: 0.5rem;
+		}
 	}
 
 	.panel-header-row {
