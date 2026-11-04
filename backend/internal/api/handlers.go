@@ -507,7 +507,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	idempKey := uuid.NewString()
+	idempKey := generationKey(r)
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         ch.ID,
 		DebitAmount:      credits.ImageUnitPrice,
@@ -541,31 +541,39 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	refResp, err := s.AIClient.GenerateCharacterReference(r.Context(), gen.GenerateCharacterReferenceRequest{
-		JobID:           job.ID,
-		HashedUserID:    hashedUID,
-		ProjectID:       proj.ID,
-		CharacterID:     ch.ID,
-		CharacterName:   ch.Name,
-		Prompt:          prompt,
-		ReferenceImages: nil,
-		Style:           style,
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+	refResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateCharacterReferenceResponse, error) {
+		return s.AIClient.GenerateCharacterReference(ctx, gen.GenerateCharacterReferenceRequest{
+			JobID:           job.ID,
+			HashedUserID:    hashedUID,
+			ProjectID:       proj.ID,
+			CharacterID:     ch.ID,
+			CharacterName:   ch.Name,
+			Prompt:          prompt,
+			ReferenceImages: nil,
+			Style:           style,
+		})
 	})
 	if err != nil {
-		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
-			UserID:          userID,
-			ProjectID:       proj.ID,
-			GenerationJobID: job.ID,
-			Amount:          credits.ImageUnitPrice,
-		})
-		errMsg := err.Error()
-		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		if failErr := s.failGeneration(r.Context(), job, err, credits.ImageUnitPrice); failErr != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
+			return
+		}
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Character reference generation failed: %v", err))
 		return
 	}
 
 	imgURL := s.ImageHosting.ResolveURL(refResp.ImageURL)
 	now := time.Now().UTC()
+
+	ch.ReferenceImageURL = imgURL
+	ch.ReferenceImageJobID = &job.ID
+	ch.UpdatedAt = now
+	if err := s.Repo.UpdateCharacter(r.Context(), ch); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to save character")
+		return
+	}
+
 	actualCost := s.aiActualCost(r.Context(), job.ID)
 	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -574,14 +582,6 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 	job, err = s.JobService.GetJob(r.Context(), job.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	ch.ReferenceImageURL = imgURL
-	ch.ReferenceImageJobID = &job.ID
-	ch.UpdatedAt = now
-	if err := s.Repo.UpdateCharacter(r.Context(), ch); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save character")
 		return
 	}
 
@@ -682,12 +682,15 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetChapters := proj.ChapterCount
-	aiResp, err := s.AIClient.AnalyzeScript(r.Context(), gen.AnalyzeScriptRequest{
-		JobID:              job.ID,
-		HashedUserID:       hashedUID,
-		ProjectID:          proj.ID,
-		Script:             proj.OriginalScript,
-		TargetChapterCount: &targetChapters,
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+	aiResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.AnalyzeScriptResponse, error) {
+		return s.AIClient.AnalyzeScript(ctx, gen.AnalyzeScriptRequest{
+			JobID:              job.ID,
+			HashedUserID:       hashedUID,
+			ProjectID:          proj.ID,
+			Script:             proj.OriginalScript,
+			TargetChapterCount: &targetChapters,
+		})
 	})
 	if err != nil {
 		errMsg := err.Error()
@@ -837,13 +840,16 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 		chapCount = 2
 	}
 
-	outlineResp, err := s.AIClient.GenerateChapterOutline(r.Context(), gen.GenerateChapterOutlineRequest{
-		JobID:              job.ID,
-		HashedUserID:       hashedUID,
-		ProjectID:          proj.ID,
-		Script:             proj.OriginalScript,
-		ChapterCount:       chapCount,
-		ApprovedCharacters: approvedProfiles,
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+	outlineResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateChapterOutlineResponse, error) {
+		return s.AIClient.GenerateChapterOutline(ctx, gen.GenerateChapterOutlineRequest{
+			JobID:              job.ID,
+			HashedUserID:       hashedUID,
+			ProjectID:          proj.ID,
+			Script:             proj.OriginalScript,
+			ChapterCount:       chapCount,
+			ApprovedCharacters: approvedProfiles,
+		})
 	})
 	if err != nil {
 		errMsg := err.Error()
@@ -1041,15 +1047,18 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		charNames = append(charNames, ch.Name)
 	}
 
-	panelResp, err := s.AIClient.GeneratePanelText(r.Context(), gen.GeneratePanelTextRequest{
-		JobID:          job.ID,
-		HashedUserID:   hashedUID,
-		ProjectID:      proj.ID,
-		ChapterID:      c.ID,
-		ChapterNumber:  c.ChapterNumber,
-		ChapterTitle:   c.Title,
-		ChapterSummary: c.Summary,
-		Characters:     charNames,
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+	panelResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GeneratePanelTextResponse, error) {
+		return s.AIClient.GeneratePanelText(ctx, gen.GeneratePanelTextRequest{
+			JobID:          job.ID,
+			HashedUserID:   hashedUID,
+			ProjectID:      proj.ID,
+			ChapterID:      c.ID,
+			ChapterNumber:  c.ChapterNumber,
+			ChapterTitle:   c.Title,
+			ChapterSummary: c.Summary,
+			Characters:     charNames,
+		})
 	})
 	if err != nil {
 		errMsg := err.Error()
@@ -1354,7 +1363,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idempKey := uuid.NewString()
+	idempKey := generationKey(r)
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
 		DebitAmount:      credits.ImageUnitPrice,
@@ -1382,31 +1391,40 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		draftStyle = "classic-comic"
 	}
 
-	draftResp, err := s.AIClient.GenerateDraftSketch(r.Context(), gen.GenerateDraftSketchRequest{
-		JobID:                       job.ID,
-		HashedUserID:                hashedUID,
-		ProjectID:                   proj.ID,
-		PageID:                      pg.ID,
-		PageNumber:                  pg.PageNumber,
-		Panels:                      panelItems,
-		Style:                       draftStyle,
-		CharacterReferenceImageURLs: optionalStringSlice(charImageURLs),
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+	draftResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateDraftSketchResponse, error) {
+		return s.AIClient.GenerateDraftSketch(ctx, gen.GenerateDraftSketchRequest{
+			JobID:                       job.ID,
+			HashedUserID:                hashedUID,
+			ProjectID:                   proj.ID,
+			PageID:                      pg.ID,
+			PageNumber:                  pg.PageNumber,
+			Panels:                      panelItems,
+			Style:                       draftStyle,
+			CharacterReferenceImageURLs: optionalStringSlice(charImageURLs),
+		})
 	})
 	if err != nil {
-		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
-			UserID:          userID,
-			ProjectID:       proj.ID,
-			GenerationJobID: job.ID,
-			Amount:          credits.ImageUnitPrice,
-		})
-		errMsg := err.Error()
-		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		if failErr := s.failGeneration(r.Context(), job, err, credits.ImageUnitPrice); failErr != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
+			return
+		}
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Draft sketch generation failed: %v", err))
 		return
 	}
 
 	imgURL := s.ImageHosting.ResolveURL(draftResp.ImageURL)
 	now := time.Now().UTC()
+
+	pg.DraftImageURL = imgURL
+	pg.DraftImageJobID = &job.ID
+	// Cascade: draft regeneration stales line art approval (SPEC 3.6, 3.7, ARCHITECTURE 5.3)
+	domain.StaleOnDraftRegeneration(pg, now)
+	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to save page")
+		return
+	}
+
 	actualCost := s.aiActualCost(r.Context(), job.ID)
 	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1415,15 +1433,6 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	job, err = s.JobService.GetJob(r.Context(), job.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	pg.DraftImageURL = imgURL
-	pg.DraftImageJobID = &job.ID
-	// Cascade: draft regeneration stales line art approval (SPEC 3.6, 3.7, ARCHITECTURE 5.3)
-	domain.StaleOnDraftRegeneration(pg, now)
-	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save page")
 		return
 	}
 
@@ -1549,7 +1558,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	idempKey := uuid.NewString()
+	idempKey := generationKey(r)
 	hashedUID := domain.HashUserID(userID)
 
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
@@ -1579,32 +1588,40 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		lineArtStyle = "classic-comic"
 	}
 
-	lineArtResp, err := s.AIClient.GenerateLineArt(r.Context(), gen.GenerateLineArtRequest{
-		JobID:                       job.ID,
-		HashedUserID:                hashedUID,
-		ProjectID:                   proj.ID,
-		PageID:                      pg.ID,
-		PageNumber:                  pg.PageNumber,
-		DraftImageURL:               pg.DraftImageURL,
-		Panels:                      panelItems,
-		Style:                       lineArtStyle,
-		CharacterReferenceImageURLs: optionalStringSlice(charImageURLs),
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+	lineArtResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateLineArtResponse, error) {
+		return s.AIClient.GenerateLineArt(ctx, gen.GenerateLineArtRequest{
+			JobID:                       job.ID,
+			HashedUserID:                hashedUID,
+			ProjectID:                   proj.ID,
+			PageID:                      pg.ID,
+			PageNumber:                  pg.PageNumber,
+			DraftImageURL:               pg.DraftImageURL,
+			Panels:                      panelItems,
+			Style:                       lineArtStyle,
+			CharacterReferenceImageURLs: optionalStringSlice(charImageURLs),
+		})
 	})
 	if err != nil {
-		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
-			UserID:          userID,
-			ProjectID:       proj.ID,
-			GenerationJobID: job.ID,
-			Amount:          credits.ImageUnitPrice,
-		})
-		errMsg := err.Error()
-		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		if failErr := s.failGeneration(r.Context(), job, err, credits.ImageUnitPrice); failErr != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
+			return
+		}
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Line art generation failed: %v", err))
 		return
 	}
 
 	imgURL := s.ImageHosting.ResolveURL(lineArtResp.ImageURL)
 	now := time.Now().UTC()
+
+	pg.LineArtImageURL = imgURL
+	pg.LineArtImageJobID = &job.ID
+	domain.StaleOnLineArtRegeneration(pg, now)
+	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to save page")
+		return
+	}
+
 	actualCost := s.aiActualCost(r.Context(), job.ID)
 	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1613,14 +1630,6 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 	job, err = s.JobService.GetJob(r.Context(), job.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	pg.LineArtImageURL = imgURL
-	pg.LineArtImageJobID = &job.ID
-	domain.StaleOnLineArtRegeneration(pg, now)
-	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save page")
 		return
 	}
 
@@ -1736,7 +1745,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idempKey := uuid.NewString()
+	idempKey := generationKey(r)
 	hashedUID := domain.HashUserID(userID)
 
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
@@ -1765,23 +1774,22 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	palResp, err := s.AIClient.SuggestColourPalette(r.Context(), gen.SuggestColourPaletteRequest{
-		JobID:           job.ID,
-		HashedUserID:    hashedUID,
-		ProjectID:       proj.ID,
-		PageID:          pg.ID,
-		LineArtImageURL: lineArtURL,
-		PanelContext:    fmt.Sprintf("Page %d of chapter %d", pg.PageNumber, c.ChapterNumber),
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+	palResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.SuggestColourPaletteResponse, error) {
+		return s.AIClient.SuggestColourPalette(ctx, gen.SuggestColourPaletteRequest{
+			JobID:           job.ID,
+			HashedUserID:    hashedUID,
+			ProjectID:       proj.ID,
+			PageID:          pg.ID,
+			LineArtImageURL: lineArtURL,
+			PanelContext:    fmt.Sprintf("Page %d of chapter %d", pg.PageNumber, c.ChapterNumber),
+		})
 	})
 	if err != nil {
-		_, _ = s.CreditService.Refund(r.Context(), credits.RefundRequest{
-			UserID:          userID,
-			ProjectID:       proj.ID,
-			GenerationJobID: job.ID,
-			Amount:          credits.ColourSuggestionUnitPrice,
-		})
-		errMsg := err.Error()
-		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+		if failErr := s.failGeneration(r.Context(), job, err, credits.ColourSuggestionUnitPrice); failErr != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
+			return
+		}
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Colour palette suggestion failed: %v", err))
 		return
 	}
@@ -1898,6 +1906,27 @@ func (s *Server) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 	if job.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
+	}
+	if (job.Status == jobs.StatusPending || job.Status == jobs.StatusRunning) && s.AIClient != nil {
+		// Reconcile a failed worker delivery even if the submitting HTTP connection
+		// was interrupted. Successful jobs complete after saving the entity link.
+		if status, statusErr := s.AIClient.GetJobStatus(r.Context(), job.ID); statusErr == nil && status != nil && status.Status == jobs.StatusFailed {
+			if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, jobs.StatusFailed, status.ActualCost, status.ErrorMessage); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			job, err = s.JobService.GetJob(r.Context(), job.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+	}
+	if job.Status == jobs.StatusFailed {
+		if err := s.refundFailedGeneration(r.Context(), job); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to refund generation: %v", err))
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"job": job})
@@ -2025,14 +2054,17 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pdfResp, err := s.AIClient.AssemblePdf(r.Context(), gen.AssemblePdfRequest{
-		JobID:               job.ID,
-		HashedUserID:        hashedUID,
-		ProjectID:           proj.ID,
-		Title:               proj.Title,
-		PageSize:            gen.A4,
-		IncludeAIDisclosure: true,
-		Pages:               exportPages,
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+	pdfResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.AssemblePdfResponse, error) {
+		return s.AIClient.AssemblePdf(ctx, gen.AssemblePdfRequest{
+			JobID:               job.ID,
+			HashedUserID:        hashedUID,
+			ProjectID:           proj.ID,
+			Title:               proj.Title,
+			PageSize:            gen.A4,
+			IncludeAIDisclosure: true,
+			Pages:               exportPages,
+		})
 	})
 	if err != nil {
 		errMsg := err.Error()

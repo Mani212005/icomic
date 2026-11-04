@@ -145,6 +145,12 @@ func (s *InMemoryCreditService) Refund(ctx context.Context, req RefundRequest) (
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, entry := range s.entries {
+		if entry.TransactionType == "refund" && entry.GenerationJobID != nil && *entry.GenerationJobID == req.GenerationJobID {
+			copy := entry
+			return &copy, nil
+		}
+	}
 
 	current := s.balances[req.UserID]
 	newBalance := current + req.Amount

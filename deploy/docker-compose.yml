@@ -32,6 +32,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always"]
     container_name: icomic-redis
     ports:
       - "6379:6379"

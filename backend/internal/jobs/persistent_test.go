@@ -126,3 +126,37 @@ func TestPersistentJobStorageEnumsPreservePublicLabels(t *testing.T) {
 		})
 	}
 }
+
+func TestPersistentDispatchRunsOnlyCommittedJobsAndLeavesCompletionToHandler(t *testing.T) {
+	ctx := context.Background()
+	store := &durableJobStore{Repository: db.NewInMemoryRepository()}
+	service := jobs.NewPersistentJobService(store)
+	job, _, err := service.CreateJob(ctx, jobs.CreateJobRequest{JobType: "script_analysis", Stage: "script", IdempotencyKey: "dispatch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	err = service.DispatchAsync(ctx, job.ID, func(ctx context.Context) (float64, error) {
+		saved, err := service.GetJob(ctx, job.ID)
+		if err != nil || saved.Status != jobs.StatusRunning {
+			t.Fatalf("dispatch before running state: %v %v", saved, err)
+		}
+		calls++
+		return 0, nil
+	})
+	if err != nil || calls != 1 {
+		t.Fatalf("dispatch: calls=%d err=%v", calls, err)
+	}
+	saved, err := jobs.NewPersistentJobService(store).GetJob(ctx, job.ID)
+	if err != nil || saved.Status != jobs.StatusRunning {
+		t.Fatalf("job completed before entity persistence: %v %v", saved, err)
+	}
+	failure := errors.New("queue worker rejected request")
+	if err := service.DispatchAsync(ctx, job.ID, func(context.Context) (float64, error) { return 0, failure }); !errors.Is(err, failure) {
+		t.Fatalf("failure: %v", err)
+	}
+	saved, err = jobs.NewPersistentJobService(store).GetJob(ctx, job.ID)
+	if err != nil || saved.Status != jobs.StatusFailed || saved.ErrorMessage == nil || *saved.ErrorMessage != failure.Error() {
+		t.Fatalf("failed status lost: %v %v", saved, err)
+	}
+}
