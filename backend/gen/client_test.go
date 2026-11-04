@@ -161,10 +161,10 @@ func TestFakeAIServiceClientHermetic(t *testing.T) {
 		HashedUserID:        "hash-1",
 		ProjectID:           "proj-1",
 		Title:               "Comic Title",
-		PageSize:            "A4",
+		PageSize:            gen.A4,
 		IncludeAIDisclosure: true,
 		Pages: []gen.PageExportItem{
-			{PageNumber: 1, ImageURL: lineResp.ImageURL, PanelCount: 4},
+			{PageNumber: 1, ImageURL: lineResp.ImageURL, PanelCount: intPointer(4)},
 		},
 	})
 	if err != nil || !strings.HasSuffix(pdfResp.PdfURL, ".pdf") {
@@ -438,14 +438,14 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 		HashedUserID:        "user-hash-abc",
 		ProjectID:           "22222222-2222-2222-2222-222222222222",
 		Title:               "Quantum Odyssey",
-		PageSize:            "A4",
+		PageSize:            gen.A4,
 		IncludeAIDisclosure: true,
 		Pages: []gen.PageExportItem{
 			{
 				PageNumber:         1,
 				ImageURL:           lineArtResp.ImageURL,
-				PanelCount:         4,
-				ProvenanceMetadata: map[string]interface{}{"c2pa": true},
+				PanelCount:         intPointer(4),
+				ProvenanceMetadata: mapPointer(map[string]interface{}{"c2pa": true}),
 			},
 		},
 	})
@@ -464,4 +464,12 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 	if statusResp.JobID != "11111111-1111-1111-1111-111111111111" || statusResp.Status != "done" {
 		t.Fatalf("unexpected job status response: %+v", statusResp)
 	}
+}
+
+func intPointer(value int) *int {
+	return &value
+}
+
+func mapPointer(value map[string]interface{}) *map[string]interface{} {
+	return &value
 }

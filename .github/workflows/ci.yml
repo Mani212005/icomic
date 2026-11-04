@@ -26,7 +26,9 @@ jobs:
           python-version: "3.10"
 
       - name: Run Hermetic Guard Unit Tests
-        run: python scripts/check_hermetic_test.py
+        run: |
+          python scripts/check_hermetic_test.py
+          python scripts/check_generated_test.py
 
       - name: Run Hermetic Guard Repository Verification
         run: python scripts/check_hermetic.py
@@ -51,6 +53,31 @@ jobs:
 
       - name: Validate OpenAPI spec and JSON schemas
         run: python contracts/validate_test.py
+
+  contract-models:
+    name: OpenAPI Generated Model Drift Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install pinned OpenAPI model generators
+        run: make install-contract-codegen
+
+      - name: Check generated Go and Python models
+        run: make check-contract-models
 
   database:
     name: Database Migrations & Schema Validation
@@ -224,6 +251,7 @@ jobs:
     needs:
       - hermetic-guard
       - contracts
+      - contract-models
       - database
       - backend
       - ai-service

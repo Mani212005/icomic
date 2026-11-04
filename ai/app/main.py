@@ -128,12 +128,12 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         profiles, chapters, word_count, warnings = script_service.analyze_script(
             req.script, req.target_chapter_count
         )
-        job_statuses[req.job_id] = {
+        job_statuses[str(req.job_id)] = {
             "status": "done",
             "actual_cost": actual_stage_cost("language", wired_adapters.language),
         }
         return AnalyzeScriptResponse(
-            job_id=req.job_id,
+            job_id=str(req.job_id),
             character_profiles=profiles,
             suggested_chapter_count=chapters,
             word_count=word_count,
@@ -146,18 +146,18 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     )
     def generate_character_reference(req: GenerateCharacterReferenceRequest):
         url, model_id, provenance = character_service.generate_reference_image(
-            character_id=req.character_id,
+            character_id=str(req.character_id),
             character_name=req.character_name,
             prompt=req.prompt,
             hashed_user_id=req.hashed_user_id,
             style=req.style,
         )
-        job_statuses[req.job_id] = {
+        job_statuses[str(req.job_id)] = {
             "status": "done",
             "actual_cost": actual_stage_cost("image", wired_adapters.image, model_id),
         }
         return GenerateCharacterReferenceResponse(
-            job_id=req.job_id,
+            job_id=str(req.job_id),
             image_url=url,
             model_id=model_id,
             provenance_metadata=provenance,
@@ -173,12 +173,12 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             chapter_count=req.chapter_count,
             approved_characters=req.approved_characters,
         )
-        job_statuses[req.job_id] = {
+        job_statuses[str(req.job_id)] = {
             "status": "done",
             "actual_cost": actual_stage_cost("language", wired_adapters.language),
         }
         return GenerateChapterOutlineResponse(
-            job_id=req.job_id,
+            job_id=str(req.job_id),
             chapters=chapters,
         )
 
@@ -193,12 +193,12 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             chapter_summary=req.chapter_summary,
             characters=req.characters,
         )
-        job_statuses[req.job_id] = {
+        job_statuses[str(req.job_id)] = {
             "status": "done",
             "actual_cost": actual_stage_cost("language", wired_adapters.language),
         }
         return GeneratePanelTextResponse(
-            job_id=req.job_id,
+            job_id=str(req.job_id),
             panels=panels,
         )
 
@@ -208,19 +208,19 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     )
     def generate_draft_sketch(req: GenerateDraftSketchRequest):
         url, model_id, provenance = draft_service.generate_draft_sketch(
-            page_id=req.page_id,
+            page_id=str(req.page_id),
             page_number=req.page_number,
             panels=req.panels,
             style=req.style,
             hashed_user_id=req.hashed_user_id,
             character_reference_image_urls=req.character_reference_image_urls,
         )
-        job_statuses[req.job_id] = {
+        job_statuses[str(req.job_id)] = {
             "status": "done",
             "actual_cost": actual_stage_cost("image", wired_adapters.image, model_id),
         }
         return GenerateDraftSketchResponse(
-            job_id=req.job_id,
+            job_id=str(req.job_id),
             image_url=url,
             model_id=model_id,
             provenance_metadata=provenance,
@@ -232,7 +232,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     )
     def generate_line_art(req: GenerateLineArtRequest):
         url, model_id, provenance = line_art_service.generate_line_art(
-            page_id=req.page_id,
+            page_id=str(req.page_id),
             page_number=req.page_number,
             draft_image_url=req.draft_image_url,
             panels=req.panels,
@@ -240,12 +240,12 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             hashed_user_id=req.hashed_user_id,
             character_reference_image_urls=req.character_reference_image_urls,
         )
-        job_statuses[req.job_id] = {
+        job_statuses[str(req.job_id)] = {
             "status": "done",
             "actual_cost": actual_stage_cost("image", wired_adapters.image, model_id),
         }
         return GenerateLineArtResponse(
-            job_id=req.job_id,
+            job_id=str(req.job_id),
             image_url=url,
             model_id=model_id,
             provenance_metadata=provenance,
@@ -261,12 +261,12 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             line_art_image_bytes=line_art_image_bytes,
             panel_context=req.panel_context,
         )
-        job_statuses[req.job_id] = {
+        job_statuses[str(req.job_id)] = {
             "status": "done",
             "actual_cost": actual_stage_cost("vision", wired_adapters.vision),
         }
         return SuggestColourPaletteResponse(
-            job_id=req.job_id,
+            job_id=str(req.job_id),
             theme=theme,
             palette=palette,
         )
@@ -277,9 +277,9 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     )
     def moderate_prompt(req: ModeratePromptRequest):
         blocked, reason = moderation_service.moderate_prompt(req.prompt)
-        job_statuses[req.job_id] = {"status": "done", "actual_cost": 0.0}
+        job_statuses[str(req.job_id)] = {"status": "done", "actual_cost": 0.0}
         return ModeratePromptResponse(
-            job_id=req.job_id,
+            job_id=str(req.job_id),
             blocked=blocked,
             reason=reason,
         )
@@ -290,15 +290,15 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     )
     def assemble_pdf(req: AssemblePdfRequest):
         url, preserved, count = pdf_service.assemble_pdf(
-            project_id=req.project_id,
+            project_id=str(req.project_id),
             title=req.title,
             page_size=req.page_size,
             include_ai_disclosure=req.include_ai_disclosure,
             pages=req.pages,
         )
-        job_statuses[req.job_id] = {"status": "done", "actual_cost": 0.0}
+        job_statuses[str(req.job_id)] = {"status": "done", "actual_cost": 0.0}
         return AssemblePdfResponse(
-            job_id=req.job_id,
+            job_id=str(req.job_id),
             pdf_url=url,
             provenance_metadata_preserved=preserved,
             page_count=count,

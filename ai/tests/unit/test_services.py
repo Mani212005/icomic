@@ -80,6 +80,7 @@ def test_panel_service_outline():
             hair_style="Pixie",
             clothing="Hoodie",
             personality="Brave",
+            visual_attributes={},
         )
     ]
     chapters = svc.generate_chapter_outline("A great story unfolds.", 3, profiles)
