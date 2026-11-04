@@ -42,9 +42,11 @@ Adapters are selected via environment variables, defaulting to `fake`:
 - `ADAPTER_STORAGE`: `fake` (default) or `s3` (stub)
 - `ADAPTER_QUEUE`: `fake` (default) or `redis` (stub)
 - `ADAPTER_CLOCK`: `fake` (default) or `system`
+- `ADAPTER_MEDIA_FETCH`: `fake` (default, in-memory storage only) or `http` (allowlisted URL fetcher)
 
 Storage configuration:
-- `STORAGE_BASE_URL`: Base URL used by `FakeStorageAdapter` to construct stored artifact URLs, defaulting to `http://localhost:8000/storage/fake`. In containerized or ephemeral test environments, set this to the reachable AI service address (e.g. `http://ai:8000/storage/fake`).
+- `STORAGE_BASE_URL`: Base URL used by `FakeStorageAdapter` to construct stored artifact URLs, defaulting to `http://localhost:8000/storage/fake`. In fake mode, containerized or ephemeral test environments can use the reachable AI service address (e.g. `http://ai:8000/storage/fake`). The HTTP media fetch adapter requires this URL to use a public address.
+- `META_IMAGE_HOSTS`: Comma-separated exact hostnames allowed for externally hosted images when `ADAPTER_MEDIA_FETCH=http`. External hosts must use HTTPS and resolve only to public IP addresses.
 
 When `meta` is selected, adapters read credentials lazily at construction time.
 If credentials are not configured, adapters raise a descriptive `RuntimeError`.

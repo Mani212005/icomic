@@ -39,6 +39,8 @@ The following environment variables configure the Python AI service and backgrou
 | `ADAPTER_STORAGE` | `fake` | `s3` (or `fake`) | Selects the object storage adapter for image assets and exported PDF documents. |
 | `ADAPTER_QUEUE` | `fake` | `redis` | Selects the job queue adapter for asynchronous background processing. |
 | `ADAPTER_CLOCK` | `fake` | `system` | Selects the real system wall-clock adapter. |
+| `ADAPTER_MEDIA_FETCH` | `fake` | `http` | Selects in-memory storage URL resolution or the allowlisted HTTP media fetch adapter. |
+| `META_IMAGE_HOSTS` | *(empty)* | Comma-separated exact hostnames | Allows configured HTTPS Meta-hosted image URLs when `ADAPTER_MEDIA_FETCH=http`; hosts must resolve to public addresses. |
 | `META_API_KEY` | *(unset)* | `<real-api-key>` | Bearer token for authenticating requests against Meta API endpoints. |
 | `META_REASONING_EFFORT` | `low` (Meta only) | `minimal`, `low`, `medium`, `high`, `xhigh` | Text/vision reasoning effort, validated at construction; per-call `reasoning_effort` overrides it. `none` is rejected. |
 | `META_REASONING_RESERVE_TOKENS` | `1024` (Meta only) | non-negative integer | Extra shared output headroom added to explicit text/vision `max_tokens`; validated at construction. |

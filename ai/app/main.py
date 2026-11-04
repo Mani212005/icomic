@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .adapters.factory import AdapterSet, build_adapters_from_env
+from .adapters.factory import AdapterSet, build_adapters_from_env, get_media_fetch_adapter
 from .costs import actual_stage_cost
 from .gen.models import (
     AnalyzeScriptRequest,
@@ -59,6 +59,9 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     app.state.vision_adapter = wired_adapters.vision
     app.state.image_adapter = wired_adapters.image
     app.state.storage_adapter = wired_adapters.storage
+    app.state.media_fetch_adapter = wired_adapters.media_fetch or get_media_fetch_adapter(
+        wired_adapters.storage
+    )
     app.state.queue_adapter = wired_adapters.queue
     app.state.clock_adapter = wired_adapters.clock
 
@@ -253,8 +256,9 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         response_model=SuggestColourPaletteResponse,
     )
     def suggest_colour_palette(req: SuggestColourPaletteRequest):
+        line_art_image_bytes = app.state.media_fetch_adapter.fetch(req.line_art_image_url)
         theme, palette = colour_service.suggest_palette(
-            line_art_image_bytes=b"dummy-line-art-bytes",
+            line_art_image_bytes=line_art_image_bytes,
             panel_context=req.panel_context,
         )
         job_statuses[req.job_id] = {

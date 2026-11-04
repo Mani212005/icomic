@@ -154,6 +154,19 @@ class StoragePort(Protocol):
     def delete(self, key: str) -> None: ...
 ```
 
+#### MediaFetchPort
+
+```python
+class MediaFetchPort(Protocol):
+    def fetch(self, url: str) -> bytes: ...
+```
+
+`FakeMediaFetchAdapter` resolves only URLs under the configured storage base URL through the in-memory storage port and never uses the network.
+`HTTPMediaFetchAdapter` is selected with `ADAPTER_MEDIA_FETCH=http`; the default is `fake`.
+The HTTP adapter accepts only the configured `STORAGE_BASE_URL` origin and path or exact hosts listed in `META_IMAGE_HOSTS`.
+External image hosts require HTTPS, and the adapter rejects redirects, non-public DNS results or IP literals, empty responses, responses over 10 MiB, and requests exceeding five seconds.
+The HTTP adapter has an injectable transport so automated tests remain hermetic.
+
 #### QueuePort
 
 ```python
@@ -182,6 +195,7 @@ Each port has a deterministic fake adapter that runs with no network and no key.
 | FakeVisionAdapter | Returns a fixed palette suggestion; review returns a fixed OK string |
 | FakeImageAdapter | Returns a small test PNG (e.g., a 64x64 white image with a border); provenance_metadata is a fixed JSON stub |
 | FakeStorageAdapter | Stores blobs in memory (or a temp dir); returns local file URIs |
+| FakeMediaFetchAdapter | Resolves stored URLs from the in-memory storage port; never uses the network |
 | FakeQueueAdapter | Executes jobs synchronously in-process |
 | FakeClockAdapter | Starts at a fixed epoch; `advance(dt)` moves time forward for tests |
 
@@ -241,6 +255,7 @@ GET  /internal/v1/job/:id/status
 ```
 
 All requests include a `job_id` (idempotency key) and `hashed_user_id`.
+The colour suggestion request carries `line_art_image_url` and `panel_context`; the Python service resolves the approved image bytes through `MediaFetchPort` and passes both inputs to `VisionPort.suggest_palette`.
 
 ---
 
@@ -448,7 +463,7 @@ The following assumptions were made in drafting this document:
 4. **Gap-closing is a client-side algorithm.** Morphological dilation/erosion and the manual gap-closer stroke tool run in the browser; no server round-trip.
 5. **The Python service is an internal service only.** It is not exposed to the internet. Only the Go API is public. This is enforced by Docker network configuration.
 6. **Self-hosted language and vision models are in scope; self-hosted image models are not.** Meta has released open-weights language and vision models (Llama 3.x, Llama 3.2 Vision). No open-weights image model from Meta exists. Per the owner decision of 2026-11-02, generated images are Meta-hosted: the real image adapter returns Meta-hosted URLs or Meta-delivered bytes per Meta's API, and the image hosting seam (ImageHostingSeam in Go, ImageHostingPolicy in Python) stays configurable. Our own storage still holds approved working copies and export PDFs as the architecture already says. The image adapter port keeps this swappable.
-7. **Colour suggestion uses the vision model (image + panel context -> palette).** This is consistent with the spec requirement to suggest per-region colours based on the actual line art.
+7. **Colour suggestion uses the vision model (approved image bytes + panel context -> palette).** The HTTP media fetch adapter allows only configured storage and Meta image hosts, requires HTTPS for external hosts, rejects redirects and non-public addresses, and bounds response size and time.
 8. **`idempotency_key` on generation jobs is a UUID set by Go at job creation.** It is stored in `generation_jobs` with a unique constraint. Postgres enforces uniqueness; the application does not need a separate lock.
 9. **Age gate is deferred.** The enforced age gate and date-of-birth collection are removed from the build scope; a warning that users must be 18+ (the threshold may be 21, to be confirmed with the owner) will be added in a later release.
 10. **Geo-blocking and region restrictions are deferred.** No country-gating or geo-blocking is enforced; users can be global since the owner is in India.

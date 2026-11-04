@@ -18,7 +18,8 @@ from app.gen.models import (
 )
 from app.main import create_app
 
-client = TestClient(create_app())
+app = create_app()
+client = TestClient(app)
 
 
 def test_healthz():
@@ -184,12 +185,15 @@ def test_generate_line_art_contract():
 
 
 def test_suggest_colour_palette_contract():
+    line_art_url = app.state.storage_adapter.put(
+        "line-art/line_art_1.png", b"approved line art bytes", "image/png"
+    )
     payload = {
         "job_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "hashed_user_id": "user-hash-abc",
         "project_id": "22222222-2222-2222-2222-222222222222",
         "page_id": "88888888-8888-8888-8888-888888888888",
-        "line_art_image_url": "http://storage/line_art_1.png",
+        "line_art_image_url": line_art_url,
         "panel_context": "Nighttime neon alleyway in cyberpunk city",
     }
     response = client.post("/internal/v1/suggest-colour-palette", json=payload)
