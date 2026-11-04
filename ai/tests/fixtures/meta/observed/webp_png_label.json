@@ -1,0 +1,15 @@
+{
+  "status": 200,
+  "body": {
+    "id": "redacted-image",
+    "output": [
+      {
+        "type": "image_generation_call",
+        "result": "UklGRh4AAABXRUJQVlA4TBEAAAAvA4AAAAdQnlJUq/+BiOh/AAA=",
+        "output_format": "png",
+        "content_type": "image/png",
+        "filename": "image.png"
+      }
+    ]
+  }
+}

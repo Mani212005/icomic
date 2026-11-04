@@ -101,11 +101,15 @@ class MetaLanguageAdapter(LanguagePort):
 
             return content
         except MetaEmptyResponseError as exc:
+            self._client.record_invalid_response(type(exc).__name__)
             self.last_request_id = exc.request_id or ""
             self.last_usage = exc.token_usage
             self.last_finish_reason = exc.finish_reason
             if exc.token_usage:
                 self.last_cost_tokens = exc.token_usage.total_tokens
+            raise
+        except Exception as exc:
+            self._client.record_invalid_response(type(exc).__name__)
             raise
 
     def estimate_tokens(self, messages: list[Message]) -> TokenUsage:

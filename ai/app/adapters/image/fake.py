@@ -38,8 +38,11 @@ def _generate_test_png(width: int = 64, height: int = 64) -> bytes:
 class FakeImageAdapter(ImagePort):
     """Deterministic fake image generator returning fixed test PNG and C2PA provenance."""
 
-    def __init__(self, model_id: str = "muse-image-1.0-fake"):
+    def __init__(
+        self, model_id: str = "muse-image-1.0-fake", replay_adapter: ImagePort | None = None
+    ):
         self.model_id = model_id
+        self.replay_adapter = replay_adapter
         self._png_bytes = _generate_test_png()
         self.recorded_calls: list[dict[str, Any]] = []
         self.calls: list[dict[str, Any]] = self.recorded_calls
@@ -56,6 +59,8 @@ class FakeImageAdapter(ImagePort):
                 "style": style,
             }
         )
+        if self.replay_adapter is not None:
+            return self.replay_adapter.generate(prompt, reference_images, hashed_user_id, style)
         h = hashlib.sha256(f"{prompt}:{hashed_user_id}:{style}".encode()).hexdigest()
         request_id = f"req-fake-{h[:12]}"
         provenance = {

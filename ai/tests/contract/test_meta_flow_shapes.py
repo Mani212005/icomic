@@ -285,7 +285,7 @@ def test_schema_echo_stops_chunked_analysis_and_retains_failed_job_cost(tmp_path
     }
     response = client.post("/internal/v1/analyze-script", json=payload)
     assert response.status_code == 400
-    assert "Input should be a valid list" in response.text
+    assert "schema_echo" in response.text
     status = client.get(f"/internal/v1/job/{payload['job_id']}/status").json()
     assert status["status"] == "failed"
     assert status["actual_cost"] == ledger.report()["actual_spend_usd"] == 2 * 0.0003375

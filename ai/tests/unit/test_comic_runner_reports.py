@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from app.provider_costs import ProviderCostLedger
+from app.provider_diagnostics import ProviderDiagnostics
 
 RUNNER_PATH = Path(__file__).resolve().parents[3] / "scripts/e2e/comic_e2e.py"
 spec = importlib.util.spec_from_file_location("comic_runner_reports", RUNNER_PATH)
@@ -67,6 +68,7 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
     monkeypatch.setattr(runner, "live_authorization_error", lambda *args: None)
     for name in (
         "ICOMIC_E2E_RUN_ID",
+        "ICOMIC_E2E_DIAGNOSTICS_DIR",
         "ICOMIC_E2E_COST_DIR",
         "ICOMIC_E2E_COST_CAP_USD",
         "ICOMIC_E2E_PRIOR_SPEND_USD",
@@ -87,6 +89,9 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
         ledger.finish_call(index, 200, {"usage": {"prompt_tokens": 17, "completion_tokens": 64}})
         index = ledger.before_call("image", {"model": "muse-image-1.0"})
         ledger.finish_call(index, 500)
+        diagnostics = ProviderDiagnostics(tmp_path / f"diagnostics-{run_id}")
+        diagnostics.capture(b'{"error":"full synthetic failed body"}', 500)
+        diagnostics.failure("HTTPError")
 
     def fail(guard, artifact_dir):
         guard.project_id = "test-project"
@@ -122,6 +127,25 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
     assert report["provider_cost_report"]["accounted_spend_usd"] == 0.01029325
     assert report["cost_complete"] is False
     assert report["status"] == "failed" and report["pdf_path"] is None
+    assert len(report["diagnostic_files"]) == 1
+    assert Path(report["diagnostic_files"][0]).parent == Path(report["diagnostics_dir"])
+
+
+def test_artifacts_inside_repository_are_ignored(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "ensure_services", lambda: None)
+    monkeypatch.setattr(runner, "run_flow", lambda *args: (0, "synthetic-project"))
+    output = tmp_path / "local-proof"
+    output.mkdir()
+    (output / ".gitignore").write_text("existing-rule\n")
+    assert runner.main(["--artifact-dir", str(output)]) == 0
+    assert (output / ".gitignore").read_text() == "existing-rule\n\n*\n"
+
+
+def test_runner_refuses_artifacts_at_repository_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    assert runner.main(["--artifact-dir", str(tmp_path)]) == 2
+    assert not (tmp_path / ".gitignore").exists()
 
 
 def test_consecutive_flows_provision_distinct_users_and_use_their_headers(monkeypatch, tmp_path):

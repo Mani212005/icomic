@@ -2,8 +2,11 @@
 
 import json
 
+from jsonschema import Draft202012Validator, ValidationError
+
 from ..adapters.language.port import LanguagePort, Message
 from ..costs import STORY_INPUT_TOKEN_LIMIT, STORY_OUTPUT_TOKEN_LIMIT
+from ..provider_output import ProviderOutputError, reject_schema_echo
 
 
 def complete_json(adapter: LanguagePort, model: str, operation: str, payload: dict, schema: dict):
@@ -31,6 +34,12 @@ def complete_json(adapter: LanguagePort, model: str, operation: str, payload: di
         model, messages, max_tokens=STORY_OUTPUT_TOKEN_LIMIT, response_format=response_format
     )
     try:
-        return json.loads(result)
+        parsed = json.loads(result)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"Invalid or incomplete JSON from {operation}") from exc
+        raise ProviderOutputError(operation, "invalid_or_incomplete_json") from exc
+    reject_schema_echo(parsed, operation)
+    try:
+        Draft202012Validator(schema).validate(parsed)
+    except ValidationError as exc:
+        raise ProviderOutputError(operation, "schema_mismatch") from exc
+    return parsed
