@@ -11,6 +11,7 @@ import zlib
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any, ClassVar
+from uuid import uuid4
 from xml.sax.saxutils import escape
 
 from PIL import Image
@@ -705,6 +706,6 @@ class PdfAssemblyService:
         # Page count: 1 cover page + N comic pages
         total_page_count = len(pages_data) + 1
 
-        key = f"exports/{project_id}/comic.pdf"
+        key = f"exports/{project_id}/{uuid4().hex}/comic.pdf"
         url = self.storage_adapter.put(key, pdf_content, "application/pdf")
         return url, True, total_page_count

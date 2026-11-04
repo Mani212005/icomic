@@ -1,6 +1,7 @@
 """Character design and reference image generation service."""
 
 from typing import Any
+from uuid import uuid4
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
@@ -37,5 +38,7 @@ class CharacterService:
             style=style,
         )
 
-        url = store_image(self.storage_adapter, f"characters/{character_id}/reference", result)
+        url = store_image(
+            self.storage_adapter, f"characters/{character_id}/{uuid4().hex}/reference", result
+        )
         return url, result.model_id, result.provenance_metadata

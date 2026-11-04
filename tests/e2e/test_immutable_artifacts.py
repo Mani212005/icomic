@@ -44,6 +44,9 @@ def test_regeneration_preserves_previous_artifacts(api_client, ai_service):
         path = f"/api/v1/pages/{page}/{stage}"
         first = post(path)
         original = image_bytes(first["image_url"])
+        if stage == "line-art":
+            # Current approval freshness uses page UpdatedAt, including inking.
+            post(f"/api/v1/pages/{page}/draft/approve")
         second = post(path)
         assert second["job"]["id"] != first["job"]["id"]
         assert second["image_url"] != first["image_url"]

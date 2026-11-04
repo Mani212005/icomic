@@ -73,7 +73,7 @@ def test_real_provider_page_is_clean_before_storage_and_export(stage, monkeypatc
     assert provenance == adapter.result.provenance_metadata
     assert adapter.calls == 1
     assert adapter.result.image_bytes == source
-    assert storage.get(f"pages/sample/{stage}_page_1_raw.png") == source
+    assert storage.get(url.removesuffix(".png") + "_raw.png") == source
     assert "isolated-margin-lettering" in caplog.text
 
     pdf_url, _, count = PdfAssemblyService(storage).assemble_pdf(

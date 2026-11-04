@@ -1,6 +1,7 @@
 """Draft sketch generation service (one rough image per page)."""
 
 from typing import Any
+from uuid import uuid4
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
@@ -49,6 +50,6 @@ class DraftService:
         )
 
         url = store_page_image(
-            self.storage_adapter, f"pages/{page_id}/draft_page_{page_number}", result
+            self.storage_adapter, f"pages/{page_id}/{uuid4().hex}/draft_page_{page_number}", result
         )
         return url, result.model_id, result.provenance_metadata
