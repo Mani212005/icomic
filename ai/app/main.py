@@ -37,6 +37,8 @@ from .gen.models import (
     GeneratePanelTextResponse,
     HealthResponse,
     JobStatusResponse,
+    LetteringDocument,
+    LetteringLayout,
     ModeratePromptRequest,
     ModeratePromptResponse,
     StoreColourImageRequest,
@@ -51,6 +53,7 @@ from .services.character import CharacterService
 from .services.colour import ColourService
 from .services.draft import DraftService
 from .services.errors import JobExecutionError, classify_error
+from .services.lettering import layout_page
 from .services.line_art import LineArtService
 from .services.moderation import ModerationService
 from .services.painted_page import PaintedPageService
@@ -274,6 +277,13 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             panels=panels,
         )
 
+    @app.post("/internal/v1/layout-lettering", response_model=LetteringLayout)
+    def layout_lettering(req: LetteringDocument):
+        try:
+            return layout_page(req)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.post(
         "/internal/v1/generate-draft-sketch",
         response_model=GenerateDraftSketchResponse,
@@ -283,6 +293,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         url, model_id, provenance = draft_service.generate_draft_sketch(
             page_id=str(req.page_id),
             page_number=req.page_number,
+            lettering_document=req.lettering_document,
             panels=req.panels,
             style=req.style,
             hashed_user_id=req.hashed_user_id,
@@ -328,6 +339,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         url, model_id, provenance, variant = painted_page_service.generate_painted_page(
             page_id=str(req.page_id),
             page_number=req.page_number,
+            lettering_document=req.lettering_document,
             panels=req.panels,
             style=req.style,
             hashed_user_id=req.hashed_user_id,

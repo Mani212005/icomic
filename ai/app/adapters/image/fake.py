@@ -86,8 +86,11 @@ class FakeImageAdapter(ImagePort):
             )
         h = hashlib.sha256(f"{prompt}:{hashed_user_id}:{style}".encode()).hexdigest()
         request_id = f"req-fake-{h[:12]}"
-        source_hash = hashlib.sha256(self._png_bytes).hexdigest()
-        width, height = 64, 64
+        overlay = '"lettering_mode": "overlay"' in prompt
+        width, height = (256, 384) if overlay else (64, 64)
+        # Portrait, text-free stand-in for overlay requests. No glyph/bubble drawing.
+        png_bytes = _generate_test_png(width, height) if overlay else self._png_bytes
+        source_hash = hashlib.sha256(png_bytes).hexdigest()
         provenance = {
             "c2pa": {
                 "claim_generator": "Meta-AI-Provenance/1.0",
@@ -108,7 +111,7 @@ class FakeImageAdapter(ImagePort):
             "response_keys": ["created", "id", "model", "object", "output", "provenance"],
         }
         return ImageResult(
-            image_bytes=self._png_bytes,
+            image_bytes=png_bytes,
             provenance_metadata=provenance,
             model_id=self.model_id,
             request_id=request_id,

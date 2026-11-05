@@ -1,7 +1,9 @@
 package db
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -57,6 +59,7 @@ type Repository interface {
 	GetPage(ctx context.Context, id string) (*domain.Page, error)
 	ListPages(ctx context.Context, chapterID string) ([]*domain.Page, error)
 	UpdatePage(ctx context.Context, pg *domain.Page) error
+	SavePageLettering(ctx context.Context, id string, previous, next json.RawMessage) error
 	SavePageColourImage(ctx context.Context, pageID, imageURL string, uploadedAt time.Time) error
 
 	// Colour Palettes and Regions
@@ -449,11 +452,17 @@ func (m *InMemoryRepository) UpdatePanel(_ context.Context, p *domain.Panel) err
 
 // Pages
 func (m *InMemoryRepository) CreatePage(_ context.Context, pg *domain.Page) error {
+	if pg.LetteringMode == "" {
+		pg.LetteringMode = "baked"
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if pg.ID == "" {
 		pg.ID = uuid.NewString()
+	}
+	if (pg.LetteringMode == "baked" && len(pg.Lettering) > 0) || (pg.LetteringMode == "overlay" && pg.LineArtImageURL != "") {
+		return ErrConflict
 	}
 	if pg.UpdatedAt.IsZero() {
 		pg.UpdatedAt = time.Now().UTC()
@@ -497,10 +506,15 @@ func (m *InMemoryRepository) UpdatePage(_ context.Context, pg *domain.Page) erro
 	if _, ok := m.pages[pg.ID]; !ok {
 		return ErrNotFound
 	}
+	if m.pages[pg.ID].LetteringMode == "overlay" && pg.LineArtImageURL != "" {
+		return ErrConflict
+	}
 	if pg.UpdatedAt.IsZero() {
 		pg.UpdatedAt = time.Now().UTC()
 	}
 	cpy := *pg
+	cpy.LetteringMode = m.pages[pg.ID].LetteringMode
+	cpy.Lettering = m.pages[pg.ID].Lettering
 	m.pages[pg.ID] = &cpy
 	return nil
 }
@@ -863,5 +877,22 @@ func (m *InMemoryRepository) UpdateExport(_ context.Context, exp *domain.Export)
 	}
 	cpy := *exp
 	m.exports[exp.ID] = &cpy
+	return nil
+}
+
+// SavePageLettering changes only the vector layer, with optimistic concurrency.
+func (m *InMemoryRepository) SavePageLettering(_ context.Context, id string, previous, next json.RawMessage) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pg, ok := m.pages[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if pg.LetteringMode != "overlay" || !bytes.Equal(pg.Lettering, previous) {
+		return ErrConflict
+	}
+	cpy := *pg
+	cpy.Lettering = append(json.RawMessage(nil), next...)
+	m.pages[id] = &cpy
 	return nil
 }

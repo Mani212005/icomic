@@ -108,7 +108,7 @@ def test_minimum_print_size_and_large_text_is_flagged_instead_of_shrunk():
     doc = document("A very long sentence " * 400, placement={"size_scale": 0.01})
     result = layout_page(doc)
     assert {"overflow", "below_minimum"} <= flags(result)
-    assert all(line.font_size >= 12 / 841.89 for b in result.bubbles for line in b.lines)
+    assert all(line.font_size >= 14 / 841.89 for b in result.bubbles for line in b.lines)
     with pytest.raises(ValueError):
         LayoutConfig(minimum_font_size=0.001)
 
@@ -137,7 +137,7 @@ def test_manual_center_rect_anchor_and_size_are_exact_and_revalidated():
     )
     b = result.bubbles[0]
     assert box(b.shape.bounds).center == pytest.approx((0.05 + 0.9 * 0.4, 0.05 + 0.9 * 0.3))
-    assert (b.tail[1].x, b.tail[1].y) == pytest.approx((0.05 + 0.9 * 0.8, 0.05 + 0.9 * 0.8))
+    assert (b.tail[4].x, b.tail[4].y) == pytest.approx((0.05 + 0.9 * 0.8, 0.05 + 0.9 * 0.8))
     assert b.lines[0].font_size == pytest.approx(LayoutConfig().font_size * 1.4)
     assert not flags(result)
     placement = {
@@ -334,16 +334,18 @@ def test_thought_ellipse_contains_text_and_tail_circles_avoid_text():
     assert not bubble.tail
     last = box(bubble.thought_tail[-1].bounds)
     cx, cy = last.center
-    anchor_x, anchor_y = 0.05 + 0.9 * 0.8, 0.05 + 0.9 * 0.8
-    assert math.hypot((anchor_x - cx) * doc.page_aspect, anchor_y - cy) == pytest.approx(
-        last.height / 2
-    )
+    # Automatic thought tails point toward the speaker with a short trail;
+    # they no longer extend all the way across the panel to the speaker.
+    body = bubble.shape.bounds
+    assert cy > body.y + body.height
+    assert cy - (body.y + body.height) <= 0.035
+    assert cx < 0.05 + 0.9 * 0.8
 
 
 def test_multiple_reserved_zones_and_deterministic_push_down():
     doc = document("Follow me.")
     doc.panels[0].reserved_zones[0].width = 0.16
-    doc.panels[0].reserved_zones[0].height = 0.055
+    doc.panels[0].reserved_zones[0].height = 0.075
     second_zone = doc.panels[0].reserved_zones[0].model_copy(update={"x": 0.55, "height": 0.5})
     doc.panels[0].reserved_zones.append(second_zone)
     doc.panels[0].utterances.extend([utterance_copy(doc, 2), utterance_copy(doc, 3)])
@@ -354,3 +356,24 @@ def test_multiple_reserved_zones_and_deterministic_push_down():
     assert a.x < b.x
     assert c.y > b.y
     assert not a.overlaps(b) and not b.overlaps(c)
+
+
+def test_comic_proportions_centered_speech_short_curved_tail_and_compact_caption():
+    doc = document("Follow the light!", speaker_anchor={"x": 0.6, "y": 0.9})
+    result = layout_page(doc)
+    bubble = result.bubbles[0]
+    assert not flags(result)
+    assert bubble.shape.kind == "ellipse"
+    assert bubble.shape.bounds.x + bubble.shape.bounds.width / 2 == pytest.approx(0.5)
+    assert result.stroke_width * 1920 == pytest.approx(2.496)
+    assert all(line.font_size * 841.89 >= 14 for line in bubble.lines)
+    # Sampled sides curve toward a short point, instead of the old triangle needle.
+    assert len(bubble.tail) == 9
+    base = bubble.tail[0]
+    tip = bubble.tail[4]
+    assert math.hypot((tip.x - base.x) * doc.page_aspect, tip.y - base.y) < 0.045
+    assert tip.y < 0.05 + 0.9 * 0.9
+    caption = layout_page(document("Before dawn.", kind="narration")).bubbles[0]
+    assert len(caption.lines) == 1
+    assert caption.shape.bounds.width <= doc.panels[0].rect.width * 0.6
+    assert caption.shape.bounds.width < bubble.shape.bounds.width

@@ -49,3 +49,19 @@ These prove request fidelity, not generated artistic quality. No extra image cal
 or provider control is introduced; longer instructions may affect moderated text
 usage. Reference hashes in the prompt identify inputs and are not persisted output
 metadata or provenance verification.
+
+## Stage 2 overlay mode (disabled by default)
+
+New projects/pages allocated with `LETTERING_OVERLAY_ENABLED=true` persist overlay
+eligibility and a versioned lettering document. Existing projects/pages and ink
+stay baked. Baked v1/v4 prompt fixtures remain unchanged. Overlay draft and painted
+requests supply `lettering_document`; `page-render-brief-v5-overlay` contains an
+explicit 2:3 page aspect, exact normalized panel rectangles and reserved zones.
+Dialogue/narration, ordered utterance kinds and speaker labels are layout inputs
+only and are omitted from the image brief. The art policy requires TEXT-FREE output
+without bubbles, captions, lettering, numbers or readable signs, and calm sky/wall
+background inside the reserved upper bands, with faces/action below them.
+
+See [LETTERING.md](LETTERING.md) for geometry, source IDs, persistence, ownership
+API, review flags and fake e2e instructions. No provider call, model option, editor
+UI or PDF drawing is added.

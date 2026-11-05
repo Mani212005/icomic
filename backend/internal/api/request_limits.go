@@ -213,6 +213,10 @@ func (s *Server) validatePublicRequest(w http.ResponseWriter, r *http.Request, p
 			return false
 		}
 	}
+	if pattern == "PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/override" && fields["override"] == nil {
+		writeError(w, 400, "override is required; use an empty object to clear")
+		return false
+	}
 	allowed := s.publicFields(pattern)
 	for name, value := range fields {
 		kind, ok := allowed[name]
@@ -255,6 +259,10 @@ func (s *Server) publicFields(pattern string) map[string]string {
 		return map[string]string{"variant": "text", "route": "text"}
 	case "POST /api/v1/pages/{id}/painted-page":
 		return map[string]string{"variant": "text"}
+	case "PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/override":
+		return map[string]string{"override": "object"}
+	case "PATCH /api/v1/pages/{id}/lettering/zones":
+		return map[string]string{"panel_id": "text", "reserved_zones": "zones"}
 	case "PATCH /api/v1/pages/{id}/colour-palette":
 		return map[string]string{"palette": "object"}
 	case "POST /api/v1/projects/{id}/estimate":
@@ -284,9 +292,50 @@ func (s *Server) validateField(name, kind string, raw json.RawMessage) error {
 		if json.Unmarshal(raw, &v) != nil {
 			return invalid()
 		}
+		if name == "override" {
+			for key, value := range v {
+				switch key {
+				case "center", "tail_anchor", "rect":
+					point, ok := value.(map[string]any)
+					if !ok {
+						return invalid()
+					}
+					required := []string{"x", "y"}
+					if key == "rect" {
+						required = append(required, "width", "height")
+					}
+					for _, field := range required {
+						if _, ok := point[field].(float64); !ok {
+							return invalid()
+						}
+					}
+				case "size_scale":
+					if _, ok := value.(float64); !ok {
+						return invalid()
+					}
+				default:
+					return invalid()
+				}
+			}
+		}
 		// Arbitrary attribute/palette values remain extensible, but text is bounded.
 		if !s.validObject(v, 0) {
 			return invalid()
+		}
+	case "zones":
+		var values []map[string]any
+		if json.Unmarshal(raw, &values) != nil || len(values) > 100 {
+			return invalid()
+		}
+		for _, value := range values {
+			for _, field := range []string{"x", "y", "width", "height"} {
+				if _, ok := value[field].(float64); !ok {
+					return invalid()
+				}
+			}
+			if !s.validObject(value, 0) {
+				return invalid()
+			}
 		}
 	case "ids":
 		var values []string

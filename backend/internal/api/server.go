@@ -15,21 +15,22 @@ import (
 
 // Server encapsulates HTTP handler state and dependencies (SPEC 8.3, ARCHITECTURE 2).
 type Server struct {
-	Repo              db.Repository
-	CreditService     credits.CreditService
-	JobService        jobs.JobService
-	AIClient          gen.AIService
-	Authenticator     auth.Authenticator
-	ImageHosting      auth.ImageHostingSeam
-	KillSwitchEnabled bool
-	KillSwitch        domain.KillSwitchProvider
-	MaxPanelsPerPage  int
-	DefaultUserQuota  float64
-	MonthlyUserQuota  float64
-	AllowedOrigin     string
-	Limits            RequestLimits
-	Pricing           credits.PricingConfig
-	admission         requestAdmission
+	LetteringOverlayEnabled bool
+	Repo                    db.Repository
+	CreditService           credits.CreditService
+	JobService              jobs.JobService
+	AIClient                gen.AIService
+	Authenticator           auth.Authenticator
+	ImageHosting            auth.ImageHostingSeam
+	KillSwitchEnabled       bool
+	KillSwitch              domain.KillSwitchProvider
+	MaxPanelsPerPage        int
+	DefaultUserQuota        float64
+	MonthlyUserQuota        float64
+	AllowedOrigin           string
+	Limits                  RequestLimits
+	Pricing                 credits.PricingConfig
+	admission               requestAdmission
 }
 
 func NewServer(
@@ -63,19 +64,20 @@ func NewServer(
 		memoryJobs.SetCreditService(creditService)
 	}
 	return &Server{
-		Repo:              repo,
-		CreditService:     creditService,
-		JobService:        jobService,
-		AIClient:          aiClient,
-		Authenticator:     authenticator,
-		ImageHosting:      imageHosting,
-		KillSwitchEnabled: false,
-		KillSwitch:        domain.NewInMemoryKillSwitchProvider(false, 0),
-		MaxPanelsPerPage:  maxPanelsPerPage,
-		DefaultUserQuota:  80.0,
-		AllowedOrigin:     allowedOrigin,
-		Limits:            DefaultRequestLimits(),
-		Pricing:           credits.DefaultPricing(),
+		Repo:                    repo,
+		LetteringOverlayEnabled: os.Getenv("LETTERING_OVERLAY_ENABLED") == "true",
+		CreditService:           creditService,
+		JobService:              jobService,
+		AIClient:                aiClient,
+		Authenticator:           authenticator,
+		ImageHosting:            imageHosting,
+		KillSwitchEnabled:       false,
+		KillSwitch:              domain.NewInMemoryKillSwitchProvider(false, 0),
+		MaxPanelsPerPage:        maxPanelsPerPage,
+		DefaultUserQuota:        80.0,
+		AllowedOrigin:           allowedOrigin,
+		Limits:                  DefaultRequestLimits(),
+		Pricing:                 credits.DefaultPricing(),
 	}
 }
 

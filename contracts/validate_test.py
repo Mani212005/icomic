@@ -68,6 +68,20 @@ class TestContracts(unittest.TestCase):
         with self.assertRaises(jsonschema.ValidationError):
             validator.validate(invalid)
 
+    def test_public_lettering_contract_and_patch_payloads(self):
+        public = yaml.safe_load((CONTRACTS_DIR / "openapi/lettering-api.yaml").read_text())
+        self.assertIn("get", public["paths"]["/api/v1/pages/{id}/lettering"])
+        self.assertIn("patch", public["paths"]["/api/v1/pages/{id}/lettering/utterances/{utterance_id}/override"])
+        self.assertIn("patch", public["paths"]["/api/v1/pages/{id}/lettering/zones"])
+        spec = yaml.safe_load((CONTRACTS_DIR / "openapi/ai-service.yaml").read_text())
+        schema = {"$ref": "#/components/schemas/PatchLetteringOverrideRequest", "components": spec["components"]}
+        validator = jsonschema.Draft202012Validator(schema)
+        validator.validate({"override": {}})
+        validator.validate({"override": {"center": {"x": .5, "y": .2}}})
+        for invalid in [{}, {"override": {"size_scale": 9}}, {"override": {"center": {"x": .5}}}]:
+            with self.assertRaises(jsonschema.ValidationError):
+                validator.validate(invalid)
+
     def test_job_schema(self):
         schema_path = CONTRACTS_DIR / "schemas" / "job.schema.json"
         self.assertTrue(schema_path.exists(), f"Missing schema at {schema_path}")

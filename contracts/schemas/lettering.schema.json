@@ -477,6 +477,11 @@
         "page_aspect": {
           "type": "number"
         },
+        "stroke_width": {
+          "type": "number",
+          "default": 0.0013,
+          "description": "Relative to page height, about 2.5px at 1280px portrait width."
+        },
         "minimum_font_size": {
           "type": "number"
         },

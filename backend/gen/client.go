@@ -16,6 +16,7 @@ import (
 
 // AIService defines the interface for communicating with the AI service (SPEC 8, ARCHITECTURE 4.4).
 type AIService interface {
+	LayoutLettering(ctx context.Context, req LetteringDocument) (*LetteringLayout, error)
 	AnalyzeScript(ctx context.Context, req AnalyzeScriptRequest) (*AnalyzeScriptResponse, error)
 	ModeratePrompt(ctx context.Context, req ModeratePromptRequest) (*ModeratePromptResponse, error)
 	GenerateCharacterReference(ctx context.Context, req GenerateCharacterReferenceRequest) (*GenerateCharacterReferenceResponse, error)
@@ -225,6 +226,7 @@ var _ AIService = (*AIServiceClient)(nil)
 
 // FakeAIServiceClient provides deterministic fake responses for hermetic unit tests.
 type FakeAIServiceClient struct {
+	LayoutLetteringFunc            func(context.Context, LetteringDocument) (*LetteringLayout, error)
 	AnalyzeScriptFunc              func(ctx context.Context, req AnalyzeScriptRequest) (*AnalyzeScriptResponse, error)
 	ModeratePromptFunc             func(ctx context.Context, req ModeratePromptRequest) (*ModeratePromptResponse, error)
 	GenerateCharacterReferenceFunc func(ctx context.Context, req GenerateCharacterReferenceRequest) (*GenerateCharacterReferenceResponse, error)
@@ -475,4 +477,19 @@ func (f *FakeAIServiceClient) GetJobStatus(ctx context.Context, jobID string) (*
 		Status:     "done",
 		ActualCost: &cost,
 	}, nil
+}
+
+func (c *AIServiceClient) LayoutLettering(ctx context.Context, req LetteringDocument) (*LetteringLayout, error) {
+	var resp LetteringLayout
+	if err := c.postJSON(ctx, "/internal/v1/layout-lettering", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+func (f *FakeAIServiceClient) LayoutLettering(ctx context.Context, req LetteringDocument) (*LetteringLayout, error) {
+	if f.LayoutLetteringFunc != nil {
+		return f.LayoutLetteringFunc(ctx, req)
+	}
+	return &LetteringLayout{Version: "lettering-layout-v1", PageID: req.PageID, PageAspect: req.PageAspect,
+		MinimumFontSize: 14 / 841.89, Bubbles: []LetteringBubble{}, Issues: []LetteringIssue{}}, nil
 }
