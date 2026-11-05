@@ -1,0 +1,499 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://icomic.local/schemas/lettering.schema.json",
+  "title": "Lettering input and vector output",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/LetteringDocument"
+    },
+    {
+      "$ref": "#/$defs/LetteringLayout"
+    }
+  ],
+  "$defs": {
+    "LetteringPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      }
+    },
+    "LetteringRect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 1e-09
+        },
+        "height": {
+          "type": "number",
+          "minimum": 1e-09
+        }
+      }
+    },
+    "LetteringUnitPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "LetteringUnitRect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "width": {
+          "type": "number",
+          "minimum": 1e-09,
+          "maximum": 1
+        },
+        "height": {
+          "type": "number",
+          "minimum": 1e-09,
+          "maximum": 1
+        }
+      }
+    },
+    "LetteringOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "center": {
+          "$ref": "#/$defs/LetteringPoint"
+        },
+        "rect": {
+          "$ref": "#/$defs/LetteringRect"
+        },
+        "tail_anchor": {
+          "$ref": "#/$defs/LetteringPoint"
+        },
+        "size_scale": {
+          "type": "number",
+          "minimum": 1e-09,
+          "maximum": 8
+        }
+      },
+      "description": "Panel-local normalized coordinates; rect takes precedence over center. Exact overrides may be outside the panel and are flagged, never clamped. Scale changes font size, never below the configured print minimum."
+    },
+    "LetteringUtterance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "utterance_id",
+        "order",
+        "kind",
+        "text"
+      ],
+      "properties": {
+        "utterance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "speech",
+            "thought",
+            "narration",
+            "caption"
+          ]
+        },
+        "speaker": {
+          "type": "string"
+        },
+        "speaker_anchor": {
+          "$ref": "#/$defs/LetteringUnitPoint"
+        },
+        "text": {
+          "type": "string"
+        },
+        "caption_edge": {
+          "type": "string",
+          "enum": [
+            "top",
+            "bottom"
+          ],
+          "default": "top"
+        },
+        "placement": {
+          "$ref": "#/$defs/LetteringOverride"
+        }
+      },
+      "description": "Speaker is a character ID or display name; omit for anonymous speech or narration. Order is unique within a panel; IDs are unique across the page."
+    },
+    "LetteringPanel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "panel_id",
+        "order",
+        "rect",
+        "reserved_zones",
+        "utterances"
+      ],
+      "properties": {
+        "panel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rect": {
+          "$ref": "#/$defs/LetteringUnitRect"
+        },
+        "reserved_zones": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringUnitRect"
+          }
+        },
+        "utterances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringUtterance"
+          }
+        }
+      },
+      "description": "Rect is page-normalized from the page layout; zones and anchors are panel-local. No inferred zones: an empty array is flagged for review."
+    },
+    "LetteringDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "page_id",
+        "art_mode",
+        "page_aspect",
+        "panels"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "enum": [
+            "lettering-v1"
+          ]
+        },
+        "page_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "art_mode": {
+          "type": "string",
+          "enum": [
+            "text_free",
+            "baked_in"
+          ]
+        },
+        "page_aspect": {
+          "type": "number",
+          "minimum": 1e-09,
+          "maximum": 4,
+          "description": "Physical page width / height; A4 portrait is 210/297."
+        },
+        "panels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringPanel"
+          }
+        }
+      },
+      "description": "Standalone opt-in lettering input. Existing page art is baked_in and must never receive a second lettering layer. No image pixels or image URLs are accepted."
+    },
+    "LetteringGlyph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "glyph_id",
+        "cluster",
+        "x",
+        "y",
+        "advance_x",
+        "advance_y"
+      ],
+      "properties": {
+        "glyph_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cluster": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "advance_x": {
+          "type": "number"
+        },
+        "advance_y": {
+          "type": "number"
+        }
+      }
+    },
+    "LetteringTextLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "font_id",
+        "font_size",
+        "baseline",
+        "bounds",
+        "glyphs"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "font_id": {
+          "type": "string"
+        },
+        "font_size": {
+          "type": "number"
+        },
+        "baseline": {
+          "$ref": "#/$defs/LetteringPoint"
+        },
+        "bounds": {
+          "$ref": "#/$defs/LetteringRect"
+        },
+        "glyphs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringGlyph"
+          }
+        }
+      },
+      "description": "Exact shaped glyph origins in page-normalized coordinates, top-left origin and downward Y. Font size is relative to page height; glyph IDs refer to the bundled versioned font. Bounds include ink and advance."
+    },
+    "LetteringShape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "bounds",
+        "radius"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "rounded_rect",
+            "ellipse"
+          ]
+        },
+        "bounds": {
+          "$ref": "#/$defs/LetteringRect"
+        },
+        "radius": {
+          "type": "number"
+        }
+      },
+      "description": "Radius relative to page height; ellipse uses the bounds, ignoring radius."
+    },
+    "LetteringFlag": {
+      "type": "string",
+      "enum": [
+        "empty_text",
+        "unsupported_glyph",
+        "unsupported_direction",
+        "overflow",
+        "below_minimum",
+        "out_of_panel",
+        "outside_reserved_zone",
+        "collision",
+        "tail_crosses_text",
+        "missing_zone",
+        "baked_in_art"
+      ]
+    },
+    "LetteringBubble": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "panel_id",
+        "utterance_id",
+        "order",
+        "kind",
+        "shape",
+        "tail",
+        "thought_tail",
+        "lines",
+        "flags"
+      ],
+      "properties": {
+        "panel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "utterance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "speech",
+            "thought",
+            "narration",
+            "caption"
+          ]
+        },
+        "shape": {
+          "$ref": "#/$defs/LetteringShape"
+        },
+        "tail": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringPoint"
+          }
+        },
+        "thought_tail": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringShape"
+          }
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringTextLine"
+          }
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringFlag"
+          }
+        }
+      }
+    },
+    "LetteringIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "panel_id",
+        "utterance_id",
+        "flag"
+      ],
+      "properties": {
+        "panel_id": {
+          "type": "string"
+        },
+        "utterance_id": {
+          "type": "string"
+        },
+        "flag": {
+          "$ref": "#/$defs/LetteringFlag"
+        }
+      }
+    },
+    "LetteringLayout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "page_id",
+        "page_aspect",
+        "minimum_font_size",
+        "bubbles",
+        "issues"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "enum": [
+            "lettering-layout-v1"
+          ]
+        },
+        "page_id": {
+          "type": "string"
+        },
+        "page_aspect": {
+          "type": "number"
+        },
+        "minimum_font_size": {
+          "type": "number"
+        },
+        "bubbles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringBubble"
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LetteringIssue"
+          }
+        }
+      },
+      "description": "Serializable draw list, never append it to a previous result. All coordinates and bounds are page-normalized. Review issues are authoritative even when a bubble cannot be emitted. No renderer needs to wrap or place text again."
+    }
+  }
+}

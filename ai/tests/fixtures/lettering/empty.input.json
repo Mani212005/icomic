@@ -1,0 +1,35 @@
+{
+  "version": "lettering-v1",
+  "page_id": "page-1",
+  "art_mode": "text_free",
+  "page_aspect": 0.7070707070707071,
+  "panels": [
+    {
+      "panel_id": "panel-1",
+      "order": 0,
+      "rect": {
+        "x": 0.05,
+        "y": 0.05,
+        "width": 0.9,
+        "height": 0.9
+      },
+      "reserved_zones": [
+        {
+          "x": 0.03,
+          "y": 0.03,
+          "width": 0.94,
+          "height": 0.6
+        }
+      ],
+      "utterances": [
+        {
+          "utterance_id": "u-1",
+          "order": 0,
+          "kind": "speech",
+          "text": "",
+          "caption_edge": "top"
+        }
+      ]
+    }
+  ]
+}

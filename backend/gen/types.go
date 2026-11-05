@@ -108,6 +108,183 @@ func (e JobStatusResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for LetteringBubbleKind.
+const (
+	LetteringBubbleKindCaption   LetteringBubbleKind = "caption"
+	LetteringBubbleKindNarration LetteringBubbleKind = "narration"
+	LetteringBubbleKindSpeech    LetteringBubbleKind = "speech"
+	LetteringBubbleKindThought   LetteringBubbleKind = "thought"
+)
+
+// Valid indicates whether the value is a known member of the LetteringBubbleKind enum.
+func (e LetteringBubbleKind) Valid() bool {
+	switch e {
+	case LetteringBubbleKindCaption:
+		return true
+	case LetteringBubbleKindNarration:
+		return true
+	case LetteringBubbleKindSpeech:
+		return true
+	case LetteringBubbleKindThought:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LetteringDocumentArtMode.
+const (
+	BakedIn  LetteringDocumentArtMode = "baked_in"
+	TextFree LetteringDocumentArtMode = "text_free"
+)
+
+// Valid indicates whether the value is a known member of the LetteringDocumentArtMode enum.
+func (e LetteringDocumentArtMode) Valid() bool {
+	switch e {
+	case BakedIn:
+		return true
+	case TextFree:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LetteringDocumentVersion.
+const (
+	LetteringV1 LetteringDocumentVersion = "lettering-v1"
+)
+
+// Valid indicates whether the value is a known member of the LetteringDocumentVersion enum.
+func (e LetteringDocumentVersion) Valid() bool {
+	switch e {
+	case LetteringV1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LetteringFlag.
+const (
+	BakedInArt           LetteringFlag = "baked_in_art"
+	BelowMinimum         LetteringFlag = "below_minimum"
+	Collision            LetteringFlag = "collision"
+	EmptyText            LetteringFlag = "empty_text"
+	MissingZone          LetteringFlag = "missing_zone"
+	OutOfPanel           LetteringFlag = "out_of_panel"
+	OutsideReservedZone  LetteringFlag = "outside_reserved_zone"
+	Overflow             LetteringFlag = "overflow"
+	TailCrossesText      LetteringFlag = "tail_crosses_text"
+	UnsupportedDirection LetteringFlag = "unsupported_direction"
+	UnsupportedGlyph     LetteringFlag = "unsupported_glyph"
+)
+
+// Valid indicates whether the value is a known member of the LetteringFlag enum.
+func (e LetteringFlag) Valid() bool {
+	switch e {
+	case BakedInArt:
+		return true
+	case BelowMinimum:
+		return true
+	case Collision:
+		return true
+	case EmptyText:
+		return true
+	case MissingZone:
+		return true
+	case OutOfPanel:
+		return true
+	case OutsideReservedZone:
+		return true
+	case Overflow:
+		return true
+	case TailCrossesText:
+		return true
+	case UnsupportedDirection:
+		return true
+	case UnsupportedGlyph:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LetteringLayoutVersion.
+const (
+	LetteringLayoutV1 LetteringLayoutVersion = "lettering-layout-v1"
+)
+
+// Valid indicates whether the value is a known member of the LetteringLayoutVersion enum.
+func (e LetteringLayoutVersion) Valid() bool {
+	switch e {
+	case LetteringLayoutV1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LetteringShapeKind.
+const (
+	Ellipse     LetteringShapeKind = "ellipse"
+	RoundedRect LetteringShapeKind = "rounded_rect"
+)
+
+// Valid indicates whether the value is a known member of the LetteringShapeKind enum.
+func (e LetteringShapeKind) Valid() bool {
+	switch e {
+	case Ellipse:
+		return true
+	case RoundedRect:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LetteringUtteranceCaptionEdge.
+const (
+	Bottom LetteringUtteranceCaptionEdge = "bottom"
+	Top    LetteringUtteranceCaptionEdge = "top"
+)
+
+// Valid indicates whether the value is a known member of the LetteringUtteranceCaptionEdge enum.
+func (e LetteringUtteranceCaptionEdge) Valid() bool {
+	switch e {
+	case Bottom:
+		return true
+	case Top:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LetteringUtteranceKind.
+const (
+	LetteringUtteranceKindCaption   LetteringUtteranceKind = "caption"
+	LetteringUtteranceKindNarration LetteringUtteranceKind = "narration"
+	LetteringUtteranceKindSpeech    LetteringUtteranceKind = "speech"
+	LetteringUtteranceKindThought   LetteringUtteranceKind = "thought"
+)
+
+// Valid indicates whether the value is a known member of the LetteringUtteranceKind enum.
+func (e LetteringUtteranceKind) Valid() bool {
+	switch e {
+	case LetteringUtteranceKindCaption:
+		return true
+	case LetteringUtteranceKindNarration:
+		return true
+	case LetteringUtteranceKindSpeech:
+		return true
+	case LetteringUtteranceKindThought:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StoreColourImageRequestMediaType.
 const (
 	ImagePng  StoreColourImageRequestMediaType = "image/png"
@@ -382,6 +559,159 @@ type JobStatusResponse struct {
 
 // JobStatusResponseStatus defines model for JobStatusResponse.Status.
 type JobStatusResponseStatus string
+
+// LetteringBubble defines model for LetteringBubble.
+type LetteringBubble struct {
+	Flags   []LetteringFlag     `json:"flags"`
+	Kind    LetteringBubbleKind `json:"kind"`
+	Lines   []LetteringTextLine `json:"lines"`
+	Order   int                 `json:"order"`
+	PanelID string              `json:"panel_id"`
+
+	// Shape Radius relative to page height; ellipse uses the bounds, ignoring radius.
+	Shape       LetteringShape   `json:"shape"`
+	Tail        []LetteringPoint `json:"tail"`
+	ThoughtTail []LetteringShape `json:"thought_tail"`
+	UtteranceID string           `json:"utterance_id"`
+}
+
+// LetteringBubbleKind defines model for LetteringBubble.Kind.
+type LetteringBubbleKind string
+
+// LetteringDocument Standalone opt-in lettering input. Existing page art is baked_in and must never receive a second lettering layer. No image pixels or image URLs are accepted.
+type LetteringDocument struct {
+	ArtMode LetteringDocumentArtMode `json:"art_mode"`
+
+	// PageAspect Physical page width / height; A4 portrait is 210/297.
+	PageAspect float64                  `json:"page_aspect"`
+	PageID     string                   `json:"page_id"`
+	Panels     []LetteringPanel         `json:"panels"`
+	Version    LetteringDocumentVersion `json:"version"`
+}
+
+// LetteringDocumentArtMode defines model for LetteringDocument.ArtMode.
+type LetteringDocumentArtMode string
+
+// LetteringDocumentVersion defines model for LetteringDocument.Version.
+type LetteringDocumentVersion string
+
+// LetteringFlag defines model for LetteringFlag.
+type LetteringFlag string
+
+// LetteringGlyph defines model for LetteringGlyph.
+type LetteringGlyph struct {
+	AdvanceX float64 `json:"advance_x"`
+	AdvanceY float64 `json:"advance_y"`
+	Cluster  int     `json:"cluster"`
+	GlyphID  int     `json:"glyph_id"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+}
+
+// LetteringIssue defines model for LetteringIssue.
+type LetteringIssue struct {
+	Flag        LetteringFlag `json:"flag"`
+	PanelID     string        `json:"panel_id"`
+	UtteranceID string        `json:"utterance_id"`
+}
+
+// LetteringLayout Serializable draw list, never append it to a previous result. All coordinates and bounds are page-normalized. Review issues are authoritative even when a bubble cannot be emitted. No renderer needs to wrap or place text again.
+type LetteringLayout struct {
+	Bubbles         []LetteringBubble      `json:"bubbles"`
+	Issues          []LetteringIssue       `json:"issues"`
+	MinimumFontSize float64                `json:"minimum_font_size"`
+	PageAspect      float64                `json:"page_aspect"`
+	PageID          string                 `json:"page_id"`
+	Version         LetteringLayoutVersion `json:"version"`
+}
+
+// LetteringLayoutVersion defines model for LetteringLayout.Version.
+type LetteringLayoutVersion string
+
+// LetteringOverride Panel-local normalized coordinates; rect takes precedence over center. Exact overrides may be outside the panel and are flagged, never clamped. Scale changes font size, never below the configured print minimum.
+type LetteringOverride struct {
+	Center     *LetteringPoint `json:"center,omitempty"`
+	Rect       *LetteringRect  `json:"rect,omitempty"`
+	SizeScale  *float64        `json:"size_scale,omitempty"`
+	TailAnchor *LetteringPoint `json:"tail_anchor,omitempty"`
+}
+
+// LetteringPanel Rect is page-normalized from the page layout; zones and anchors are panel-local. No inferred zones: an empty array is flagged for review.
+type LetteringPanel struct {
+	Order         int                  `json:"order"`
+	PanelID       string               `json:"panel_id"`
+	Rect          LetteringUnitRect    `json:"rect"`
+	ReservedZones []LetteringUnitRect  `json:"reserved_zones"`
+	Utterances    []LetteringUtterance `json:"utterances"`
+}
+
+// LetteringPoint defines model for LetteringPoint.
+type LetteringPoint struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// LetteringRect defines model for LetteringRect.
+type LetteringRect struct {
+	Height float64 `json:"height"`
+	Width  float64 `json:"width"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+}
+
+// LetteringShape Radius relative to page height; ellipse uses the bounds, ignoring radius.
+type LetteringShape struct {
+	Bounds LetteringRect      `json:"bounds"`
+	Kind   LetteringShapeKind `json:"kind"`
+	Radius float64            `json:"radius"`
+}
+
+// LetteringShapeKind defines model for LetteringShape.Kind.
+type LetteringShapeKind string
+
+// LetteringTextLine Exact shaped glyph origins in page-normalized coordinates, top-left origin and downward Y. Font size is relative to page height; glyph IDs refer to the bundled versioned font. Bounds include ink and advance.
+type LetteringTextLine struct {
+	Baseline LetteringPoint   `json:"baseline"`
+	Bounds   LetteringRect    `json:"bounds"`
+	FontID   string           `json:"font_id"`
+	FontSize float64          `json:"font_size"`
+	Glyphs   []LetteringGlyph `json:"glyphs"`
+	Text     string           `json:"text"`
+}
+
+// LetteringUnitPoint defines model for LetteringUnitPoint.
+type LetteringUnitPoint struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// LetteringUnitRect defines model for LetteringUnitRect.
+type LetteringUnitRect struct {
+	Height float64 `json:"height"`
+	Width  float64 `json:"width"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+}
+
+// LetteringUtterance Speaker is a character ID or display name; omit for anonymous speech or narration. Order is unique within a panel; IDs are unique across the page.
+type LetteringUtterance struct {
+	CaptionEdge *LetteringUtteranceCaptionEdge `json:"caption_edge,omitempty"`
+	Kind        LetteringUtteranceKind         `json:"kind"`
+	Order       int                            `json:"order"`
+
+	// Placement Panel-local normalized coordinates; rect takes precedence over center. Exact overrides may be outside the panel and are flagged, never clamped. Scale changes font size, never below the configured print minimum.
+	Placement     *LetteringOverride  `json:"placement,omitempty"`
+	Speaker       *string             `json:"speaker,omitempty"`
+	SpeakerAnchor *LetteringUnitPoint `json:"speaker_anchor,omitempty"`
+	Text          string              `json:"text"`
+	UtteranceID   string              `json:"utterance_id"`
+}
+
+// LetteringUtteranceCaptionEdge defines model for LetteringUtterance.CaptionEdge.
+type LetteringUtteranceCaptionEdge string
+
+// LetteringUtteranceKind defines model for LetteringUtterance.Kind.
+type LetteringUtteranceKind string
 
 // ModeratePromptRequest defines model for ModeratePromptRequest.
 type ModeratePromptRequest struct {

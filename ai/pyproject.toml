@@ -16,6 +16,8 @@ dependencies = [
     "redis>=5.0",
     "pillow>=12.0.0",
     "httpx2>=2.0.0",
+    "uharfbuzz==0.55.0",
+    "fonttools==4.60.1",
 ]
 
 [tool.pytest.ini_options]
