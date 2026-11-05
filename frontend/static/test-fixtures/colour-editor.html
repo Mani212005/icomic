@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="stylesheet" href="/src/lib/design/theme.css" />
+		<style>
+			#result { overflow-wrap: anywhere; }
+			#approved { display: block; width: min(100%, 480px); height: auto; margin: 16px auto; }
+		</style>
+		<title>Colour editor browser fixture</title>
+	</head>
+	<body>
+		<div id="fixture"></div>
+		<pre id="result" aria-live="polite"></pre>
+		<img id="approved" alt="Approved colour export" />
+		<script type="module">
+			import ColourEditor from '/src/lib/colour/ColourEditor.svelte';
+
+			const params = new URLSearchParams(location.search);
+			const sourceWidth = Number(params.get('width') || 1920);
+			const sourceHeight = Number(params.get('height') || 1280);
+			const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sourceWidth}" height="${sourceHeight}" viewBox="0 0 ${sourceWidth} ${sourceHeight}"><rect width="100%" height="100%" fill="white"/><rect x="10" y="10" width="${sourceWidth - 20}" height="${sourceHeight - 20}" fill="none" stroke="black" stroke-width="10"/></svg>`;
+			const lineArtUrl = params.has('fail')
+				? '/test-fixtures/missing-page-art.png'
+				: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+			const result = document.querySelector('#result');
+
+			new ColourEditor({
+				target: document.querySelector('#fixture'),
+				props: {
+					lineArtUrl,
+					palette: [
+						{ region_name: 'page', label: 'Page', hex_color: '#e03040' },
+						{ region_name: 'alternate', label: 'Alternate', hex_color: '#2864dc' }
+					],
+					onApprove: async (blob) => {
+						const url = URL.createObjectURL(blob);
+						const image = document.querySelector('#approved');
+						image.src = url;
+						await image.decode();
+						const testCanvas = document.createElement('canvas');
+						testCanvas.width = image.naturalWidth;
+						testCanvas.height = image.naturalHeight;
+						const context = testCanvas.getContext('2d');
+						context.drawImage(image, 0, 0);
+						const x = Math.floor(sourceWidth / 2);
+						const y = Math.floor(sourceHeight / 2);
+						const pixel = [...context.getImageData(x, y, 1, 1).data];
+						const previewPixel = [...document.querySelector('.active-canvas').getContext('2d').getImageData(x, y, 1, 1).data];
+						result.textContent = JSON.stringify({
+							mime: blob.type,
+							sourceWidth,
+							sourceHeight,
+							width: image.naturalWidth,
+							height: image.naturalHeight,
+							centerPixel: pixel,
+							previewPixel,
+							exportMatchesPreview: pixel.every((channel, index) => channel === previewPixel[index]),
+							dimensionsMatch: image.naturalWidth === sourceWidth && image.naturalHeight === sourceHeight,
+							centerColourPreserved: pixel[0] === 40 && pixel[1] === 100 && pixel[2] === 220 && pixel[3] === 255
+						});
+					}
+				}
+			});
+		</script>
+	</body>
+</html>
