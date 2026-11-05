@@ -92,17 +92,18 @@ calls. There are no per-panel image or vision calls.
 | Chapter outlines (two chunks per chapter) | 8 | 0 | 0 | 7 |
 | Panel text (one call per planned page) | 12 | 0 | 0 | 8 |
 | Drafts (one image per page) | 0 | 12 | 0 | 12 |
-| Line art (one image per page) | 0 | 12 | 0 | 0 |
-| Palette suggestions (one vision call per page) | 0 | 0 | 12 | 0 |
+| Finished painted pages (default route, one image per page) | 0 | 12 | 0 | 0 |
 | Export and approval | 0 | 0 | 0 | 0 |
-| Total | 27 | 24 + C | 12 | 34 + C |
-| Total with fake fixture's single profile | 27 | 25 | 12 | 35 |
+| Total (Default Painted Route) | 27 | 24 + C | 0 | 34 + C |
+| Total with fake fixture's single profile (Default Painted Route) | 27 | 25 | 0 | 35 |
+| Ink option finish: Line art (12) + Palette suggestions (12 vision) | 0 | 12 | 12 | 0 |
+| Total with fake fixture's single profile (Ink Option) | 27 | 25 | 12 | 35 |
 
-Per-page generation uses one language call, two image calls, one vision call and
-one draft moderation call. Chapter/source moderation is additional as shown.
-Across the whole one-character fixture, normalized counts per panel are
-`27/51` language, `25/51` image, `12/51` vision and `35/51` moderation;
-per comic page they are `27/12`, `25/12`, `1`, and `35/12` respectively.
+Default painted-page finish generation uses one finish call replacing the line-art image call (identical 24 + C image count), requiring 0 vision calls because pages are already painted. The ink option adds 12 vision calls for separate colour palette suggestions.
+Per-page generation in the default painted route uses one language call, two image calls, zero vision calls and one draft moderation call. Chapter/source moderation is additional as shown.
+Across the whole one-character fixture in default mode, normalized counts per panel are
+`27/51` language, `25/51` image, `0` vision and `35/51` moderation;
+per comic page they are `27/12`, `25/12`, `0`, and `35/12` respectively.
 Including moderation, the language provider receives `61 + C` calls in total.
 Live counts assume concise structured responses obeying the prompt: each combined
 chapter outline and its source fit two moderation chunks, and each page's scene

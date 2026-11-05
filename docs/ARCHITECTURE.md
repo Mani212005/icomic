@@ -97,7 +97,7 @@ icomic/
 |---|---|---|
 | **Frontend** | Svelte | UI rendering, colour editor, paint-bucket fill tool (client-side), job polling, user flows |
 | **Go API** | Go + net/http | Auth, session, project/chapter/character/page/panel CRUD, credit ledger, quota enforcement, kill switch, job creation, hashed user ID, approval gates, presigned download URLs |
-| **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, line art, colour suggestion, PDF assembly |
+| **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, finished painted page, line art, colour suggestion, PDF assembly |
 | **PostgreSQL** | Postgres | Durable project state, credit ledger, job records, stage approvals, colour palettes |
 | **Redis** | Redis | Job queue; pending, running, retried, and cancelled job envelopes |
 | **Object storage** | S3-compatible | Approved working copies (draft, line art, reference), exported PDFs (generated images are Meta-hosted) |
@@ -247,6 +247,7 @@ POST /internal/v1/generate-character-reference
 POST /internal/v1/generate-chapter-outline
 POST /internal/v1/generate-panel-text
 POST /internal/v1/generate-draft-sketch
+POST /internal/v1/generate-painted-page
 POST /internal/v1/generate-line-art
 POST /internal/v1/suggest-colour-palette
 POST /internal/v1/moderate-prompt
@@ -290,10 +291,11 @@ Go enforces this check transactionally before inserting into `generation_jobs` a
 
 - **Character reference generation:** requires a valid submitted script for `project_id`. No prior stage approval is required.
 - **Draft sketch generation (per page):** requires approved `character_reference` records for all project characters AND an approved `chapter_outline` for the page's parent chapter (`entity_id=chapter_id`).
-- **Final line art generation (per page):** requires an approved `draft_page` for that page (`entity_id=page_id`).
+- **Finished painted page generation (per page, default finish route):** requires an approved `draft_page` for that page (`entity_id=page_id`) in draft-conditioned mode, or approved character references and chapter outline in direct-from-brief mode. The default variant is configured via the single setting `PAINTED_PAGE_DEFAULT_VARIANT` (default: `draft-conditioned`).
+- **Final line art generation (per page, explicit ink option):** requires an approved `draft_page` for that page (`entity_id=page_id`).
 
 Regeneration rules:
-- Regeneration of character reference images, draft sketches, or line art is explicitly permitted: a prior completed (`status=done`) or failed (`status=failed`) job for the same entity does not block creating a new generation job with a new idempotency key.
+- Regeneration of character reference images, draft sketches, painted pages, or line art is explicitly permitted: a prior completed (`status=done`) or failed (`status=failed`) job for the same entity does not block creating a new generation job with a new idempotency key.
 - Concurrency guard: Go rejects creating a duplicate job only if an active job (`status=pending` or `status=running`) already exists for that entity and stage.
 - Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 
@@ -303,7 +305,8 @@ The approval gate invariant (no image generation before prerequisite approval) i
 
 ```
 character reference approved -> chapter_outline approved -> panel text generated
-panel text ready (no separate approval gate) -> draft sketch approved -> line art approved -> colour approved
+panel text ready (no separate approval gate) -> draft sketch approved -> finished painted page approved -> export (default route)
+OR: draft sketch approved -> line art approved -> colour approved -> export (explicit ink option)
 approved character references anchored across all subsequent page generations
 ```
 

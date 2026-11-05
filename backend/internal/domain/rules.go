@@ -72,6 +72,12 @@ func CheckApprovalGate(stage string, prereqs ApprovedPrereqs) error {
 		}
 		return nil
 
+	case "painted_page":
+		if !prereqs.DraftSketchApproved {
+			return fmt.Errorf("%w: draft sketch must be approved before generating painted page", ErrMissingPrerequisiteApproval)
+		}
+		return nil
+
 	case "colour_suggestion":
 		if !prereqs.LineArtApproved {
 			return fmt.Errorf("%w: final line art must be approved before colour palette suggestion", ErrMissingPrerequisiteApproval)

@@ -390,26 +390,29 @@ export class MockApiClient {
 		return page;
 	}
 
-	async generateLineArt(pageId) {
+	async generateLineArt(pageId, variant = 'painted') {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		const job = this.createJob('proj-demo-1', 'final_line_art', 'line_art');
 		const now = new Date().toISOString();
 		page.line_art_url = '/mock/sample-line-art.webp';
 		page.line_art_image_url = page.line_art_url;
+		page.painted_page_image_url = page.line_art_url;
 		page.is_sample = true;
 		page.sample_label = 'Sample';
 		page.sample_source = 'Meta AI';
 		page.line_art_approved_at = null;
+		page.painted_page_approved_at = null;
 		page.updated_at = now;
 		return { job, page };
 	}
 
-	async approveLineArt(pageId) {
+	async approveLineArt(pageId, variant = 'painted') {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		const now = new Date().toISOString();
 		page.line_art_approved_at = now;
+		page.painted_page_approved_at = now;
 		page.updated_at = now;
 		return page;
 	}
