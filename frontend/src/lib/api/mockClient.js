@@ -42,6 +42,7 @@ export class MockApiClient {
 	seedInitialData() {
 		const projId = 'proj-demo-1';
 		const now = new Date().toISOString();
+		const approvedAt = new Date(Date.parse(now) + 1).toISOString();
 
 		this.projects.set(projId, {
 			id: projId,
@@ -71,7 +72,7 @@ export class MockApiClient {
 				'/mock/sample-character.webp',
 			is_sample: true,
 			sample_label: 'Sample',
-			approved_at: now,
+			approved_at: approvedAt,
 			created_at: now,
 			updated_at: now
 		};
@@ -83,7 +84,7 @@ export class MockApiClient {
 			chapter_number: 1,
 			title: 'The Lighthouse Bird',
 			summary: 'Nia finds a tiny brass bird in a storm; its light guides a lost boat home, and she frees it at sunrise.',
-			approved_at: now,
+			approved_at: approvedAt,
 			status: 'approved',
 			created_at: now,
 			updated_at: now
@@ -113,7 +114,7 @@ export class MockApiClient {
 			panel_ids: seededPanels.map((panel) => panel.id),
 			draft_image_url:
 				'/mock/sample-draft.webp',
-			draft_approved_at: now,
+			draft_approved_at: approvedAt,
 			line_art_url:
 				'/mock/sample-line-art.webp',
 			line_art_image_url:
@@ -121,7 +122,7 @@ export class MockApiClient {
 			is_sample: true,
 			sample_label: 'Sample',
 			sample_source: 'Meta AI',
-			line_art_approved_at: now,
+			line_art_approved_at: approvedAt,
 			colour_approved_at: null,
 			created_at: now,
 			updated_at: now
@@ -260,9 +261,10 @@ export class MockApiClient {
 	async approveCharacter(id) {
 		const char = this.characters.get(id);
 		if (!char) throw new Error(`Character ${id} not found`);
-		const now = new Date().toISOString();
-		char.approved_at = now;
-		char.updated_at = now;
+		let now = Date.now();
+		const activity = Date.parse(char.updated_at);
+		if (Number.isFinite(activity) && now <= activity) now = activity + 1;
+		char.approved_at = new Date(now).toISOString();
 		return char;
 	}
 
@@ -308,10 +310,11 @@ export class MockApiClient {
 	async approveChapter(id) {
 		const chap = this.chapters.get(id);
 		if (!chap) throw new Error(`Chapter ${id} not found`);
-		const now = new Date().toISOString();
-		chap.approved_at = now;
+		let now = Date.now();
+		const activity = Date.parse(chap.updated_at);
+		if (Number.isFinite(activity) && now <= activity) now = activity + 1;
+		chap.approved_at = new Date(now).toISOString();
 		chap.status = 'approved';
-		chap.updated_at = now;
 		return chap;
 	}
 
@@ -387,9 +390,10 @@ export class MockApiClient {
 	async approveDraft(pageId) {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
-		const now = new Date().toISOString();
-		page.draft_approved_at = now;
-		page.updated_at = now;
+		let now = Date.now();
+		const activity = Date.parse(page.updated_at);
+		if (Number.isFinite(activity) && now <= activity) now = activity + 1;
+		page.draft_approved_at = new Date(now).toISOString();
 		return page;
 	}
 
@@ -411,9 +415,10 @@ export class MockApiClient {
 	async approveLineArt(pageId) {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
-		const now = new Date().toISOString();
-		page.line_art_approved_at = now;
-		page.updated_at = now;
+		let now = Date.now();
+		const activity = Date.parse(page.updated_at);
+		if (Number.isFinite(activity) && now <= activity) now = activity + 1;
+		page.line_art_approved_at = new Date(now).toISOString();
 		return page;
 	}
 
@@ -441,9 +446,10 @@ export class MockApiClient {
 	async approveColour(pageId) {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
-		const now = new Date().toISOString();
-		page.colour_approved_at = now;
-		page.updated_at = now;
+		let now = Date.now();
+		const activity = Date.parse(page.updated_at);
+		if (Number.isFinite(activity) && now <= activity) now = activity + 1;
+		page.colour_approved_at = new Date(now).toISOString();
 		return page;
 	}
 

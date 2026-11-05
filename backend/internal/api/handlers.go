@@ -470,7 +470,7 @@ func (s *Server) UpdateCharacter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Editing character makes approval stale (SPEC 3.2, 3.5, ARCHITECTURE 5.3)
-	ch.UpdatedAt = time.Now().UTC()
+	ch.UpdatedAt = nextCharacterActivity(ch)
 	if err := s.Repo.UpdateCharacter(r.Context(), ch); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -594,11 +594,10 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 	}
 
 	imgURL := s.ImageHosting.ResolveURL(refResp.ImageURL)
-	now := time.Now().UTC()
 
 	ch.ReferenceImageURL = imgURL
 	ch.ReferenceImageJobID = &job.ID
-	ch.UpdatedAt = now
+	ch.UpdatedAt = nextCharacterActivity(ch)
 	if err := s.Repo.UpdateCharacter(r.Context(), ch); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save character")
 		return
@@ -638,9 +637,8 @@ func (s *Server) ApproveCharacter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
+	now := nextCharacterActivity(ch)
 	ch.ApprovedAt = &now
-	ch.UpdatedAt = now
 	if err := s.Repo.UpdateCharacter(r.Context(), ch); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save character")
 		return
@@ -1006,7 +1004,7 @@ func (s *Server) ApproveChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
+	now := timestampAfterActivity(c.UpdatedAt)
 	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
 		ProjectID:                proj.ID,
 		EntityType:               "chapter_outline",

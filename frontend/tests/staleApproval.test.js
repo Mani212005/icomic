@@ -5,7 +5,7 @@ import { isApprovalStale, hasValidApproval } from '../src/lib/api/types.js';
 
 test('isApprovalStale and hasValidApproval handle edge cases correctly', () => {
 
-	assert.equal(isApprovalStale(null, '2026-11-02T10:00:00Z'), false, 'null approval is unapproved, not stale');
+	assert.equal(isApprovalStale(null, '2026-11-02T10:00:00Z'), true, 'missing approval is not fresh');
 	assert.equal(hasValidApproval(null, '2026-11-02T10:00:00Z'), false, 'null approval is not valid');
 
 	const t1 = '2026-11-02T10:00:00Z';
@@ -13,13 +13,18 @@ test('isApprovalStale and hasValidApproval handle edge cases correctly', () => {
 	assert.equal(isApprovalStale(t2, t1), false, 'newer approval is valid and not stale');
 	assert.equal(hasValidApproval(t2, t1), true, 'newer approval is valid');
 
-	assert.equal(isApprovalStale(t1, t1), false, 'simultaneous approval is valid and not stale');
-	assert.equal(hasValidApproval(t1, t1), true, 'simultaneous approval is valid');
+	assert.equal(isApprovalStale(t1, t1), true, 'approval must be strictly newer than activity');
+	assert.equal(hasValidApproval(t1, t1), false, 'simultaneous approval is not valid');
+	assert.equal(
+		isApprovalStale('2026-11-02T10:00:00.000001Z', '2026-11-02T10:00:00.000002Z'),
+		true,
+		'microsecond differences from PostgreSQL must remain observable'
+	);
 
 	assert.equal(isApprovalStale(t1, t2), true, 'approval older than update is stale');
 	assert.equal(hasValidApproval(t1, t2), false, 'stale approval is not valid');
 
-	assert.equal(isApprovalStale('invalid-date', t1), false);
+	assert.equal(isApprovalStale('invalid-date', t1), true);
 	assert.equal(hasValidApproval('invalid-date', t1), false);
 });
 

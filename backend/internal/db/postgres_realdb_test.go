@@ -137,15 +137,33 @@ func TestRealDBGenerationTransactionsAndRepositories(t *testing.T) {
 	must(t, repo.CreateChapter(ctx, chapter))
 	character := &domain.Character{ProjectID: project.ID, Name: "Hero", Description: "A kind hero", VisualAttributes: map[string]any{"cape": true}}
 	must(t, repo.CreateCharacter(ctx, character))
+	if character.UpdatedAt.IsZero() {
+		t.Fatal("CreateCharacter must set activity timestamp")
+	}
 	gotCharacter, err := repo.GetCharacter(ctx, character.ID)
 	must(t, err)
+	if gotCharacter.UpdatedAt.IsZero() || !gotCharacter.UpdatedAt.Equal(character.UpdatedAt) {
+		t.Fatalf("GetCharacter activity timestamp = %s, want %s", gotCharacter.UpdatedAt, character.UpdatedAt)
+	}
 	if gotCharacter.VisualAttributes["cape"] != true {
 		t.Fatal("character JSON did not round trip")
+	}
+	updatedAt := gotCharacter.UpdatedAt.Add(time.Second)
+	gotCharacter.Description = "A wiser hero"
+	gotCharacter.UpdatedAt = updatedAt
+	must(t, repo.UpdateCharacter(ctx, gotCharacter))
+	gotCharacter, err = repo.GetCharacter(ctx, character.ID)
+	must(t, err)
+	if !gotCharacter.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("updated character activity timestamp = %s, want %s", gotCharacter.UpdatedAt, updatedAt)
 	}
 	characters, err := repo.ListCharacters(ctx, project.ID)
 	must(t, err)
 	if len(characters) != 1 {
 		t.Fatalf("expected one character, got %d", len(characters))
+	}
+	if !characters[0].UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("listed character activity timestamp = %s, want %s", characters[0].UpdatedAt, updatedAt)
 	}
 
 	panel := &domain.Panel{ChapterID: chapter.ID, PanelNumber: 1, SceneDescription: "Town square", CharacterActions: "waves", CameraAngle: "wide", Background: "town", Dialogue: "Hello", Narration: "Morning", ImagePrompt: "comic town", Status: "ready"}

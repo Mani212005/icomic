@@ -88,10 +88,10 @@ func TestIsApprovalStale(t *testing.T) {
 		t.Fatal("expected approval not to be stale")
 	}
 
-	// Approval was at the same time as approval action -> fresh!
+	// Approval must be strictly newer than activity to be fresh.
 	sameTime := now
-	if domain.IsApprovalStale(&sameTime, sameTime) {
-		t.Fatal("expected approval at same timestamp as update not to be considered stale")
+	if !domain.IsApprovalStale(&sameTime, sameTime) {
+		t.Fatal("expected approval at the same timestamp as activity to be stale")
 	}
 
 	// Nil approval -> stale

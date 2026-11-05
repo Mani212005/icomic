@@ -109,13 +109,14 @@ func (r *failingWriteRepository) RecordApproval(ctx context.Context, value *doma
 func seedWriteFailureFlow(t *testing.T, repo db.Repository) {
 	t.Helper()
 	now := time.Now().UTC().Add(-time.Minute)
+	approvedAt := now.Add(time.Microsecond)
 	for _, err := range []error{
 		repo.CreateProject(nil, &domain.Project{ID: "a400e5d7-0409-5a81-9050-3991208ceec1", UserID: "test-user", OriginalScript: "A hero finds a bird", ChapterCount: 1}),
-		repo.CreateCharacter(nil, &domain.Character{ID: "1bda3da7-79e9-55f5-b45e-67393fc73c26", ProjectID: "a400e5d7-0409-5a81-9050-3991208ceec1", Name: "Hero", ReferenceImageURL: "https://storage.example/reference.png", ApprovedAt: &now, UpdatedAt: now}),
+		repo.CreateCharacter(nil, &domain.Character{ID: "1bda3da7-79e9-55f5-b45e-67393fc73c26", ProjectID: "a400e5d7-0409-5a81-9050-3991208ceec1", Name: "Hero", ReferenceImageURL: "https://storage.example/reference.png", ApprovedAt: &approvedAt, UpdatedAt: now}),
 		repo.CreateChapter(nil, &domain.Chapter{ID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", ProjectID: "a400e5d7-0409-5a81-9050-3991208ceec1", ChapterNumber: 1, Title: "The bird", UpdatedAt: now}),
 		repo.CreatePanel(nil, &domain.Panel{ID: "a8a24397-3780-5a99-acea-8ab882a2ef5b", ChapterID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", PanelNumber: 1, SceneDescription: "A bird", UpdatedAt: now}),
-		repo.CreatePage(nil, &domain.Page{ID: "a5669606-8764-5c90-b282-bad323a49baa", ChapterID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", PageNumber: 1, PanelIDs: []string{"a8a24397-3780-5a99-acea-8ab882a2ef5b"}, DraftImageURL: "https://storage.example/draft.png", LineArtImageURL: "https://storage.example/lineart.png", DraftApprovedAt: &now, LineArtApprovedAt: &now, ColourImageURL: "https://storage.example/coloured.png", ColourImageUploadedAt: &now, UpdatedAt: now}),
-		repo.RecordApproval(nil, &domain.StageApproval{ProjectID: "a400e5d7-0409-5a81-9050-3991208ceec1", EntityType: "chapter_outline", EntityID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", ApprovedAt: time.Now().UTC()}),
+		repo.CreatePage(nil, &domain.Page{ID: "a5669606-8764-5c90-b282-bad323a49baa", ChapterID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", PageNumber: 1, PanelIDs: []string{"a8a24397-3780-5a99-acea-8ab882a2ef5b"}, DraftImageURL: "https://storage.example/draft.png", LineArtImageURL: "https://storage.example/lineart.png", DraftApprovedAt: &approvedAt, LineArtApprovedAt: &approvedAt, ColourImageURL: "https://storage.example/coloured.png", ColourImageUploadedAt: &now, UpdatedAt: now}),
+		repo.RecordApproval(nil, &domain.StageApproval{ProjectID: "a400e5d7-0409-5a81-9050-3991208ceec1", EntityType: "chapter_outline", EntityID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", ApprovedAt: now.Add(time.Microsecond)}),
 	} {
 		if err != nil {
 			t.Fatal(err)
