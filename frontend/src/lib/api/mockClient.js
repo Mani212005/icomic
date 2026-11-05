@@ -45,14 +45,14 @@ export class MockApiClient {
 
 		this.projects.set(projId, {
 			id: projId,
-			title: 'The Quantum Detective',
-			art_style: 'cyberpunk-noir',
+			title: "Grandfather's Map",
+			art_style: 'indie-graphic-novel',
 			chapter_count: 3,
 			is_sample: true,
 			sample_label: 'Sample',
 			sample_source: 'Meta AI',
-			script: 'In the neon-drenched alleys of Sector 4, Detective Jack Vance pursued the enigmatic cipher...',
-			original_script: 'In the neon-drenched alleys of Sector 4, Detective Jack Vance pursued the enigmatic cipher...',
+			script: "Eli heads out early into the east woods with grandfather's brass compass, searching for the old bridge...",
+			original_script: "Eli heads out early into the east woods with grandfather's brass compass, searching for the old bridge...",
 			created_at: now,
 			updated_at: now
 		});
@@ -60,13 +60,13 @@ export class MockApiClient {
 		const char1 = {
 			id: 'char-1',
 			project_id: projId,
-			name: 'Jack Vance',
-			description: 'Cynical cybernetic investigator',
-			age_range: '35-45',
-			appearance: 'Tall with worn trenchcoat and cybernetic left eye',
-			hair_style: 'Disheveled dark hair',
-			clothing: 'Weathered grey trenchcoat, dark turtleneck',
-			personality: 'World-weary, observant, relentlessly determined',
+			name: 'Eli',
+			description: 'Curly-haired child exploring the forest',
+			age_range: '8-12',
+			appearance: 'Curly hair, freckles, expressive curious eyes',
+			hair_style: 'Messy dark curls',
+			clothing: 'Green patched hooded cloak, leather satchel, brass compass',
+			personality: 'Curious, hopeful, gentle, adventurous',
 			reference_image_url:
 				'/mock/sample-character.webp',
 			is_sample: true,
@@ -81,8 +81,8 @@ export class MockApiClient {
 			id: 'chap-1',
 			project_id: projId,
 			chapter_number: 1,
-			title: 'Midnight in Sector 4',
-			summary: 'Jack Vance discovers a murdered informant in a rainy neon alley.',
+			title: 'The East Woods',
+			summary: "Eli follows grandfather's map through the autumn forest toward the old bridge.",
 			approved_at: now,
 			status: 'approved',
 			created_at: now,
@@ -94,10 +94,10 @@ export class MockApiClient {
 			id: 'panel-1',
 			chapter_id: chap1.id,
 			panel_number: 1,
-			scene_description: 'Rain poured over towering holograms as Vance walked.',
-			dialogue: 'Another night, another dead lead.',
-			narration: 'The city breathes in neon and exhales static.',
-			image_prompt: 'Cyberpunk noir detective walking in rain under holographic billboards',
+			scene_description: "Eli heads out early into the woods, compass in hand.",
+			dialogue: "Grandfather's map said there'd be an old bridge past the east woods...",
+			narration: 'Morning mist settled over the quiet autumn trees.',
+			image_prompt: 'Curly-haired child in hooded cloak holding brass compass in misty forest',
 			created_at: now,
 			updated_at: now
 		};
@@ -126,11 +126,11 @@ export class MockApiClient {
 		this.pages.set(page1.id, page1);
 
 		this.palettes.set(page1.id, [
-			{ region_name: 'sky', hex_color: '#1E293B', label: 'Night Sky' },
-			{ region_name: 'neon', hex_color: '#38BDF8', label: 'Cyan Neon' },
-			{ region_name: 'coat', hex_color: '#991B1B', label: 'Trenchcoat Crimson' },
-			{ region_name: 'skin', hex_color: '#FDBA74', label: 'Warm Skin' },
-			{ region_name: 'alley', hex_color: '#475569', label: 'Wet Concrete' }
+			{ region_name: 'sky', hex_color: '#7DA0C4', label: 'Morning Sky' },
+			{ region_name: 'foliage', hex_color: '#2D5A27', label: 'Forest Green' },
+			{ region_name: 'cloak', hex_color: '#4A6B32', label: 'Forest Cloak' },
+			{ region_name: 'skin', hex_color: '#EDBB99', label: 'Warm Skin' },
+			{ region_name: 'earth', hex_color: '#8D6E63', label: 'Woodland Path' }
 		]);
 	}
 
@@ -421,10 +421,10 @@ export class MockApiClient {
 	async suggestColourPalette(pageId) {
 		const job = this.createJob('proj-demo-1', 'colour_suggestion', 'colour');
 		const palette = [
-			{ region_name: 'sky', hex_color: '#1E293B', label: 'Night Sky' },
-			{ region_name: 'neon', hex_color: '#38BDF8', label: 'Cyan Glow' },
-			{ region_name: 'coat', hex_color: '#E11D48', label: 'Crimson Trenchcoat' },
-			{ region_name: 'skin', hex_color: '#FED7AA', label: 'Character Skin' }
+			{ region_name: 'sky', hex_color: '#7DA0C4', label: 'Morning Sky' },
+			{ region_name: 'foliage', hex_color: '#2D5A27', label: 'Forest Green' },
+			{ region_name: 'cloak', hex_color: '#4A6B32', label: 'Forest Cloak' },
+			{ region_name: 'skin', hex_color: '#EDBB99', label: 'Warm Skin' }
 		];
 		this.palettes.set(pageId, palette);
 		return { job, palette };

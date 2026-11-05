@@ -10,7 +10,7 @@ test('MockApiClient initializes with initial seed data', async () => {
 
 	const projects = await client.listProjects();
 	assert.equal(projects.length, 1);
-	assert.equal(projects[0].title, 'The Quantum Detective');
+	assert.equal(projects[0].title, "Grandfather's Map");
 
 	const credit = await client.getCreditUsage();
 	assert.equal(credit.currency, 'USD');
@@ -45,7 +45,7 @@ test('MockApiClient manages characters and approval cycle', async () => {
 	const characters = await client.getCharacters(project.id);
 	assert.ok(characters.length >= 1);
 	const char = characters[0];
-	assert.equal(char.name, 'Jack Vance');
+	assert.equal(char.name, 'Eli');
 
 	const { job, character } = await client.generateCharacterReference(char.id);
 	assert.ok(job.id);
