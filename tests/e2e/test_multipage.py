@@ -3,6 +3,10 @@
 import importlib.util
 import os
 import subprocess
+from urllib.parse import urlsplit
+
+import httpx
+import pytest
 
 from conftest import find_free_port, terminate_process, wait_for_health
 
@@ -20,7 +24,11 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
     }
     with (tmp_path / "go.log").open("w") as log:
         proc = subprocess.Popen(
-            [str(compiled_go_server)], env=env, stdout=log, stderr=log, start_new_session=True
+            [str(compiled_go_server)],
+            env=env,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
         )
         try:
             wait_for_health(f"http://127.0.0.1:{port}/healthz")
@@ -34,7 +42,9 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
             # This fresh in-memory server has exactly one supported dev fixture.
             # The PostgreSQL runner provisions a distinct UUID and ledger per run.
             monkeypatch.setattr(
-                runner, "provision_run_user", lambda: "00000000-0000-0000-0000-000000000001"
+                runner,
+                "provision_run_user",
+                lambda: "00000000-0000-0000-0000-000000000001",
             )
             guard = runner.CostGuard(float("inf"), False)
             guard.script_file = repo_root / "tests/fixtures/the_tide_clock.txt"
@@ -43,5 +53,68 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
             assert pages == 12
             assert guard.pdf_page_count == 13
             assert runner.verify_pdf((tmp_path / "latest.pdf").read_bytes(), 12) == 13
+
+            # Reuse the paid project and approvals. Only the four explicitly
+            # selected finishes may generate new image work; drafts stay intact.
+            project_id = guard.project_id
+            chapters = runner.json_request(f"/api/v1/projects/{project_id}/chapters")[
+                "chapters"
+            ]
+
+            def saved_pages():
+                return [
+                    page
+                    for chapter in chapters
+                    for page in runner.json_request(
+                        f"/api/v1/chapters/{chapter['id']}/pages"
+                    )["pages"]
+                ]
+
+            original = saved_pages()
+            selected = {1, 6, 8, 9}
+            sources = {}
+
+            def fetch_source(url):
+                response = httpx.get(ai_service["base_url"] + urlsplit(url).path)
+                response.raise_for_status()
+                return response.content
+
+            for number in selected:
+                page = original[number - 1]
+                url = page.get("painted_page_image_url") or page["line_art_image_url"]
+                sources[url] = fetch_source(url)
+            before = runner.json_request("/api/v1/me/credit-usage")["balance"]
+            resumed = runner.CostGuard(float("inf"), False)
+            resumed.script_file = guard.script_file
+            pages, same_project = runner.run_flow(
+                resumed,
+                tmp_path / "resumed",
+                resume_project_id=project_id,
+                resume_user_id=guard.user_id,
+                repaint_pages=selected,
+            )
+            assert same_project == project_id and (
+                resumed.panel_count,
+                pages,
+                resumed.pdf_page_count,
+            ) == (51, 12, 13)
+            after = runner.json_request("/api/v1/me/credit-usage")["balance"]
+            assert before - after == pytest.approx(0.04)
+            updated = saved_pages()
+            for number, (old, new) in enumerate(zip(original, updated, strict=True), 1):
+                assert old["draft_image_url"] == new["draft_image_url"]
+                assert old["draft_image_job_id"] == new["draft_image_job_id"]
+                if number in selected:
+                    assert new["painted_page_image_job_id"] != old.get(
+                        "painted_page_image_job_id"
+                    )
+                    assert new["painted_page_approved_at"]
+                else:
+                    assert old.get("painted_page_image_url") == new.get(
+                        "painted_page_image_url"
+                    )
+            assert original[0]["line_art_image_url"] == updated[0]["line_art_image_url"]
+            for url, content in sources.items():
+                assert fetch_source(url) == content
         finally:
             terminate_process(proc)

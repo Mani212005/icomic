@@ -8,6 +8,10 @@ Each managed run starts a unique isolated Compose stack and provisions its own
 PostgreSQL user. E2E image limits default to 100/day and 1000/month in that stack
 only; --skip-services leaves external service policy unchanged. No existing
 user's quota counters or persisted policy rows are changed.
+Attached resume can explicitly repaint selected global comic page numbers with
+--repaint-pages 1 6 8 9. Those pages must already have approved drafts. Completed
+work remains skipped unless selected. --retry-uncertain-job-id also accepts a
+legacy failed image job only when this run's provider ledger proves it uncertain.
 """
 
 from __future__ import annotations
@@ -414,10 +418,16 @@ def run_flow(
     resume_project_id: str | None = None,
     resume_user_id: str | None = None,
     retry_uncertain_job_id: str | None = None,
+    repaint_pages: set[int] | None = None,
 ) -> tuple[int, str]:
     from colouring import colour_enclosed_regions
 
     global RUN_USER_ID
+    repaint_pages = set(repaint_pages or [])
+    if repaint_pages and (not resume_project_id or min(repaint_pages) < 1):
+        raise E2EError(
+            "repaint requires project resume and positive global page numbers"
+        )
     guard.current_stage = "provision_user"
     RUN_USER_ID = resume_user_id or provision_run_user()
     guard.user_id = RUN_USER_ID
@@ -475,11 +485,25 @@ def run_flow(
     )
 
     retry_was_used = False
+
+    def uncertain_job(saved_job: dict, job_id: str) -> bool:
+        if saved_job.get("status") == "uncertain":
+            return True
+        # Older clients stored protocol failures as failed in Go, while the
+        # durable provider ledger correctly retained the uncertain reservation.
+        return saved_job.get("status") == "failed" and any(
+            call.get("job_id") == job_id
+            and call.get("stage") == "image"
+            and call.get("status") == "uncertain"
+            and call.get("actual_cost_usd") is None
+            for call in (guard.provider_report or {}).get("calls", [])
+        )
+
     if retry_uncertain_job_id:
         saved_job = json_request(
             f"/api/v1/generation-jobs/{retry_uncertain_job_id}"
         ).get("job", {})
-        if saved_job.get("status") != "uncertain":
+        if not uncertain_job(saved_job, retry_uncertain_job_id):
             raise E2EError(
                 f"retry refused: job {retry_uncertain_job_id} is not uncertain"
             )
@@ -502,7 +526,7 @@ def run_flow(
             saved_job = json_request(f"/api/v1/generation-jobs/{existing_job_id}").get(
                 "job", {}
             )
-            if saved_job.get("status") == "uncertain":
+            if uncertain_job(saved_job, existing_job_id):
                 if retry_uncertain_job_id != existing_job_id:
                     raise E2EError(
                         f"image job {existing_job_id} has an uncertain provider outcome; "
@@ -664,6 +688,20 @@ def run_flow(
     guard.panel_count = len(panels)
     print(f"PASS comic pages generated: {len(panels)} panels across {len(pages)} pages")
 
+    for number in sorted(repaint_pages):
+        if number > len(pages):
+            raise E2EError(f"repaint page {number} is outside this comic")
+        saved = pages[number - 1]
+        if not saved.get("draft_image_url") or not saved.get("draft_approved_at"):
+            raise E2EError(f"repaint page {number} requires an existing approved draft")
+        job_id = saved.get("painted_page_image_job_id") or saved.get(
+            "line_art_image_job_id"
+        )
+        if job_id:
+            job = json_request(f"/api/v1/generation-jobs/{job_id}").get("job", {})
+            if job.get("status") != "done":
+                raise E2EError(f"repaint page {number} requires a completed finish job")
+
     for page_index, page in enumerate(pages):
         page_id = page["id"]
         if not page.get("draft_image_url"):
@@ -673,7 +711,8 @@ def run_flow(
         json_request(f"/api/v1/pages/{page_id}/draft/approve", "POST")
         # Use the explicit ink variant once to keep that path covered; every
         # other page exercises the normal painted default with one finish call.
-        ink_variant = page_index == 0
+        repaint = page_index + 1 in repaint_pages
+        ink_variant = page_index == 0 and not repaint
         variant_query = "?variant=ink" if ink_variant else ""
         finish_path = f"/api/v1/pages/{page_id}/line-art{variant_query}"
         finish_image_url = (
@@ -686,7 +725,9 @@ def run_flow(
             if ink_variant
             else page.get("painted_page_image_job_id")
         )
-        if not finish_image_url:
+        if repaint:
+            checked_call(guard, "image", 1, "POST", finish_path)
+        elif not finish_image_url:
             generate_missing_image(finish_path, finish_job_id)
         json_request(f"/api/v1/pages/{page_id}/line-art/approve{variant_query}", "POST")
         if not ink_variant:
@@ -783,6 +824,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="explicitly re-issue this uncertain page draft as a new attempt with a new idempotency key",
     )
     parser.add_argument(
+        "--repaint-pages",
+        nargs="+",
+        type=int,
+        default=[],
+        metavar="PAGE",
+        help="explicitly repaint these global comic page numbers from existing approved drafts; requires resume",
+    )
+    parser.add_argument(
         "--attach-existing-stack",
         action="store_true",
         help="attach to ICOMIC_E2E_API_URL; never starts services or applies the E2E quota overlay",
@@ -822,6 +871,16 @@ def main(argv: list[str] | None = None) -> int:
     RUN_USER_ID = None
     COMPOSE_PROJECT = None
     args = parse_args(argv)
+    if args.repaint_pages and (
+        not args.resume_project_id
+        or min(args.repaint_pages) < 1
+        or len(set(args.repaint_pages)) != len(args.repaint_pages)
+    ):
+        print(
+            "REFUSED: --repaint-pages requires resume and distinct positive page numbers",
+            file=sys.stderr,
+        )
+        return 2
     if args.resume_project_id and (not args.resume_user_id or not args.script_file):
         print(
             "REFUSED: resume requires --resume-user-id and --script-file",
@@ -1029,10 +1088,16 @@ def main(argv: list[str] | None = None) -> int:
     project_id = None
     page_count = 0
     failure = None
+    starting_actual = starting_accounted = 0.0
     try:
         if not args.skip_services:
             ensure_services()
         guard.refresh()
+        if args.resume_project_id:
+            starting_actual = guard.actual
+            starting_accounted = (guard.provider_report or {}).get(
+                "accounted_spend_usd", guard.actual
+            )
         if args.resume_project_id:
             page_count, project_id = run_flow(
                 guard,
@@ -1040,6 +1105,7 @@ def main(argv: list[str] | None = None) -> int:
                 resume_project_id=args.resume_project_id,
                 resume_user_id=args.resume_user_id,
                 retry_uncertain_job_id=args.retry_uncertain_job_id,
+                repaint_pages=set(args.repaint_pages),
             )
         else:
             page_count, project_id = run_flow(guard, args.artifact_dir)
@@ -1075,6 +1141,11 @@ def main(argv: list[str] | None = None) -> int:
         "prior_spend_source": args.prior_spend_source,
         "third_check_reserve_usd": round(guard.third_check_reserve, 9),
         "actual_spend_usd": round(guard.actual, 9),
+        "resume_from_actual_spend_usd": round(starting_actual, 9),
+        "resume_from_accounted_spend_usd": round(starting_accounted, 9),
+        "new_actual_spend_usd": round(guard.actual - starting_actual, 9),
+        "resume_project_id": args.resume_project_id,
+        "repaint_pages": sorted(args.repaint_pages),
         "prior_spend_usd": args.prior_spend_usd,
         "cumulative_observed_spend_usd": round(args.prior_spend_usd + guard.actual, 9),
         "accounted_spend_usd": round(

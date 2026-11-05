@@ -31,6 +31,20 @@ quota overlay. A live attached resume also requires `--resume-cost-run-id` and t
 matching existing provider ledger in `--artifact-dir`, shared with the attached AI
 service, configured with the same run ID and budget. To explicitly retry one uncertain image job, add
 `--retry-uncertain-job-id <job-id>`; the runner creates a fresh key and reservation.
+For legacy image jobs marked failed by an older client, the explicit retry is accepted only when the matching provider ledger entry proves that same job is uncertain and unpriced.
+The job's project and image type are still checked; no historical job or quota row is rewritten.
+
+`--repaint-pages 1 6 8 9` explicitly replaces only those global comic page finishes with painted defaults during an attached resume.
+Every selected page must already have an approved draft and a completed prior finish.
+Unselected completed finishes and all existing drafts are reused; old image objects remain intact.
+Cost reports retain totals for the shared ledger and separately record the starting totals and new observed spend for this invocation.
+When attaching to an existing ledger, retain its original prior-spend value rather than adding its already-accounted calls to the prior again.
+
+Fake storage remains in memory by default.
+For an isolated E2E service update that must preserve paid assets, `ICOMIC_E2E_FAKE_STORAGE_DIR` enables checkpoint-backed storage and requires a valid E2E run ID.
+The directory contains exact objects under `objects/<storage-key>` and UTF-8 content types under `content-types/<sha256-of-key>.txt`.
+Checkpoint restoration preserves the existing storage keys/URLs; subsequent writes are atomic and private to that configured directory.
+An attached runner never updates or restarts services: the service must already run the intended code and point to the verified checkpoint before provider calls resume.
 
 The prior isolated live attempt persisted 51 panels,
 11 profiles, six references, four outlines, and 12 page allocations before the first

@@ -121,7 +121,12 @@ def get_storage_adapter(selection: str | None = None) -> StoragePort:
     name = (selection or os.getenv("ADAPTER_STORAGE", "fake")).strip().lower()
     if name == "fake":
         base_url = os.getenv("STORAGE_BASE_URL")
-        return FakeStorageAdapter(base_url=base_url)
+        directory = os.getenv("ICOMIC_E2E_FAKE_STORAGE_DIR")
+        if directory and not re.fullmatch(r"[0-9a-f]{32}", os.getenv("ICOMIC_E2E_RUN_ID", "")):
+            raise ValueError("Checkpoint-backed fake storage requires an isolated E2E run ID")
+        return FakeStorageAdapter(
+            base_url=base_url, directory=Path(directory) if directory else None
+        )
     if name == "s3":
         return S3Adapter()
     raise ValueError(f"Unknown storage adapter: {name}. Supported: 'fake', 's3'.")

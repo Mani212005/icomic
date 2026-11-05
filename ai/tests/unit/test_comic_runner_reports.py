@@ -174,9 +174,19 @@ def test_resume_requires_explicit_existing_stack_attachment(tmp_path):
     )
 
 
-@pytest.mark.parametrize("explicit_retry", [False, True])
+@pytest.mark.parametrize(
+    "explicit_retry,legacy",
+    [
+        (False, None),
+        (True, None),
+        (False, "matching"),
+        (True, "matching"),
+        (True, "wrong-job"),
+        (True, "priced"),
+    ],
+)
 def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
-    monkeypatch, tmp_path, explicit_retry
+    monkeypatch, tmp_path, explicit_retry, legacy
 ):
     source = "Nia guides a boat home at sunrise."
     script_file = tmp_path / "story.txt"
@@ -230,7 +240,7 @@ def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
             return {
                 "job": {
                     "id": "uncertain-1",
-                    "status": "uncertain",
+                    "status": "failed" if legacy else "uncertain",
                     "project_id": "project-1",
                     "job_type": "draft_sketch",
                 }
@@ -253,6 +263,29 @@ def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
     monkeypatch.setattr(runner, "binary_request", lambda *args: {})
     guard = runner.CostGuard(float("inf"), live=False)
     guard.script_file = script_file
+    if legacy:
+        guard.provider_report = {
+            "accounted_spend_usd": 0.01,
+            "calls": [
+                {
+                    "job_id": "other-job" if legacy == "wrong-job" else "uncertain-1",
+                    "stage": "image",
+                    "status": "uncertain",
+                    "actual_cost_usd": 0.01 if legacy == "priced" else None,
+                }
+            ],
+        }
+    if legacy in {"wrong-job", "priced"}:
+        with pytest.raises(runner.E2EError, match="is not uncertain"):
+            runner.run_flow(
+                guard,
+                tmp_path,
+                resume_project_id="project-1",
+                resume_user_id="user-1",
+                retry_uncertain_job_id="uncertain-1",
+            )
+        assert not calls
+        return
     if explicit_retry:
         count, project_id = runner.run_flow(
             guard,
@@ -308,6 +341,92 @@ def test_resume_refuses_script_mismatch_before_project_mutation(monkeypatch, tmp
             resume_user_id="user-1",
         )
     assert calls == [("GET", "/api/v1/projects/project-1")]
+
+
+@pytest.mark.parametrize("draft_approved,selected", [(True, 1), (False, 1), (True, 2)])
+def test_explicit_repaint_reuses_draft_and_buys_only_a_painted_finish(
+    monkeypatch, tmp_path, draft_approved, selected
+):
+    source = "Nia guides the boat home."
+    script = tmp_path / "story.txt"
+    script.write_text(source)
+    ids = [f"panel-{n}" for n in range(4)]
+    page = {
+        "id": "page-1",
+        "panel_ids": ids,
+        "draft_image_url": "http://local/approved-draft",
+        "draft_approved_at": "saved" if draft_approved else None,
+        "line_art_image_url": "http://local/old-ink",
+        "line_art_image_job_id": "old-ink-job",
+    }
+    calls = []
+
+    def request(path, method="GET", payload=None, extra_headers=None):
+        if method != "GET":
+            calls.append((method, path))
+        if path == "/api/v1/projects/project-1":
+            return {"project": {"id": "project-1", "user_id": "user-1", "original_script": source}}
+        if path.endswith("/characters"):
+            return {
+                "characters": [
+                    {
+                        "id": "nia",
+                        "name": "Nia",
+                        "approved_at": "saved",
+                        "reference_image_url": "http://local/reference",
+                        "visual_attributes": {},
+                    }
+                ]
+            }
+        if path.endswith("/chapters"):
+            return {"chapters": [{"id": "chapter-1", "status": "approved"}]}
+        if path.endswith("/panels"):
+            return {"panels": [{"id": i} for i in ids]}
+        if path.endswith("/pages"):
+            return {"pages": [page]}
+        if path.endswith("/old-ink-job"):
+            return {"job": {"status": "done"}}
+        if path.endswith("/new-paint-job"):
+            return {"job": {"status": "done", "actual_cost": 0.01}}
+        if path.endswith("/line-art"):
+            assert "variant=ink" not in path
+            return {"job_id": "new-paint-job"}
+        if path.endswith("/export"):
+            return {"export": {"id": "export-1"}}
+        if path.endswith("/export-1"):
+            return {"export": {"status": "completed"}}
+        if path.endswith("/download"):
+            return b"%PDF-1.7 /Type /Page /Type /Page"
+        return {}
+
+    monkeypatch.setattr(runner, "json_request", request)
+    guard = runner.CostGuard(float("inf"), live=False)
+    guard.script_file = script
+    kwargs = {
+        "resume_project_id": "project-1",
+        "resume_user_id": "user-1",
+        "repaint_pages": {selected},
+    }
+    if not draft_approved or selected > 1:
+        with pytest.raises(runner.E2EError, match="approved draft|outside this comic"):
+            runner.run_flow(guard, tmp_path / "artifacts", **kwargs)
+        assert guard.actual == 0
+        return
+    count, project = runner.run_flow(guard, tmp_path / "artifacts", **kwargs)
+    assert (count, project) == (1, "project-1")
+    assert guard.actual == 0.01
+    assert page["line_art_image_url"] == "http://local/old-ink"
+    assert ("POST", "/api/v1/pages/page-1/line-art") in calls
+    assert not any(
+        path.endswith(("/draft", "/analyze", "/reference-image", "/suggest")) for _, path in calls
+    )
+    assert not any("variant=ink" in path or method == "DELETE" for method, path in calls)
+
+
+@pytest.mark.parametrize("pages", [["0"], ["1", "1"], ["-1"]])
+def test_invalid_repaint_selection_is_refused_before_services(monkeypatch, pages):
+    monkeypatch.setattr(runner, "ensure_services", lambda: pytest.fail("must not start services"))
+    assert runner.main(["--resume-project-id", "project-1", "--repaint-pages", *pages]) == 2
 
 
 def test_consecutive_flows_provision_distinct_users_and_use_their_headers(monkeypatch, tmp_path):
