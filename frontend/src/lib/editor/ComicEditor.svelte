@@ -559,6 +559,9 @@
 							<div class="char-details">
 								<div class="char-title-row">
 									<h3>{char.name} <span class="age-badge">{char.visual_attributes?.age_range || char.age_range || ''}</span></h3>
+									{#if char.is_sample || char.sample_label}
+										<span class="sample-tag" title="Verified model character reference"><Icon name="check" size={14} /> Model Ref</span>
+									{/if}
 									<button class="edit-icon-btn" on:click={() => startEditChar(char)}><Icon name="edit" size={18} /> Edit</button>
 								</div>
 								<p><strong>Bio:</strong> {char.description}</p>
@@ -757,7 +760,12 @@
 			<div class="page-grid">
 				{#each pages as page}
 					<div class="page-preview-card" class:card-stale={isApprovalStale(page.draft_approved_at, page.updated_at)}>
-						<h3>Chapter {page.chapter_number}, Page {page.page_number}</h3>
+						<div class="card-title-row">
+							<h3>Chapter {page.chapter_number}, Page {page.page_number}</h3>
+							{#if page.is_sample || page.sample_label}
+								<span class="sample-tag" title="Verified model draft layout"><Icon name="check" size={14} /> Model Draft</span>
+							{/if}
+						</div>
 						<div class="img-container">
 							{#if page.draft_image_url && !failedImages.has(page.draft_image_url)}
 								<img src={page.draft_image_url} alt="Draft {page.page_number}" on:error={markImageFailed} />
@@ -825,7 +833,12 @@
 			<div class="page-grid">
 				{#each pages as page}
 					<div class="page-preview-card" class:card-stale={isApprovalStale(page.line_art_approved_at, page.updated_at)}>
-						<h3>Chapter {page.chapter_number}, Page {page.page_number}</h3>
+						<div class="card-title-row">
+							<h3>Chapter {page.chapter_number}, Page {page.page_number}</h3>
+							{#if page.is_sample || page.sample_label}
+								<span class="sample-tag" title="Verified model generation sample"><Icon name="check" size={14} /> {page.sample_label || 'Real Sample'}</span>
+							{/if}
+						</div>
 						<div class="img-container">
 							{#if (page.line_art_image_url || page.line_art_url) && !failedImages.has(page.line_art_image_url || page.line_art_url)}
 								<img src={page.line_art_image_url || page.line_art_url} alt="Page {page.page_number}" on:error={markImageFailed} />
