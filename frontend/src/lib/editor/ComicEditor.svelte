@@ -61,14 +61,14 @@
 	}
 
 	const stageList = [
-		{ id: STAGES.SCRIPT, label: '1. Script' },
-		{ id: STAGES.CHARACTERS, label: '2. Characters' },
-		{ id: STAGES.CHAPTERS, label: '3. Outline' },
-		{ id: STAGES.PANELS, label: '4. Panels' },
-		{ id: STAGES.DRAFT, label: '5. Drafts' },
-		{ id: STAGES.LINE_ART, label: '6. Lines' },
-		{ id: STAGES.COLOUR, label: '7. Colour' },
-		{ id: STAGES.EXPORT, label: '8. Export' }
+		{ id: STAGES.SCRIPT, label: 'Script' },
+		{ id: STAGES.CHARACTERS, label: 'Characters' },
+		{ id: STAGES.CHAPTERS, label: 'Outline' },
+		{ id: STAGES.PANELS, label: 'Panels' },
+		{ id: STAGES.DRAFT, label: 'Drafts' },
+		{ id: STAGES.LINE_ART, label: 'Lines' },
+		{ id: STAGES.COLOUR, label: 'Colour' },
+		{ id: STAGES.EXPORT, label: 'Export' }
 	];
 
 	$: effectiveScript = project ? (project.original_script || project.script || '') : '';
@@ -560,13 +560,13 @@
 								<div class="char-title-row">
 									<h3>{char.name} <span class="age-badge">{char.visual_attributes?.age_range || char.age_range || ''}</span></h3>
 									{#if char.is_sample || char.sample_label}
-										<span class="sample-tag" title="Verified model character reference"><Icon name="check" size={14} /> Model Ref</span>
+										<span class="sample-tag">Sample</span>
 									{/if}
 									<button class="edit-icon-btn" on:click={() => startEditChar(char)}><Icon name="edit" size={18} /> Edit</button>
 								</div>
 								<p><strong>Bio:</strong> {char.description}</p>
 								{#if char.visual_attributes?.reference_role === 'extra'}
-									<p>Extra - reference image optional. Approve the profile to continue.</p>
+									<p>Reference image optional.</p>
 								{/if}
 								<p><strong>Look:</strong> {char.visual_attributes?.appearance || char.appearance || 'Standard'}</p>
 								<p><strong>Clothes:</strong> {char.visual_attributes?.clothing || char.clothing || 'Standard'}</p>
@@ -574,7 +574,7 @@
 						{/if}
 
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)} aria-label="Regenerate reference">
+							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)} aria-label="Regenerate">
 								<Icon name="regenerate" size={18} /> Regen ($0.01)
 							</button>
 
@@ -763,7 +763,7 @@
 						<div class="card-title-row">
 							<h3>Chapter {page.chapter_number}, Page {page.page_number}</h3>
 							{#if page.is_sample || page.sample_label}
-								<span class="sample-tag" title="Verified model draft layout"><Icon name="check" size={14} /> Model Draft</span>
+								<span class="sample-tag">Sample</span>
 							{/if}
 						</div>
 						<div class="img-container">
@@ -774,7 +774,7 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-			<button class="secondary-btn" on:click={() => generateDraft(page.id)} aria-label="Regenerate draft">
+			<button class="secondary-btn" on:click={() => generateDraft(page.id)} aria-label="Regenerate">
 								<Icon name="regenerate" size={18} /> Regen ($0.01)
 							</button>
 
@@ -836,7 +836,7 @@
 						<div class="card-title-row">
 							<h3>Chapter {page.chapter_number}, Page {page.page_number}</h3>
 							{#if page.is_sample || page.sample_label}
-								<span class="sample-tag" title="Verified model generation sample"><Icon name="check" size={14} /> {page.sample_label || 'Real Sample'}</span>
+								<span class="sample-tag">Sample</span>
 							{/if}
 						</div>
 						<div class="img-container">
@@ -847,7 +847,7 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-			<button class="secondary-btn" on:click={() => generateLineArt(page.id)} aria-label="Regenerate line art">
+			<button class="secondary-btn" on:click={() => generateLineArt(page.id)} aria-label="Regenerate">
 								<Icon name="regenerate" size={18} /> Regen ($0.01)
 							</button>
 

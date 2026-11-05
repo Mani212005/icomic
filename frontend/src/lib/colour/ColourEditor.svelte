@@ -87,7 +87,7 @@
 		lineArtError = '';
 
 		if (!lineArtUrl) {
-			lineArtError = 'Page artwork is unavailable. Reload the page before colouring.';
+			lineArtError = 'Artwork unavailable. Reload page.';
 			return;
 		}
 
@@ -111,7 +111,7 @@
 			lineArtReady = true;
 		};
 		img.onerror = () => {
-			lineArtError = 'Page artwork could not be loaded. Check the connection and reload before colouring.';
+			lineArtError = 'Artwork failed to load. Reload page.';
 		};
 		img.src = lineArtUrl;
 	}
@@ -186,7 +186,7 @@
 	function pickColour(e) {
 		const { x, y } = getCanvasCoords(e);
 		const pixel = ctx.getImageData(x, y, 1, 1).data;
-		const hex = `#${((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1)}`;
+		const hex = '#' + ((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1);
 		selectedColour = hex;
 		customColour = hex;
 		activeTool = 'bucket';

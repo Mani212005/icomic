@@ -90,11 +90,11 @@ test('MockApiClient regeneration preserves representative sample outputs', async
 	assert.equal(regChar.reference_image_url, '/mock/sample-character.webp');
 });
 
-test('Frontend UI templates render prominent sample banner and sample tag in mock mode', () => {
+test('Frontend UI templates render sample indicator on sample assets in mock mode', () => {
 	const pageTemplate = readFileSync(join(root, 'src/routes/+page.svelte'), 'utf8');
 	assert.ok(
-		pageTemplate.includes('demo-sample-banner'),
-		'+page.svelte must include prominent demo-sample-banner in mock mode'
+		pageTemplate.includes('mock-pill'),
+		'+page.svelte must identify mock mode with status pill'
 	);
 
 	const editorTemplate = readFileSync(join(root, 'src/lib/editor/ComicEditor.svelte'), 'utf8');
