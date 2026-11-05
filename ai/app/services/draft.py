@@ -6,6 +6,7 @@ from uuid import uuid4
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
 from ..gen.models import CharacterRenderIdentity, PanelTextItem
+from .image_prompts import DRAFT_PROMPT_VERSION
 from .images import store_page_image
 from .render_brief import build_page_render_request
 
@@ -49,7 +50,11 @@ class DraftService:
             reference_images=reference_images,
             hashed_user_id=hashed_user_id,
             style=style_bible.style_id,
+            role="draft",
+            prompt_version=DRAFT_PROMPT_VERSION,
         )
+        result.provenance_metadata["role"] = "draft"
+        result.provenance_metadata["prompt_version"] = DRAFT_PROMPT_VERSION
 
         url = store_page_image(
             self.storage_adapter, f"pages/{page_id}/{uuid4().hex}/draft_page_{page_number}", result
