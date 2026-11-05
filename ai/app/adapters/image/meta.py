@@ -69,6 +69,9 @@ class MetaImageAdapter(ImagePort):
         reference_images: list[bytes],
         hashed_user_id: str,
         style: str,
+        role: str = "image",
+        prompt_version: str = "1.0.0",
+        **kwargs: Any,
     ) -> ImageResult:
         """Generate an image from prompt, optional turnaround references, and style descriptors."""
         payload = build_responses_image_request(
@@ -78,6 +81,7 @@ class MetaImageAdapter(ImagePort):
             hashed_user_id=hashed_user_id,
             style=style,
             user_field=self.user_field,
+            **kwargs,
         )
 
         data, headers = self._client.post("/responses", payload)
@@ -85,7 +89,13 @@ class MetaImageAdapter(ImagePort):
         self.last_response_keys = sorted(data.keys()) if isinstance(data, dict) else []
         self.last_response_data = data
         try:
-            result = parse_responses_image_response(data, self.model_id, headers)
+            result = parse_responses_image_response(
+                data,
+                self.model_id,
+                headers,
+                role=role,
+                prompt_version=prompt_version,
+            )
         except Exception as exc:
             self._client.record_invalid_response(type(exc).__name__)
             raise

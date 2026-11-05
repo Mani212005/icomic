@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
-from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
+from .image_prompts import CHARACTER_PROMPT_VERSION, IMAGE_ONLY_INSTRUCTIONS
 from .images import store_image
 
 
@@ -36,7 +36,13 @@ class CharacterService:
             reference_images=reference_images or [],
             hashed_user_id=hashed_user_id,
             style=style_bible.style_id,
+            role="character_reference",
+            prompt_version=CHARACTER_PROMPT_VERSION,
         )
+        result.provenance_metadata["role"] = "character_reference"
+        result.provenance_metadata["prompt_version"] = CHARACTER_PROMPT_VERSION
+        result.provenance_metadata["is_derivative"] = False
+        result.provenance_metadata["derivative_hash"] = None
 
         url = store_image(
             self.storage_adapter, f"characters/{character_id}/{uuid4().hex}/reference", result

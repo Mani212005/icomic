@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -12,9 +13,11 @@ import struct
 import threading
 import time
 from collections.abc import Callable, Mapping
+from io import BytesIO
 from typing import Any
 
 import httpx
+from PIL import Image
 from typing_extensions import Self
 
 from ..provider_costs import ProviderBudgetError, ProviderCostLedger, token_output_bound
@@ -336,10 +339,21 @@ def detect_c2pa_markers(image_bytes: bytes) -> bool:
     return bool(image_bytes.startswith(b"RIFF") and _detect_webp_jumbf(image_bytes))
 
 
+def decode_image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
+    """Decode image dimensions (width, height) without altering raw bytes."""
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            return img.size
+    except (OSError, ValueError):
+        return None
+
+
 def extract_provenance(
     response_data: dict[str, Any],
     image_bytes: bytes,
     model_id: str,
+    role: str = "image",
+    prompt_version: str = "1.0.0",
 ) -> dict[str, Any]:
     """Preserve provenance metadata from response fields and embedded markers.
 
@@ -360,17 +374,41 @@ def extract_provenance(
 
     # Ensure C2PA information is structured
     c2pa_info = dict(provenance.get("c2pa", {})) if isinstance(provenance.get("c2pa"), dict) else {}
-    c2pa_info.setdefault(
-        "watermark_present", has_manifest or c2pa_info.get("watermark_present", True)
-    )
-    c2pa_info.setdefault("manifest_marker_detected", has_manifest)
-    if "claim_generator" not in c2pa_info:
+    c2pa_info["manifest_marker_detected"] = has_manifest
+    if "watermark_present" in c2pa_info:
+        c2pa_info["watermark_present"] = bool(c2pa_info["watermark_present"])
+    else:
+        c2pa_info["watermark_present"] = has_manifest
+    if has_manifest and "claim_generator" not in c2pa_info:
         c2pa_info["claim_generator"] = "Meta-AI-Provenance/1.0"
+    elif not has_manifest and "claim_generator" not in c2pa_info:
+        c2pa_info["claim_generator"] = None
 
     provenance["c2pa"] = c2pa_info
     provenance["model"] = model_id
     provenance["cost_usd"] = DEFAULT_IMAGE_COST_USD
-    provenance["media_type"] = detect_image_media_type(image_bytes)
+
+    media_type = detect_image_media_type(image_bytes)
+    provenance["media_type"] = media_type
+
+    # Master-image contract: dimensions, hash, role, prompt version, response keys
+    dims = decode_image_dimensions(image_bytes)
+    if dims is not None:
+        width, height = dims
+        provenance["dimensions"] = {"width": width, "height": height}
+        provenance["width"] = width
+        provenance["height"] = height
+    else:
+        provenance["dimensions"] = None
+        provenance["width"] = None
+        provenance["height"] = None
+
+    provenance["source_hash"] = hashlib.sha256(image_bytes).hexdigest()
+    provenance["role"] = role
+    provenance["prompt_version"] = prompt_version
+    provenance["response_keys"] = (
+        sorted(response_data.keys()) if isinstance(response_data, dict) else []
+    )
 
     # Capture token usage if present
     usage = response_data.get("usage")
@@ -602,8 +640,15 @@ def build_responses_image_request(
     style: str | None = None,
     user_field: str = DEFAULT_META_USER_FIELD,
     previous_response_id: str | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Pure function to build Responses API request for image generation."""
+    if kwargs:
+        unsupported = sorted(kwargs.keys())
+        raise MetaConfigurationError(
+            f"Unsupported image options: {', '.join(unsupported)}. "
+            "Meta Responses image API does not support size, quality, seed, or batch parameters."
+        )
     if not prompt.strip():
         raise MetaConfigurationError("Image prompt must not be empty")
     content_parts: list[dict[str, Any]] = []
@@ -665,6 +710,8 @@ def parse_responses_image_response(
     data: dict[str, Any],
     model_id: str,
     headers: Mapping[str, str] | None = None,
+    role: str = "image",
+    prompt_version: str = "1.0.0",
 ) -> ImageResult:
     """Pure function to parse Responses API image response into ImageResult.
 
@@ -713,10 +760,20 @@ def parse_responses_image_response(
             request_id=request_id,
         ) from exc
 
-    provenance = extract_provenance(data, raw_bytes, model_id)
     media_type = detect_image_media_type(raw_bytes)
     if media_type == "application/octet-stream":
         raise ProviderOutputError("image", "unrecognized_image_bytes")
+
+    dims = decode_image_dimensions(raw_bytes)
+    width, height = dims if dims is not None else (None, None)
+
+    provenance = extract_provenance(
+        data,
+        raw_bytes,
+        model_id,
+        role=role,
+        prompt_version=prompt_version,
+    )
 
     return ImageResult(
         image_bytes=raw_bytes,
@@ -724,6 +781,8 @@ def parse_responses_image_response(
         model_id=model_id,
         request_id=request_id,
         media_type=media_type,
+        width=width,
+        height=height,
     )
 
 

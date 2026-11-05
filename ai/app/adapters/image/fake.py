@@ -49,28 +49,63 @@ class FakeImageAdapter(ImagePort):
         self.recorded_inputs: list[dict[str, Any]] = self.recorded_calls
 
     def generate(
-        self, prompt: str, reference_images: list[bytes], hashed_user_id: str, style: str
+        self,
+        prompt: str,
+        reference_images: list[bytes],
+        hashed_user_id: str,
+        style: str,
+        role: str = "image",
+        prompt_version: str = "1.0.0",
+        **kwargs: Any,
     ) -> ImageResult:
+        if kwargs:
+            unsupported = sorted(kwargs.keys())
+            raise ValueError(
+                f"Unsupported image options: {', '.join(unsupported)}. "
+                "Image generation does not support size, quality, seed, or batch count parameters."
+            )
         self.recorded_calls.append(
             {
                 "prompt": prompt,
                 "reference_images": list(reference_images),
                 "hashed_user_id": hashed_user_id,
                 "style": style,
+                "role": role,
+                "prompt_version": prompt_version,
             }
         )
         if self.replay_adapter is not None:
-            return self.replay_adapter.generate(prompt, reference_images, hashed_user_id, style)
+            return self.replay_adapter.generate(
+                prompt,
+                reference_images,
+                hashed_user_id,
+                style,
+                role=role,
+                prompt_version=prompt_version,
+                **kwargs,
+            )
         h = hashlib.sha256(f"{prompt}:{hashed_user_id}:{style}".encode()).hexdigest()
         request_id = f"req-fake-{h[:12]}"
+        source_hash = hashlib.sha256(self._png_bytes).hexdigest()
+        width, height = 64, 64
         provenance = {
             "c2pa": {
                 "claim_generator": "Meta-AI-Provenance/1.0",
                 "signature": f"sig-fake-{h[:16]}",
                 "watermark_present": True,
+                "manifest_marker_detected": False,
             },
             "model": self.model_id,
             "style": style,
+            "cost_usd": 0.01,
+            "media_type": "image/png",
+            "source_hash": source_hash,
+            "dimensions": {"width": width, "height": height},
+            "width": width,
+            "height": height,
+            "role": role,
+            "prompt_version": prompt_version,
+            "response_keys": ["created", "id", "model", "object", "output", "provenance"],
         }
         return ImageResult(
             image_bytes=self._png_bytes,
@@ -78,4 +113,6 @@ class FakeImageAdapter(ImagePort):
             model_id=self.model_id,
             request_id=request_id,
             media_type="image/png",
+            width=width,
+            height=height,
         )
