@@ -383,6 +383,7 @@ export class MockApiClient {
 
 		page.draft_approved_at = null;
 		page.line_art_approved_at = null;
+		page.painted_page_approved_at = null;
 		page.updated_at = now;
 		return { job, page };
 	}
@@ -397,28 +398,36 @@ export class MockApiClient {
 		return page;
 	}
 
-	async generateLineArt(pageId) {
+	async generateLineArt(pageId, variant) {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		const job = this.createJob('proj-demo-1', 'final_line_art', 'line_art');
 		const now = new Date().toISOString();
-		page.line_art_url = '/mock/sample-line-art.webp';
-		page.line_art_image_url = page.line_art_url;
+		if (variant === 'ink') {
+			page.line_art_url = '/mock/sample-line-art.webp';
+			page.line_art_image_url = page.line_art_url;
+			page.line_art_approved_at = null;
+		} else {
+			page.painted_page_image_url = '/mock/sample-painted-page.webp';
+			page.painted_page_variant = 'direct-from-brief';
+			page.painted_page_approved_at = null;
+		}
 		page.is_sample = true;
 		page.sample_label = 'Sample';
 		page.sample_source = 'Meta AI';
-		page.line_art_approved_at = null;
 		page.updated_at = now;
 		return { job, page };
 	}
 
-	async approveLineArt(pageId) {
+	async approveLineArt(pageId, variant) {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		let now = Date.now();
 		const activity = Date.parse(page.updated_at);
 		if (Number.isFinite(activity) && now <= activity) now = activity + 1;
-		page.line_art_approved_at = new Date(now).toISOString();
+		const approvedAt = new Date(now).toISOString();
+		if (variant === 'ink') page.line_art_approved_at = approvedAt;
+		else page.painted_page_approved_at = approvedAt;
 		return page;
 	}
 

@@ -664,18 +664,33 @@ def run_flow(
     guard.panel_count = len(panels)
     print(f"PASS comic pages generated: {len(panels)} panels across {len(pages)} pages")
 
-    for page in pages:
+    for page_index, page in enumerate(pages):
         page_id = page["id"]
         if not page.get("draft_image_url"):
             generate_missing_image(
                 f"/api/v1/pages/{page_id}/draft", page.get("draft_image_job_id")
             )
         json_request(f"/api/v1/pages/{page_id}/draft/approve", "POST")
-        if not page.get("line_art_image_url"):
-            generate_missing_image(
-                f"/api/v1/pages/{page_id}/line-art", page.get("line_art_image_job_id")
-            )
-        json_request(f"/api/v1/pages/{page_id}/line-art/approve", "POST")
+        # Use the explicit ink variant once to keep that path covered; every
+        # other page exercises the normal painted default with one finish call.
+        ink_variant = page_index == 0
+        variant_query = "?variant=ink" if ink_variant else ""
+        finish_path = f"/api/v1/pages/{page_id}/line-art{variant_query}"
+        finish_image_url = (
+            page.get("line_art_image_url")
+            if ink_variant
+            else page.get("painted_page_image_url")
+        )
+        finish_job_id = (
+            page.get("line_art_image_job_id")
+            if ink_variant
+            else page.get("painted_page_image_job_id")
+        )
+        if not finish_image_url:
+            generate_missing_image(finish_path, finish_job_id)
+        json_request(f"/api/v1/pages/{page_id}/line-art/approve{variant_query}", "POST")
+        if not ink_variant:
+            continue
         if page.get("colour_image_url"):
             json_request(f"/api/v1/pages/{page_id}/colour/approve", "POST")
             continue
@@ -711,7 +726,7 @@ def run_flow(
         raise E2EError(
             f"retry refused: job {retry_uncertain_job_id} is not an incomplete uncertain image job on this project"
         )
-    print(f"PASS pages inked and coloured: {len(pages)}")
+    print(f"PASS painted default and explicit ink finish: {len(pages)} pages")
 
     guard.current_stage = "export"
     exported = json_request(f"/api/v1/projects/{project_id}/export", "POST")

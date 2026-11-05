@@ -160,7 +160,7 @@ func TestUploadColourImagePreservesLineArtAndExportUsesApprovedColour(t *testing
 		t.Fatalf("unexpected approval response: %s", approveRec.Body.String())
 	}
 
-	regenerate := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
+	regenerate := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
 	regenerate.Header.Set("X-User-ID", "owner")
 	regenerateRec := httptest.NewRecorder()
 	handler.ServeHTTP(regenerateRec, regenerate)

@@ -259,14 +259,14 @@ export class ApiClient {
 		return res && res.page ? res.page : res;
 	}
 
-	async generateLineArt(pageId) {
-		return this.request(`/api/v1/pages/${pageId}/line-art`, {
+	async generateLineArt(pageId, variant) {
+		return this.request(`/api/v1/pages/${pageId}/line-art${variant === 'ink' ? '?variant=ink' : ''}`, {
 			method: 'POST'
 		});
 	}
 
-	async approveLineArt(pageId) {
-		const res = await this.request(`/api/v1/pages/${pageId}/line-art/approve`, {
+	async approveLineArt(pageId, variant) {
+		const res = await this.request(`/api/v1/pages/${pageId}/line-art/approve${variant === 'ink' ? '?variant=ink' : ''}`, {
 			method: 'POST'
 		});
 		return res && res.page ? res.page : res;

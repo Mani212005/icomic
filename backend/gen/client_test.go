@@ -170,7 +170,7 @@ func TestFakeAIServiceClientHermetic(t *testing.T) {
 		PageNumber:    1,
 		DraftImageURL: &draftResp.ImageURL,
 		Style:         "manga",
-		Variant:       &paintedVariant,
+		Variant:       paintedVariant,
 	})
 	if err != nil || !strings.HasPrefix(paintedResp.ImageURL, "http") || paintedResp.Variant != "draft-conditioned" {
 		t.Fatalf("GeneratePaintedPage failed: %v, resp: %+v", err, paintedResp)
@@ -474,7 +474,7 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 			},
 		},
 		Style:   "noir",
-		Variant: &realPaintedVariant,
+		Variant: realPaintedVariant,
 	})
 	if err != nil {
 		t.Fatalf("GeneratePaintedPage failed: %v", err)

@@ -203,8 +203,8 @@ class GeneratePaintedPageRequest(BaseModel):
     panels: list[PanelTextItem]
     style: str
     variant: Literal["draft-conditioned", "direct-from-brief"] = Field(
-        "draft-conditioned",
-        description="Finished painted page variant (composition-conditioned vs direct-from-brief)",
+        ...,
+        description="Finished painted page variant (composition-conditioned or direct-from-brief)",
     )
     character_reference_image_urls: list[str] = []
     character_identities: list[CharacterRenderIdentity] = Field(

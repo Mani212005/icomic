@@ -79,15 +79,28 @@ test('MockApiClient manages chapters, panels, and pages', async () => {
 	const approvedDraft = await client.approveDraft(page.id);
 	assert.ok(approvedDraft.draft_approved_at);
 
-	const lineArtRes = await client.generateLineArt(page.id);
+	const lineArtRes = await client.generateLineArt(page.id, 'ink');
 	assert.ok(lineArtRes.job.id);
-	const approvedLineArt = await client.approveLineArt(page.id);
+	const approvedLineArt = await client.approveLineArt(page.id, 'ink');
 	assert.ok(approvedLineArt.line_art_approved_at);
 
 	const { palette } = await client.suggestColourPalette(page.id);
 	assert.ok(palette.length > 0);
 	const approvedColour = await client.approveColour(page.id);
 	assert.ok(approvedColour.colour_approved_at);
+});
+
+test('MockApiClient defaults to one painted finish and keeps ink explicit', async () => {
+	const client = new MockApiClient();
+	const [page] = await client.getPages('chap-1');
+	const painted = await client.generateLineArt(page.id);
+	assert.equal(painted.page.painted_page_variant, 'direct-from-brief');
+	assert.equal(painted.page.painted_page_image_url, '/mock/sample-painted-page.webp');
+	const approved = await client.approveLineArt(page.id);
+	assert.ok(approved.painted_page_approved_at);
+	await client.generateLineArt(page.id, 'ink');
+	const ink = await client.approveLineArt(page.id, 'ink');
+	assert.ok(ink.line_art_approved_at);
 });
 
 test('MockApiClient calculates cost estimates based on stage and count', async () => {

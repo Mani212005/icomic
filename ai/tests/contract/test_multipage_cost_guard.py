@@ -29,9 +29,9 @@ from app.provider_costs import ProviderCostLedger
 from app.services.character import CharacterService
 from app.services.colour import ColourService
 from app.services.draft import DraftService
-from app.services.line_art import LineArtService
 from app.services.moderation import ModerationService
 from app.services.pacing import panel_count, split_text
+from app.services.painted_page import PaintedPageService
 from app.services.panel import PanelService
 from app.services.script import ScriptService
 
@@ -158,7 +158,7 @@ def test_long_fixture_with_recorded_costs_completes_under_shared_cap(
             page = " ".join(p.scene_description for p in page_panels)
             for _ in range(1 + regenerations):
                 moderation.moderate_prompt(page)
-                draft, _, _ = DraftService(images, storage).generate_draft_sketch(
+                _, _, _ = DraftService(images, storage).generate_draft_sketch(
                     f"{index}-{page_index}",
                     page_index + 1,
                     page_panels,
@@ -166,16 +166,16 @@ def test_long_fixture_with_recorded_costs_completes_under_shared_cap(
                     "hash",
                     references,
                 )
-                ink, _, _ = LineArtService(images, storage).generate_line_art(
+                finish, _, _, _ = PaintedPageService(images, storage).generate_painted_page(
                     f"{index}-{page_index}",
                     page_index + 1,
-                    draft,
                     page_panels,
                     "comic",
                     "hash",
-                    references,
+                    variant="direct-from-brief",
+                    character_reference_image_urls=references,
                 )
-            ColourService(vision).suggest_palette(storage.get(ink), page)
+            ColourService(vision).suggest_palette(storage.get(finish), page)
     assert len(generated) == 51
     assert counts == {
         "characters": 7,

@@ -140,6 +140,6 @@ chunks. This is a call inventory, not a cost estimate.
 
 ## Image budgets
 
-The runtime policy defaults to 40 images per project/book, 80 per user over 24 hours and 800 over 30 days. A 51-panel, 12-page book needs about 30 images: 12 drafts, 12 final line art and main-character references. The book budget leaves revision room, and the daily cap permits two books.
+The runtime policy defaults to 40 images per project/book, 80 per user over 24 hours and 800 over 30 days. A 51-panel, 12-page book needs about 30 images: 12 drafts, 12 finished painted pages (or ink pages when explicitly selected), and main-character references. The finish call replaces the former line-art call, so the default image count and per-page image cost stay the same. The book budget leaves revision room, and the daily cap permits two books.
 
 Each new image generation, regeneration or image edit counts once. Replaying an idempotency key never counts again. Failed or cancelled attempts count until a full refund commits; that refund releases all three budgets once. Partial refunds retain the image count. An uncertain provider outcome retains its debit and image slot because the provider may have billed it. Approvals, colouring uploads, moderation and language calls do not count. Deleting a project retains daily/monthly usage. See ARCHITECTURE section 5.5 for transaction and upgrade details. Elevated runner quotas must remain confined to an explicit e2e profile on an isolated database; production defaults stay 40/80/800.

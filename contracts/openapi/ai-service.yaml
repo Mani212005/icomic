@@ -155,7 +155,7 @@ paths:
 
   /internal/v1/generate-painted-page:
     post:
-      summary: Generate finished painted page per page (opt-in prototype route)
+      summary: Generate one finished painted page per page
       operationId: generatePaintedPage
       requestBody:
         required: true
@@ -874,6 +874,7 @@ components:
         - page_number
         - panels
         - style
+        - variant
       properties:
         job_id:
           type: string
@@ -903,8 +904,7 @@ components:
           enum:
             - draft-conditioned
             - direct-from-brief
-          default: draft-conditioned
-          description: Finished painted page variant (composition-conditioned vs direct-from-brief)
+          description: Finished painted page variant (composition-conditioned or direct-from-brief)
         character_reference_image_urls:
           type: array
           items:

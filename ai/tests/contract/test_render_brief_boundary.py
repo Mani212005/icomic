@@ -162,5 +162,9 @@ def test_ordered_panels_identity_and_reference_bytes_reach_image_wire(stage):
         assert "approved composition" in refs[0]["role"]
         assert "final inking and line art" in prompt
         assert "Style bible: classic-comic" in prompt
-    assert "Only the exact dialogue field" in brief["dialogue_policy"]
-    assert "Narration is story context" in brief["dialogue_policy"]
+    assert "Dialogue values contain only the spoken words" in brief["dialogue_policy"]
+    assert (
+        "Never write a speaker's name or a speaker label inside a bubble"
+        in brief["dialogue_policy"]
+    )
+    assert "Narration is context" in brief["dialogue_policy"]

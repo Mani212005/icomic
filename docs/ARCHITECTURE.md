@@ -97,10 +97,10 @@ icomic/
 |---|---|---|
 | **Frontend** | Svelte | UI rendering, colour editor, paint-bucket fill tool (client-side), job polling, user flows |
 | **Go API** | Go + net/http | Auth, session, project/chapter/character/page/panel CRUD, credit ledger, quota enforcement, kill switch, job creation, hashed user ID, approval gates, presigned download URLs |
-| **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, line art, colour suggestion, PDF assembly |
+| **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, finished painted pages (or explicit ink), colour suggestion, PDF assembly |
 | **PostgreSQL** | Postgres | Durable project state, credit ledger, job records, stage approvals, colour palettes |
 | **Redis** | Redis | Job queue; pending, running, retried, and cancelled job envelopes |
-| **Object storage** | S3-compatible | Approved working copies (draft, line art, reference), exported PDFs (generated images are Meta-hosted) |
+| **Object storage** | S3-compatible | Approved working copies (draft, painted page or ink page, reference), exported PDFs (generated images are Meta-hosted) |
 
 **Communication rules:**
 
@@ -280,7 +280,7 @@ The Redis adapter atomically saves the envelope and pending state, claims delive
 
 A consumer that stops during a provider call leaves an uncertain outcome. When its lease expires the delivery becomes failed, rather than automatically repeating a potentially billed operation. A new generation requires a new key. Completed response records do not expire automatically. Shutdown stops accepting worker progress waits; pending envelopes remain available to the next consumer.
 
-Character references, draft pages, line art and PDF exports use a fresh UUID directory for every service execution. A later generation, including one that writes bytes before failing, cannot overwrite an earlier artifact. Page cleanup stores its raw source beside the working image in that same directory. The queue's saved response binds the attempt to the exact asset URL; Go stores the current image URL and job ID on the character/page, and each export record retains its own PDF URL. Internal queue replays return the saved URL. Public request replay semantics are a separate concern: some Go handlers still return the entity's current URL. Existing legacy artifact URLs remain readable, and no storage migration is required. Fake object storage remains volatile across restarts; these keys do not provide durable storage or define retention.
+Character references, draft pages, finished pages and PDF exports use a fresh UUID directory for every service execution. A later generation, including one that writes bytes before failing, cannot overwrite an earlier artifact. Page cleanup stores its raw source beside the working image in that same directory. The queue's saved response binds the attempt to the exact asset URL; Go stores the current image URL and job ID on the character/page, and each export record retains its own PDF URL. Internal queue replays return the saved URL. Public request replay semantics are a separate concern: some Go handlers still return the entity's current URL. Existing legacy artifact URLs remain readable, and no storage migration is required. Fake object storage remains volatile across restarts; these keys do not provide durable storage or define retention.
 
 ### 5.3 Approval Gate Invariant
 
@@ -290,7 +290,7 @@ Go enforces this check transactionally before inserting into `generation_jobs` a
 
 - **Character reference generation:** requires a valid submitted script for `project_id`. No prior stage approval is required.
 - **Draft sketch generation (per page):** requires approved `character_reference` records for all project characters AND an approved `chapter_outline` for the page's parent chapter (`entity_id=chapter_id`).
-- **Final line art generation (per page):** requires an approved `draft_page` for that page (`entity_id=page_id`).
+- **Direct-from-brief painted finish (per page):** requires approved character references and chapter outline; draft approval is not required. Draft-conditioned painting and explicit ink require an approved `draft_page` for that page (`entity_id=page_id`).
 
 Regeneration rules:
 - Regeneration of character reference images, draft sketches, or line art is explicitly permitted: a prior completed (`status=done`) or failed (`status=failed`) job for the same entity does not block creating a new generation job with a new idempotency key.
@@ -299,11 +299,13 @@ Regeneration rules:
 
 The approval gate invariant (no image generation before prerequisite approval) is enforced strictly and transactionally by Go before queue dispatch. In accordance with Section 2 communication rules, the Python service talks to AI adapter ports only and does not perform reverse callbacks into Go.
 
+The default finish is `defaultPaintedPageVariant` in `backend/internal/api/handlers.go`, currently `direct-from-brief`; changing that constant switches the default in one place. The API keeps `variant=ink` as the explicit ink selection.
+
 ### 5.4 No Image Before Approval - Summary
 
 ```
 character reference approved -> chapter_outline approved -> panel text generated
-panel text ready (no separate approval gate) -> draft sketch approved -> line art approved -> colour approved
+panel text ready (no separate approval gate) -> draft sketch approved -> painted finish approved (or explicit ink approved) -> colour approved for ink pages
 approved character references anchored across all subsequent page generations
 ```
 
@@ -314,9 +316,9 @@ The Go API checks before creating any generation job:
 1. Is the global kill switch enabled? If yes, reject with a clear message.
 2. For image jobs, has the project reached its lifetime book budget (default **40**), or the user reached their rolling 24-hour cap (**80**) or rolling 30-day cap (**800**)? If yes, reject with HTTP 429. Public image endpoints return `code: book_budget_reached` or `code: daily_image_limit_reached` for the first two limits.
 
-All limits live in the singleton PostgreSQL `generation_policy` row (`max_book_images`, `max_daily_images`, `max_monthly_images`); zero disables a limit. Forty images accommodates a 12-page, 51-panel book's roughly 30 images (12 drafts, 12 line art, main-character references) plus revisions. Eighty permits two books in a day, with 800 retaining a monthly guard. Deployment defaults use these limits; any elevated e2e profile belongs only to an isolated e2e database.
+All limits live in the singleton PostgreSQL `generation_policy` row (`max_book_images`, `max_daily_images`, `max_monthly_images`); zero disables a limit. Forty images accommodates a 12-page, 51-panel book's roughly 30 images (12 drafts, 12 finished painted or ink pages, main-character references) plus revisions. Eighty permits two books in a day, with 800 retaining a monthly guard. Deployment defaults use these limits; any elevated e2e profile belongs only to an isolated e2e database.
 
-`CreateGeneration` locks policy then user, checks indexed `image_quota_usage` rows, and inserts the job, ledger debit and project-attributed quota increment in the **same transaction**. Concurrent admissions cannot exceed a boundary. Same-key replays return the original job before quota checks and never increment, including retries after failure or refund. A new key for regeneration or an image edit counts as a new image. Character references, drafts and final line art count; approvals, colouring uploads, language, moderation, palettes and exports do not.
+`CreateGeneration` locks policy then user, checks indexed `image_quota_usage` rows, and inserts the job, ledger debit and project-attributed quota increment in the **same transaction**. Concurrent admissions cannot exceed a boundary. Same-key replays return the original job before quota checks and never increment, including retries after failure or refund. A new key for regeneration or an image edit counts as a new image. Character references, drafts and finished painted page or explicit ink page count; approvals, colouring uploads, language, moderation, palettes and exports do not.
 
 Failure or cancellation alone retains usage. A full ledger refund deletes that job's quota row in the refund transaction and releases book, daily and monthly usage exactly once; a partial refund retains the image slot. Failed refunds roll back both changes. The ledger preserves the audit trail. Project deletion nulls quota project/job references while preserving user usage and its original timestamp, so it cannot restore daily or monthly capacity. Existing usage is backfilled by upgrade migration; already-deleted jobs have no surviving project attribution.
 

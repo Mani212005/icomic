@@ -35,6 +35,9 @@ type JSONResponse struct {
 	Message string      `json:"message,omitempty"`
 }
 
+// Change this one value to select the default finish used by new pages.
+const defaultPaintedPageVariant = "direct-from-brief"
+
 func optionalInt(value int) *int {
 	if value == 0 {
 		return nil
@@ -1606,7 +1609,11 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		_ = json.Unmarshal(bodyBytes, &reqBody)
 	}
-	if r.URL.Query().Get("variant") == "painted" || reqBody.Variant == "painted" || reqBody.Route == "painted" {
+	variant := r.URL.Query().Get("variant")
+	if variant == "" {
+		variant = reqBody.Variant
+	}
+	if variant != "ink" {
 		s.GeneratePaintedPage(w, r)
 		return
 	}
@@ -1762,6 +1769,12 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 
 // ApproveLineArt handles POST /api/v1/pages/{id}/line-art/approve
 func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("variant") != "ink" {
+		if page, err := s.Repo.GetPage(r.Context(), r.PathValue("id")); err == nil && page.PaintedPageImageURL != "" {
+			s.ApprovePaintedPage(w, r)
+			return
+		}
+	}
 	userID := s.getUserID(r)
 	pageID := r.PathValue("id")
 
@@ -1805,7 +1818,7 @@ func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "page": pg})
 }
 
-// GeneratePaintedPage handles POST /api/v1/pages/{id}/painted-page (opt-in prototype route)
+// GeneratePaintedPage handles the default finished-page route and its explicit API alias.
 func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 	userID := s.getUserID(r)
 	pageID := r.PathValue("id")
@@ -1842,23 +1855,39 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	chosenVariant := reqBody.Variant
+	if chosenVariant == "" {
+		chosenVariant = r.URL.Query().Get("variant")
+	}
 	if chosenVariant == "" || chosenVariant == "painted" {
-		chosenVariant = "draft-conditioned"
+		chosenVariant = defaultPaintedPageVariant
+	}
+	if chosenVariant == "ink" {
+		writeError(w, http.StatusBadRequest, "Use the line-art route for ink generation")
+		return
 	}
 	if chosenVariant != "draft-conditioned" && chosenVariant != "direct-from-brief" {
-		chosenVariant = "draft-conditioned"
+		writeError(w, http.StatusBadRequest, "Unknown painted page variant")
+		return
 	}
 
 	// Gate checks:
 	// 1. Chapter outline and character references must be approved
 	allChars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
 	allRefsApproved := len(allChars) > 0
+	mainReferenceCount := 0
 	for _, ch := range allChars {
+		if ch.VisualAttributes["reference_role"] == "extra" {
+			continue
+		}
+		mainReferenceCount++
 		approval, err := s.Repo.GetLatestApproval(r.Context(), "character_reference", ch.ID)
 		if err != nil || ch.ReferenceImageURL == "" || domain.IsApprovalStale(&approval.ApprovedAt, ch.UpdatedAt) {
 			allRefsApproved = false
 			break
 		}
+	}
+	if mainReferenceCount == 0 {
+		allRefsApproved = false
 	}
 	outlineApproval, err := s.Repo.GetLatestApproval(r.Context(), "chapter_outline", c.ID)
 	outlineApproved := err == nil && domain.CheckChapterOutlineApproval(&outlineApproval.ApprovedAt, c.UpdatedAt) == nil
@@ -1964,7 +1993,7 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 			DraftImageURL:       draftURL,
 			Panels:              panelItems,
 			Style:               artStyle,
-			Variant:             &variantVal,
+			Variant:             variantVal,
 			CharacterIdentities: characterRenderIdentities(allChars),
 		})
 	})
@@ -1986,6 +2015,16 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 	domain.StaleOnPaintedPageRegeneration(pg, now)
 	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save page")
+		return
+	}
+	actualCost := s.aiActualCost(r.Context(), job.ID)
+	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	job, err = s.JobService.GetJob(r.Context(), job.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
