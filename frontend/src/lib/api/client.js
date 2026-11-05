@@ -116,6 +116,7 @@ export class ApiClient {
 		if (payload.script && !payload.original_script) {
 			payload.original_script = payload.script;
 		}
+		delete payload.script;
 		const res = await this.request('/api/v1/projects', {
 			method: 'POST',
 			body: JSON.stringify(payload)
@@ -138,6 +139,7 @@ export class ApiClient {
 		if (payload.script && !payload.original_script) {
 			payload.original_script = payload.script;
 		}
+		delete payload.script;
 		const res = await this.request(`/api/v1/projects/${id}`, {
 			method: 'PATCH',
 			body: JSON.stringify(payload)

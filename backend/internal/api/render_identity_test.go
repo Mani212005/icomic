@@ -18,7 +18,7 @@ func TestPageStagesCarryOrderedPanelSemanticsAndNamedIdentities(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			s, handler, repo := setupTestServer(true, "test-user")
 			seedWriteFailureFlow(t, repo)
-			ch, _ := repo.GetCharacter(nil, "character")
+			ch, _ := repo.GetCharacter(nil, "1bda3da7-79e9-55f5-b45e-67393fc73c26")
 			ch.Name = "Nia"
 			ch.Description = "Lighthouse keeper"
 			ch.VisualAttributes = map[string]interface{}{"clothing": "yellow raincoat", "hair_style": "braid"}
@@ -26,16 +26,16 @@ func TestPageStagesCarryOrderedPanelSemanticsAndNamedIdentities(t *testing.T) {
 				t.Fatal(err)
 			}
 			other := *ch
-			other.ID, other.Name, other.ReferenceImageURL = "bird", "Brass bird", "https://storage.example/bird.png"
+			other.ID, other.Name, other.ReferenceImageURL = "00000000-0000-4000-8000-000000000002", "Brass bird", "https://storage.example/bird.png"
 			if err := repo.CreateCharacter(nil, &other); err != nil {
 				t.Fatal(err)
 			}
-			pg, _ := repo.GetPage(nil, "page")
-			pg.PanelIDs = []string{"later", "panel"}
+			pg, _ := repo.GetPage(nil, "a5669606-8764-5c90-b282-bad323a49baa")
+			pg.PanelIDs = []string{"39582b41-45f8-55da-ae05-fb16986287f9", "a8a24397-3780-5a99-acea-8ab882a2ef5b"}
 			if err := repo.UpdatePage(nil, pg); err != nil {
 				t.Fatal(err)
 			}
-			panel := &domain.Panel{ID: "later", ChapterID: "chapter", PanelNumber: 8, SceneDescription: "Storm at sunrise", CharacterActions: "Raises brass bird", CameraAngle: "Close-up", Background: "A boat in rough seas", Dialogue: "Follow the light!", Narration: "Before dawn", ImagePrompt: "Wet stone and reflected light"}
+			panel := &domain.Panel{ID: "39582b41-45f8-55da-ae05-fb16986287f9", ChapterID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", PanelNumber: 8, SceneDescription: "Storm at sunrise", CharacterActions: "Raises brass bird", CameraAngle: "Close-up", Background: "A boat in rough seas", Dialogue: "Follow the light!", Narration: "Before dawn", ImagePrompt: "Wet stone and reflected light"}
 			if err := repo.CreatePanel(nil, panel); err != nil {
 				t.Fatal(err)
 			}
@@ -51,7 +51,7 @@ func TestPageStagesCarryOrderedPanelSemanticsAndNamedIdentities(t *testing.T) {
 				return &gen.GenerateLineArtResponse{JobID: req.JobID, ImageURL: "https://storage.example/new-line.png"}, nil
 			}
 			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/pages/page/"+stage, nil))
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/"+stage, nil))
 			if rec.Code != http.StatusAccepted {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 			}
@@ -62,7 +62,7 @@ func TestPageStagesCarryOrderedPanelSemanticsAndNamedIdentities(t *testing.T) {
 			if identities == nil || len(*identities) != 2 {
 				t.Fatalf("missing identities: %+v", identities)
 			}
-			if (*identities)[0].CharacterID != "bird" || (*identities)[1].Name != "Nia" || !reflect.DeepEqual((*identities)[1].VisualAttributes, ch.VisualAttributes) || (*identities)[1].ReferenceImageURL != ch.ReferenceImageURL {
+			if (*identities)[0].CharacterID != "00000000-0000-4000-8000-000000000002" || (*identities)[1].Name != "Nia" || !reflect.DeepEqual((*identities)[1].VisualAttributes, ch.VisualAttributes) || (*identities)[1].ReferenceImageURL != ch.ReferenceImageURL {
 				t.Fatalf("lost identity mapping: %+v", *identities)
 			}
 		})
@@ -74,7 +74,7 @@ func TestDefaultReferencePromptIncludesStoredVisualAttributes(t *testing.T) {
 		t.Run(custom, func(t *testing.T) {
 			s, handler, repo := setupTestServer(true, "test-user")
 			seedWriteFailureFlow(t, repo)
-			ch, _ := repo.GetCharacter(nil, "character")
+			ch, _ := repo.GetCharacter(nil, "1bda3da7-79e9-55f5-b45e-67393fc73c26")
 			ch.Name, ch.Description = "Nia", "Keeper"
 			ch.VisualAttributes = map[string]interface{}{"age_range": "adult", "appearance": "freckles", "hair_style": "braid", "clothing": "raincoat", "extra": map[string]interface{}{"prop": "bird"}}
 			if err := repo.UpdateCharacter(nil, ch); err != nil {
@@ -87,7 +87,7 @@ func TestDefaultReferencePromptIncludesStoredVisualAttributes(t *testing.T) {
 			}
 			body, _ := json.Marshal(map[string]string{"prompt": custom})
 			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/characters/character/reference-image", strings.NewReader(string(body))))
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/reference-image", strings.NewReader(string(body))))
 			if rec.Code != http.StatusAccepted {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 			}

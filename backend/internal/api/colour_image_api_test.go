@@ -3,7 +3,11 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"hash/crc32"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,7 +22,13 @@ import (
 	"icomic/backend/internal/jobs"
 )
 
-const fixturePNG = "\x89PNG\r\n\x1a\nsynthetic-colour-page"
+var fixturePNG = func() string {
+	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==")
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}()
 
 func colourImageFixture(t *testing.T) (*api.Server, http.Handler, db.Repository, string) {
 	t.Helper()
@@ -177,4 +187,54 @@ func pageProjectID(t *testing.T, repo db.Repository, pageID string) string {
 		t.Fatal(err)
 	}
 	return chapter.ProjectID
+}
+
+func TestUploadRejectsImagePixelBombBeforeStorage(t *testing.T) {
+	server, handler, _, pageID := colourImageFixture(t)
+	calls := 0
+	server.AIClient.(*gen.FakeAIServiceClient).StoreColourImageFunc = func(context.Context, gen.StoreColourImageRequest) (*gen.StoreColourImageResponse, error) {
+		calls++
+		return nil, fmt.Errorf("must not store")
+	}
+	// Change only IHDR dimensions and checksum, without allocating image pixels.
+	bomb := []byte(fixturePNG)
+	binary.BigEndian.PutUint32(bomb[16:20], 100000)
+	binary.BigEndian.PutUint32(bomb[20:24], 100000)
+	binary.BigEndian.PutUint32(bomb[29:33], crc32.ChecksumIEEE(bomb[12:29]))
+	rec := colourImageRequest(handler, pageID, "owner", bomb)
+	if rec.Code != 413 || calls != 0 {
+		t.Fatalf("pixel bomb: HTTP %d calls %d %s", rec.Code, calls, rec.Body.String())
+	}
+	rec = colourImageRequest(handler, pageID, "owner", []byte("\x89PNG\r\n\x1a\ncorrupt"))
+	if rec.Code != 400 || calls != 0 {
+		t.Fatalf("corrupt image: HTTP %d calls %d", rec.Code, calls)
+	}
+}
+
+func TestUploadWebPUsesConfiguredPixelLimit(t *testing.T) {
+	server, handler, _, pageID := colourImageFixture(t)
+	// A locally encoded, lossless 2x3 white WebP fixture.
+	data, err := base64.StdEncoding.DecodeString("UklGRh4AAABXRUJQVlA4TBEAAAAvAYAAAAfQ//73v/+BiOh/AAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	server.AIClient.(*gen.FakeAIServiceClient).StoreColourImageFunc = func(_ context.Context, req gen.StoreColourImageRequest) (*gen.StoreColourImageResponse, error) {
+		calls++
+		if req.MediaType != gen.ImageWebp {
+			t.Fatalf("unexpected media type %s", req.MediaType)
+		}
+		return &gen.StoreColourImageResponse{ImageURL: "http://storage/colour.webp"}, nil
+	}
+	server.Limits.ImagePixels = 6
+	if rec := colourImageRequest(handler, pageID, "owner", data); rec.Code != 200 {
+		t.Fatalf("valid WebP: %d %s", rec.Code, rec.Body.String())
+	}
+	server.Limits.ImagePixels = 5
+	if rec := colourImageRequest(handler, pageID, "owner", data); rec.Code != 413 {
+		t.Fatalf("oversized WebP: %d %s", rec.Code, rec.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("storage calls %d, want 1", calls)
+	}
 }

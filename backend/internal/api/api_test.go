@@ -114,7 +114,7 @@ func TestCreateProject(t *testing.T) {
 
 func TestEstimateCost(t *testing.T) {
 	_, handler, repo := setupTestServer(true, "test-user")
-	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "estimate-project", UserID: "test-user"}); err != nil {
+	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "03f4a2ef-fa27-509e-a9e3-feb2b84c0a28", UserID: "test-user"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,7 +124,7 @@ func TestEstimateCost(t *testing.T) {
 	}
 	data, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/estimate-project/estimate", bytes.NewReader(data))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/03f4a2ef-fa27-509e-a9e3-feb2b84c0a28/estimate", bytes.NewReader(data))
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -143,16 +143,16 @@ func TestEstimateCost(t *testing.T) {
 func TestPaletteRoutesRequirePageOwnership(t *testing.T) {
 	_, handler, repo := setupTestServer(true, "owner")
 	ctx := context.Background()
-	if err := repo.CreateProject(ctx, &domain.Project{ID: "palette-project", UserID: "owner"}); err != nil {
+	if err := repo.CreateProject(ctx, &domain.Project{ID: "ba298efb-07bc-58ba-b92c-d1798edf7606", UserID: "owner"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CreateChapter(ctx, &domain.Chapter{ID: "palette-chapter", ProjectID: "palette-project"}); err != nil {
+	if err := repo.CreateChapter(ctx, &domain.Chapter{ID: "946e2bd7-facc-54af-8a76-892c5ae92445", ProjectID: "ba298efb-07bc-58ba-b92c-d1798edf7606"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CreatePage(ctx, &domain.Page{ID: "palette-page", ChapterID: "palette-chapter"}); err != nil {
+	if err := repo.CreatePage(ctx, &domain.Page{ID: "374dc62a-f5bc-5af6-b94e-b35eeea746c4", ChapterID: "946e2bd7-facc-54af-8a76-892c5ae92445"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SaveColourPalette(ctx, &domain.ColourPalette{PageID: "palette-page", Palette: map[string]interface{}{"skin": "#123456"}}); err != nil {
+	if err := repo.SaveColourPalette(ctx, &domain.ColourPalette{PageID: "374dc62a-f5bc-5af6-b94e-b35eeea746c4", Palette: map[string]interface{}{"skin": "#123456"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,22 +164,22 @@ func TestPaletteRoutesRequirePageOwnership(t *testing.T) {
 		return rec
 	}
 
-	if rec := request(http.MethodGet, "/api/v1/pages/palette-page/colour-palette", "owner", ""); rec.Code != http.StatusOK {
+	if rec := request(http.MethodGet, "/api/v1/pages/374dc62a-f5bc-5af6-b94e-b35eeea746c4/colour-palette", "owner", ""); rec.Code != http.StatusOK {
 		t.Fatalf("owner GET expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := request(http.MethodPatch, "/api/v1/pages/palette-page/colour-palette", "owner", `{"palette":{"skin":"#654321"}}`); rec.Code != http.StatusOK {
+	if rec := request(http.MethodPatch, "/api/v1/pages/374dc62a-f5bc-5af6-b94e-b35eeea746c4/colour-palette", "owner", `{"palette":{"skin":"#654321"}}`); rec.Code != http.StatusOK {
 		t.Fatalf("owner PATCH expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := request(http.MethodGet, "/api/v1/pages/palette-page/colour-palette", "other-user", ""); rec.Code != http.StatusForbidden {
+	if rec := request(http.MethodGet, "/api/v1/pages/374dc62a-f5bc-5af6-b94e-b35eeea746c4/colour-palette", "other-user", ""); rec.Code != http.StatusForbidden {
 		t.Errorf("nonowner GET expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := request(http.MethodPatch, "/api/v1/pages/palette-page/colour-palette", "other-user", `{"palette":{"attacker":"#FF0000"}}`); rec.Code != http.StatusForbidden {
+	if rec := request(http.MethodPatch, "/api/v1/pages/374dc62a-f5bc-5af6-b94e-b35eeea746c4/colour-palette", "other-user", `{"palette":{"attacker":"#FF0000"}}`); rec.Code != http.StatusForbidden {
 		t.Errorf("nonowner PATCH expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := request(http.MethodPatch, "/api/v1/pages/missing-page/colour-palette", "owner", `{"palette":{"skin":"#FFFFFF"}}`); rec.Code != http.StatusNotFound {
+	if rec := request(http.MethodPatch, "/api/v1/pages/f8b9e358-7f01-5884-b6db-842b1cb962e4/colour-palette", "owner", `{"palette":{"skin":"#FFFFFF"}}`); rec.Code != http.StatusNotFound {
 		t.Errorf("missing page PATCH expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
-	palette, err := repo.GetColourPalette(ctx, "palette-page")
+	palette, err := repo.GetColourPalette(ctx, "374dc62a-f5bc-5af6-b94e-b35eeea746c4")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,10 +190,10 @@ func TestPaletteRoutesRequirePageOwnership(t *testing.T) {
 
 func TestEstimateCostRequiresProjectOwnership(t *testing.T) {
 	_, handler, repo := setupTestServer(true, "owner")
-	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "estimate-owned", UserID: "owner"}); err != nil {
+	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "cb73dc07-e18e-5e50-b34d-6c17be0cdb0d", UserID: "owner"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "estimate-foreign", UserID: "other-user"}); err != nil {
+	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "2607af95-8543-526a-b237-a60c92bac95e", UserID: "other-user"}); err != nil {
 		t.Fatal(err)
 	}
 	request := func(projectID, userID string) *httptest.ResponseRecorder {
@@ -203,13 +203,13 @@ func TestEstimateCostRequiresProjectOwnership(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 		return rec
 	}
-	if rec := request("estimate-owned", "owner"); rec.Code != http.StatusOK {
+	if rec := request("cb73dc07-e18e-5e50-b34d-6c17be0cdb0d", "owner"); rec.Code != http.StatusOK {
 		t.Errorf("owner estimate expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := request("estimate-foreign", "attacker"); rec.Code != http.StatusForbidden {
+	if rec := request("2607af95-8543-526a-b237-a60c92bac95e", "attacker"); rec.Code != http.StatusForbidden {
 		t.Errorf("foreign estimate expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := request("missing-project", "owner"); rec.Code != http.StatusNotFound {
+	if rec := request("ef200fd9-20d9-55d6-a146-98645aba9be2", "owner"); rec.Code != http.StatusNotFound {
 		t.Errorf("missing estimate project expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
@@ -238,7 +238,7 @@ func TestStrictOwnershipEnforcement(t *testing.T) {
 
 	// User 1 creates project
 	proj := &domain.Project{
-		ID:             "p-user1",
+		ID:             "c1028831-7513-5f58-8fab-f9b6868a80e5",
 		UserID:         "user-1",
 		Title:          "User 1 Only Project",
 		OriginalScript: "Act 1. Secret notes.",
@@ -246,7 +246,7 @@ func TestStrictOwnershipEnforcement(t *testing.T) {
 	_ = repo.CreateProject(context.Background(), proj)
 
 	// User 1 can fetch project
-	reqOwner := httptest.NewRequest(http.MethodGet, "/api/v1/projects/p-user1", nil)
+	reqOwner := httptest.NewRequest(http.MethodGet, "/api/v1/projects/c1028831-7513-5f58-8fab-f9b6868a80e5", nil)
 	reqOwner.Header.Set("X-User-ID", "user-1")
 	recOwner := httptest.NewRecorder()
 	handler.ServeHTTP(recOwner, reqOwner)
@@ -255,7 +255,7 @@ func TestStrictOwnershipEnforcement(t *testing.T) {
 	}
 
 	// User 2 CANNOT fetch User 1's project -> 403 Forbidden (SPEC 10, 11.1)
-	reqAttacker := httptest.NewRequest(http.MethodGet, "/api/v1/projects/p-user1", nil)
+	reqAttacker := httptest.NewRequest(http.MethodGet, "/api/v1/projects/c1028831-7513-5f58-8fab-f9b6868a80e5", nil)
 	reqAttacker.Header.Set("X-User-ID", "user-2")
 	recAttacker := httptest.NewRecorder()
 	handler.ServeHTTP(recAttacker, reqAttacker)
@@ -264,7 +264,7 @@ func TestStrictOwnershipEnforcement(t *testing.T) {
 	}
 
 	// User 2 CANNOT delete User 1's project -> 403 Forbidden
-	reqDeleteAttacker := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/p-user1", nil)
+	reqDeleteAttacker := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/c1028831-7513-5f58-8fab-f9b6868a80e5", nil)
 	reqDeleteAttacker.Header.Set("X-User-ID", "user-2")
 	recDeleteAttacker := httptest.NewRecorder()
 	handler.ServeHTTP(recDeleteAttacker, reqDeleteAttacker)

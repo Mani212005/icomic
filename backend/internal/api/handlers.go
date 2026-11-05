@@ -1,11 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	_ "golang.org/x/image/webp"
 	"icomic/backend/gen"
 	"icomic/backend/internal/auth"
 	"icomic/backend/internal/credits"
@@ -672,6 +676,10 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.validateSavedStory(w, proj.OriginalScript, proj.ChapterCount) {
+		return
+	}
+
 	if s.AIClient == nil {
 		writeError(w, http.StatusServiceUnavailable, "AI service not available")
 		return
@@ -799,6 +807,10 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("Character %s must be approved", ch.Name))
 			return
 		}
+	}
+
+	if !s.validateSavedStory(w, proj.OriginalScript, proj.ChapterCount) {
+		return
 	}
 
 	if s.AIClient == nil {
@@ -1028,6 +1040,10 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
 	if err != nil || proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	if !s.validateSavedStory(w, proj.OriginalScript, proj.ChapterCount) {
 		return
 	}
 
@@ -1909,8 +1925,6 @@ func (s *Server) UpdateColourPalette(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"palette": body.Palette})
 }
 
-const maxColourImageBytes = 10 * 1024 * 1024
-
 // detectColourImageType identifies the supported media type from image bytes, never from a client header.
 func detectColourImageType(data []byte) (gen.StoreColourImageRequestMediaType, bool) {
 	if len(data) >= 8 && string(data[:8]) == "\x89PNG\r\n\x1a\n" {
@@ -1949,7 +1963,7 @@ func (s *Server) UploadColourImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "AI service not available")
 		return
 	}
-	imageBytes, err := io.ReadAll(io.LimitReader(r.Body, maxColourImageBytes+1))
+	imageBytes, err := io.ReadAll(io.LimitReader(r.Body, s.Limits.ImageBytes+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Could not read coloured page image")
 		return
@@ -1958,13 +1972,22 @@ func (s *Server) UploadColourImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Coloured page image is empty")
 		return
 	}
-	if len(imageBytes) > maxColourImageBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "Coloured page image exceeds the 10 MiB limit")
+	if int64(len(imageBytes)) > s.Limits.ImageBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "Coloured page image exceeds configured byte limit")
 		return
 	}
 	mediaType, ok := detectColourImageType(imageBytes)
 	if !ok {
 		writeError(w, http.StatusUnsupportedMediaType, "Coloured page image must be PNG or WebP")
+		return
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(imageBytes))
+	if err != nil || config.Width <= 0 || config.Height <= 0 {
+		writeError(w, http.StatusBadRequest, "Invalid coloured page image")
+		return
+	}
+	if int64(config.Width) > s.Limits.ImagePixels/int64(config.Height) {
+		writeError(w, http.StatusRequestEntityTooLarge, "Coloured page image exceeds configured pixel limit")
 		return
 	}
 	stored, err := s.AIClient.StoreColourImage(r.Context(), gen.StoreColourImageRequest{
