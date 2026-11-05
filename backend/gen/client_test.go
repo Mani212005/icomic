@@ -160,6 +160,22 @@ func TestFakeAIServiceClientHermetic(t *testing.T) {
 		t.Fatalf("GenerateLineArt failed: %v, resp: %+v", err, lineResp)
 	}
 
+	// 7b. GeneratePaintedPage (opt-in prototype route)
+	paintedVariant := gen.GeneratePaintedPageRequestVariantDraftConditioned
+	paintedResp, err := fake.GeneratePaintedPage(ctx, gen.GeneratePaintedPageRequest{
+		JobID:         "job-7b",
+		HashedUserID:  "hash-1",
+		ProjectID:     "proj-1",
+		PageID:        "page-1",
+		PageNumber:    1,
+		DraftImageURL: &draftResp.ImageURL,
+		Style:         "manga",
+		Variant:       &paintedVariant,
+	})
+	if err != nil || !strings.HasPrefix(paintedResp.ImageURL, "http") || paintedResp.Variant != "draft-conditioned" {
+		t.Fatalf("GeneratePaintedPage failed: %v, resp: %+v", err, paintedResp)
+	}
+
 	// 8. SuggestColourPalette
 	colResp, err := fake.SuggestColourPalette(ctx, gen.SuggestColourPaletteRequest{
 		JobID:           "job-8",
@@ -438,6 +454,33 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 	}
 	if !strings.HasPrefix(lineArtResp.ImageURL, "http") || lineArtResp.ModelID != "muse-image-1.0-fake" {
 		t.Fatalf("unexpected line art response: %+v", lineArtResp)
+	}
+
+	// Exercise Endpoint 7b: GeneratePaintedPage (POST /internal/v1/generate-painted-page)
+	realPaintedVariant := gen.GeneratePaintedPageRequestVariantDraftConditioned
+	realPaintedResp, err := client.GeneratePaintedPage(ctx, gen.GeneratePaintedPageRequest{
+		JobID:         "88888888-8888-8888-8888-888888888888",
+		HashedUserID:  "user-hash-abc",
+		ProjectID:     "22222222-2222-2222-2222-222222222222",
+		PageID:        "88888888-8888-8888-8888-888888888888",
+		PageNumber:    1,
+		DraftImageURL: &draftResp.ImageURL,
+		Panels: []gen.PanelTextItem{
+			{
+				PanelNumber:      1,
+				SceneDescription: "Lab console glows with rich color",
+				Dialogue:         "It is stabilizing!",
+				ImagePrompt:      "Dramatic painted panel 1",
+			},
+		},
+		Style:   "noir",
+		Variant: &realPaintedVariant,
+	})
+	if err != nil {
+		t.Fatalf("GeneratePaintedPage failed: %v", err)
+	}
+	if !strings.HasPrefix(realPaintedResp.ImageURL, "http") || realPaintedResp.ModelID != "muse-image-1.0-fake" || realPaintedResp.Variant != "draft-conditioned" {
+		t.Fatalf("unexpected painted page response: %+v", realPaintedResp)
 	}
 
 	// Exercise Endpoint 8: SuggestColourPalette (POST /internal/v1/suggest-colour-palette)

@@ -136,22 +136,42 @@ func CheckLineArtApproval(lineArtApprovedAt *time.Time, pageUpdatedAt time.Time)
 	return nil
 }
 
+// CheckPaintedPageApproval verifies that a page painted art has a valid, non-stale approval.
+func CheckPaintedPageApproval(paintedPageApprovedAt *time.Time, pageUpdatedAt time.Time) error {
+	if paintedPageApprovedAt == nil {
+		return fmt.Errorf("%w: painted page has not been approved", ErrMissingPrerequisiteApproval)
+	}
+	if IsApprovalStale(paintedPageApprovedAt, pageUpdatedAt) {
+		return fmt.Errorf("%w: painted page was regenerated after approval", ErrStaleApproval)
+	}
+	return nil
+}
+
 // StaleDraftOnPanelEdit invalidates the parent page's draft approval when any of its panels are edited (SPEC 3.5, 3.6).
 func StaleDraftOnPanelEdit(page *Page, editTime time.Time) {
 	page.DraftApprovedAt = nil
+	page.LineArtApprovedAt = nil
+	page.PaintedPageApprovedAt = nil
 	page.UpdatedAt = editTime
 }
 
-// StaleOnDraftRegeneration invalidates both draft and downstream line art approvals when a draft sketch is regenerated (SPEC 3.6, 3.7).
+// StaleOnDraftRegeneration invalidates downstream draft, line art and painted page approvals when a draft sketch is regenerated (SPEC 3.6, 3.7).
 func StaleOnDraftRegeneration(page *Page, generationTime time.Time) {
 	page.DraftApprovedAt = nil
 	page.LineArtApprovedAt = nil
+	page.PaintedPageApprovedAt = nil
 	page.UpdatedAt = generationTime
 }
 
 // StaleOnLineArtRegeneration invalidates line art approval when line art is regenerated (SPEC 3.7).
 func StaleOnLineArtRegeneration(page *Page, generationTime time.Time) {
 	page.LineArtApprovedAt = nil
+	page.UpdatedAt = generationTime
+}
+
+// StaleOnPaintedPageRegeneration invalidates painted page approval when painted page is regenerated.
+func StaleOnPaintedPageRegeneration(page *Page, generationTime time.Time) {
+	page.PaintedPageApprovedAt = nil
 	page.UpdatedAt = generationTime
 }
 

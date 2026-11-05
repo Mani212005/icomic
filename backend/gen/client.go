@@ -22,6 +22,7 @@ type AIService interface {
 	GeneratePanelText(ctx context.Context, req GeneratePanelTextRequest) (*GeneratePanelTextResponse, error)
 	GenerateDraftSketch(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error)
 	GenerateLineArt(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error)
+	GeneratePaintedPage(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error)
 	SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
 	StoreColourImage(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error)
 	AssemblePdf(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
@@ -131,6 +132,14 @@ func (c *AIServiceClient) GenerateLineArt(ctx context.Context, req GenerateLineA
 	return &resp, nil
 }
 
+func (c *AIServiceClient) GeneratePaintedPage(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error) {
+	var resp GeneratePaintedPageResponse
+	if err := c.postJSON(ctx, "/internal/v1/generate-painted-page", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AIServiceClient) SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error) {
 	var resp SuggestColourPaletteResponse
 	if err := c.postJSON(ctx, "/internal/v1/suggest-colour-palette", req, &resp); err != nil {
@@ -191,6 +200,7 @@ type FakeAIServiceClient struct {
 	GeneratePanelTextFunc          func(ctx context.Context, req GeneratePanelTextRequest) (*GeneratePanelTextResponse, error)
 	GenerateDraftSketchFunc        func(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error)
 	GenerateLineArtFunc            func(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error)
+	GeneratePaintedPageFunc        func(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error)
 	SuggestColourPaletteFunc       func(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
 	StoreColourImageFunc           func(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error)
 	AssemblePdfFunc                func(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
@@ -360,6 +370,27 @@ func (f *FakeAIServiceClient) GenerateLineArt(ctx context.Context, req GenerateL
 		JobID:    req.JobID,
 		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/lineart/page_%s.png", req.PageID),
 		ModelID:  "muse-image-1.0-fake",
+		ProvenanceMetadata: map[string]interface{}{
+			"c2pa": map[string]interface{}{
+				"watermark_present": true,
+			},
+		},
+	}, nil
+}
+
+func (f *FakeAIServiceClient) GeneratePaintedPage(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error) {
+	if f.GeneratePaintedPageFunc != nil {
+		return f.GeneratePaintedPageFunc(ctx, req)
+	}
+	variant := "draft-conditioned"
+	if req.Variant != nil {
+		variant = string(*req.Variant)
+	}
+	return &GeneratePaintedPageResponse{
+		JobID:    req.JobID,
+		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/painted/page_%s_%s.png", req.PageID, variant),
+		ModelID:  "muse-image-1.0-fake",
+		Variant:  GeneratePaintedPageResponseVariant(variant),
 		ProvenanceMetadata: map[string]interface{}{
 			"c2pa": map[string]interface{}{
 				"watermark_present": true,

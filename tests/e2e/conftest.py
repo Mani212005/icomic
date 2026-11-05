@@ -97,7 +97,7 @@ def compiled_go_server(temp_test_dir: Path) -> Path:
 
 
 @pytest.fixture(scope="session")
-def ai_service() -> Generator[dict[str, Any], None, None]:
+def ai_service(temp_test_dir: Path) -> Generator[dict[str, Any], None, None]:
     """Start the real Python FastAPI service on deterministic fake adapters and ephemeral port."""
     ai_port = find_free_port()
     env = os.environ.copy()
@@ -119,13 +119,14 @@ def ai_service() -> Generator[dict[str, Any], None, None]:
         str(ai_port),
     ]
 
+    log_file = (temp_test_dir / "uvicorn.log").open("w+")
     proc = subprocess.Popen(
         cmd,
         cwd=str(AI_DIR),
         env=env,
         preexec_fn=os.setsid,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
     )
 
     base_url = f"http://127.0.0.1:{ai_port}"
@@ -133,9 +134,11 @@ def ai_service() -> Generator[dict[str, Any], None, None]:
         wait_for_health(f"{base_url}/healthz", timeout=20.0)
     except Exception as exc:
         terminate_process(proc)
-        stdout, stderr = proc.communicate()
+        log_file.seek(0)
+        logs = log_file.read()
+        log_file.close()
         raise RuntimeError(
-            f"Python AI service failed to start at {base_url}:\nSTDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}"
+            f"Python AI service failed to start at {base_url}:\nLOGS: {logs}"
         ) from exc
 
     # Start transparent port 8000 forwarder if port 8000 is free.
@@ -203,6 +206,7 @@ def ai_service() -> Generator[dict[str, Any], None, None]:
             pass
 
     terminate_process(proc)
+    log_file.close()
 
 
 @pytest.fixture(scope="session")
@@ -229,13 +233,14 @@ def go_api_server(
     else:
         env.pop("DATABASE_URL", None)
 
+    go_log_file = (temp_test_dir / "go-server.log").open("w+")
     proc = subprocess.Popen(
         [str(compiled_go_server)],
         cwd=str(BACKEND_DIR),
         env=env,
         preexec_fn=os.setsid,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=go_log_file,
+        stderr=subprocess.STDOUT,
     )
 
     base_url = f"http://127.0.0.1:{go_port}"
@@ -243,9 +248,11 @@ def go_api_server(
         wait_for_health(f"{base_url}/healthz", timeout=15.0)
     except Exception as exc:
         terminate_process(proc)
-        stdout, stderr = proc.communicate()
+        go_log_file.seek(0)
+        logs = go_log_file.read()
+        go_log_file.close()
         raise RuntimeError(
-            f"Go API server failed to start at {base_url}:\nSTDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}"
+            f"Go API server failed to start at {base_url}:\nLOGS: {logs}"
         ) from exc
 
     yield {
@@ -256,6 +263,7 @@ def go_api_server(
     }
 
     terminate_process(proc)
+    go_log_file.close()
 
 
 @pytest.fixture
@@ -288,13 +296,14 @@ def kill_switch_server(
     env["KILL_SWITCH"] = "true"
     env.pop("DATABASE_URL", None)
 
+    ks_log = (temp_test_dir / "kill-switch-server.log").open("w+")
     proc = subprocess.Popen(
         [str(compiled_go_server)],
         cwd=str(BACKEND_DIR),
         env=env,
         preexec_fn=os.setsid,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=ks_log,
+        stderr=subprocess.STDOUT,
     )
 
     base_url = f"http://127.0.0.1:{ks_port}"
@@ -302,9 +311,11 @@ def kill_switch_server(
         wait_for_health(f"{base_url}/healthz", timeout=15.0)
     except Exception as exc:
         terminate_process(proc)
-        stdout, stderr = proc.communicate()
+        ks_log.seek(0)
+        logs = ks_log.read()
+        ks_log.close()
         raise RuntimeError(
-            f"Kill switch Go API server failed to start at {base_url}:\nSTDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}"
+            f"Kill switch Go API server failed to start at {base_url}:\nLOGS: {logs}"
         ) from exc
 
     headers = {
@@ -315,6 +326,7 @@ def kill_switch_server(
         yield client
 
     terminate_process(proc)
+    ks_log.close()
 
 
 @pytest.fixture
@@ -336,13 +348,14 @@ def quota_server(
     env["KILL_SWITCH"] = "false"
     env.pop("DATABASE_URL", None)
 
+    q_log = (temp_test_dir / "quota-server.log").open("w+")
     proc = subprocess.Popen(
         [str(compiled_go_server)],
         cwd=str(BACKEND_DIR),
         env=env,
         preexec_fn=os.setsid,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=q_log,
+        stderr=subprocess.STDOUT,
     )
 
     base_url = f"http://127.0.0.1:{q_port}"
@@ -350,9 +363,11 @@ def quota_server(
         wait_for_health(f"{base_url}/healthz", timeout=15.0)
     except Exception as exc:
         terminate_process(proc)
-        stdout, stderr = proc.communicate()
+        q_log.seek(0)
+        logs = q_log.read()
+        q_log.close()
         raise RuntimeError(
-            f"Quota Go API server failed to start at {base_url}:\nSTDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}"
+            f"Quota Go API server failed to start at {base_url}:\nLOGS: {logs}"
         ) from exc
 
     headers = {
@@ -363,3 +378,4 @@ def quota_server(
         yield client
 
     terminate_process(proc)
+    q_log.close()

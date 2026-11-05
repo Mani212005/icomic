@@ -118,6 +118,10 @@ func (s *Server) NewRouter() http.Handler {
 	handle("POST /api/v1/pages/{id}/line-art", s.GenerateLineArt)
 	handle("POST /api/v1/pages/{id}/line-art/approve", s.ApproveLineArt)
 
+	// Finished Painted Page Prototype (opt-in route)
+	handle("POST /api/v1/pages/{id}/painted-page", s.GeneratePaintedPage)
+	handle("POST /api/v1/pages/{id}/painted-page/approve", s.ApprovePaintedPage)
+
 	// Colouring
 	handle("GET /api/v1/pages/{id}/colour-palette", s.GetColourPalette)
 	handle("POST /api/v1/pages/{id}/colour-palette/suggest", s.SuggestColourPalette)

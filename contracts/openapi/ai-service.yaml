@@ -153,6 +153,28 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /internal/v1/generate-painted-page:
+    post:
+      summary: Generate finished painted page per page (opt-in prototype route)
+      operationId: generatePaintedPage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GeneratePaintedPageRequest'
+      responses:
+        '200':
+          description: Finished painted page generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneratePaintedPageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /internal/v1/suggest-colour-palette:
     post:
       summary: Suggest colour palette for a page
@@ -838,6 +860,86 @@ components:
           type: string
         model_id:
           type: string
+        provenance_metadata:
+          type: object
+          additionalProperties: true
+
+    GeneratePaintedPageRequest:
+      type: object
+      required:
+        - job_id
+        - hashed_user_id
+        - project_id
+        - page_id
+        - page_number
+        - panels
+        - style
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        hashed_user_id:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        page_id:
+          type: string
+          format: uuid
+        page_number:
+          type: integer
+        draft_image_url:
+          type: string
+          nullable: true
+          description: Approved draft sketch composition URL for draft-conditioned variant
+        panels:
+          type: array
+          items:
+            $ref: '#/components/schemas/PanelTextItem'
+        style:
+          type: string
+        variant:
+          type: string
+          enum:
+            - draft-conditioned
+            - direct-from-brief
+          default: draft-conditioned
+          description: Finished painted page variant (composition-conditioned vs direct-from-brief)
+        character_reference_image_urls:
+          type: array
+          items:
+            type: string
+          default: []
+        character_identities:
+          type: array
+          description: Stable ordered identities; reference images precede legacy URL-only references.
+          items:
+            $ref: '#/components/schemas/CharacterRenderIdentity'
+          default: []
+        style_reference_image_url:
+          type: string
+          nullable: true
+
+    GeneratePaintedPageResponse:
+      type: object
+      required:
+        - job_id
+        - image_url
+        - model_id
+        - variant
+        - provenance_metadata
+      properties:
+        job_id:
+          type: string
+        image_url:
+          type: string
+        model_id:
+          type: string
+        variant:
+          type: string
+          enum:
+            - draft-conditioned
+            - direct-from-brief
         provenance_metadata:
           type: object
           additionalProperties: true

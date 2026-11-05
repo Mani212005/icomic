@@ -30,6 +30,8 @@ from .gen.models import (
     GenerateDraftSketchResponse,
     GenerateLineArtRequest,
     GenerateLineArtResponse,
+    GeneratePaintedPageRequest,
+    GeneratePaintedPageResponse,
     GeneratePanelTextRequest,
     GeneratePanelTextResponse,
     HealthResponse,
@@ -49,6 +51,7 @@ from .services.colour import ColourService
 from .services.draft import DraftService
 from .services.line_art import LineArtService
 from .services.moderation import ModerationService
+from .services.painted_page import PaintedPageService
 from .services.panel import PanelService
 from .services.pdf import PdfAssemblyService
 from .services.script import ScriptService
@@ -92,6 +95,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     panel_service = PanelService(wired_adapters.language)
     draft_service = DraftService(wired_adapters.image, wired_adapters.storage)
     line_art_service = LineArtService(wired_adapters.image, wired_adapters.storage)
+    painted_page_service = PaintedPageService(wired_adapters.image, wired_adapters.storage)
     colour_service = ColourService(wired_adapters.vision)
     moderation_service = ModerationService(wired_adapters.language)
     pdf_service = PdfAssemblyService(wired_adapters.storage)
@@ -304,6 +308,32 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             job_id=str(req.job_id),
             image_url=url,
             model_id=model_id,
+            provenance_metadata=provenance,
+        )
+
+    @app.post(
+        "/internal/v1/generate-painted-page",
+        response_model=GeneratePaintedPageResponse,
+    )
+    @queued("image", wired_adapters.image)
+    def generate_painted_page(req: GeneratePaintedPageRequest):
+        url, model_id, provenance, variant = painted_page_service.generate_painted_page(
+            page_id=str(req.page_id),
+            page_number=req.page_number,
+            panels=req.panels,
+            style=req.style,
+            hashed_user_id=req.hashed_user_id,
+            variant=req.variant,
+            draft_image_url=req.draft_image_url,
+            character_reference_image_urls=req.character_reference_image_urls,
+            character_identities=req.character_identities,
+            style_reference_image_url=req.style_reference_image_url,
+        )
+        return GeneratePaintedPageResponse(
+            job_id=str(req.job_id),
+            image_url=url,
+            model_id=model_id,
+            variant=variant,
             provenance_metadata=provenance,
         )
 
