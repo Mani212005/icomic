@@ -198,6 +198,26 @@ func newGenerationFixture() (*PostgresRepository, *transactionFixture, *domain.G
 	job := &domain.GenerationJob{ID: "job", ProjectID: "project", UserID: "user", JobType: "character_reference", Stage: "reference", ModelID: "fake", IdempotencyKey: "key", EstimatedCost: 0.01}
 	return repo, state, job
 }
+
+func TestIsolatedE2EQuotaAllows100AttemptsAndRefuses101st(t *testing.T) {
+	repo, state, template := newGenerationFixture()
+	repo.E2EImageQuota = &domain.ImageQuotaLimits{Daily: 100, Monthly: 1000}
+	for i := 1; i <= 100; i++ {
+		job := *template
+		job.ID, job.IdempotencyKey = fmt.Sprintf("job-%d", i), fmt.Sprintf("key-%d", i)
+		if _, _, err := repo.CreateGeneration(context.Background(), &job, GenerationOptions{EntityID: "character"}, 0.01); err != nil {
+			t.Fatalf("image %d refused: %v", i, err)
+		}
+	}
+	job := *template
+	job.ID, job.IdempotencyKey = "job-101", "key-101"
+	if _, _, err := repo.CreateGeneration(context.Background(), &job, GenerationOptions{EntityID: "character"}, 0.01); !errors.Is(err, domain.ErrQuotaExceeded) {
+		t.Fatalf("101st image was not refused: %v", err)
+	}
+	if state.daily != 100 || state.monthly != 100 || len(state.jobs) != 100 || len(state.entries) != 100 {
+		t.Fatalf("refusal changed quota/job/debit state: %+v", state)
+	}
+}
 func TestCreateGenerationRollsBackEveryFailure(t *testing.T) {
 	for _, step := range []string{"begin", "policy", "user", "quota", "project", "entity", "active", "balance", "insert_job", "insert_debit", "insert_quota", "commit"} {
 		t.Run(step, func(t *testing.T) {

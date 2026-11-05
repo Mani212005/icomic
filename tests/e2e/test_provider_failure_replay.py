@@ -25,6 +25,7 @@ from app.adapters.language.port import Message
 from app.adapters.vision.fake import FakeVisionAdapter
 from app.adapters.vision.meta import MetaVisionAdapter
 from app.main import create_app
+from app.costs import GENERATION_POLICIES
 from app.provider_costs import ProviderCostLedger, provider_operation
 from app.provider_diagnostics import ProviderDiagnostics
 
@@ -33,6 +34,7 @@ from app.provider_diagnostics import ProviderDiagnostics
     "target,shape,occurrence",
     [
         ("moderate_prompt", "http_404", 1),
+        ("moderate_prompt", "moderation_length_873", 1),
         ("analyze_script", "schema_echo", 6),
         ("generate_character_reference", "invalid_image", 1),
         ("generate_chapter_outline", "schema_echo", 2),
@@ -41,6 +43,8 @@ from app.provider_diagnostics import ProviderDiagnostics
         ("generate_line_art", "invalid_image", 1),
         ("suggest_colour_palette", "palette_list", 1),
         ("assemble_pdf", "corrupt_stored_image", 1),
+        ("complete_with_reasoning_load", None, 0),
+        ("complete_with_extras", None, 0),
     ],
 )
 def test_long_flow_stops_at_each_failed_stage(
@@ -72,6 +76,18 @@ def test_long_flow_stops_at_each_failed_stage(
         if isinstance(messages[-1]["content"], list):
             return httpx.Response(200, json=load("vision")["body"])
         text = FakeLanguageAdapter().complete("fake", [Message(**m) for m in messages])
+        if target == "complete_with_extras" and operation == "analyze_script":
+            template = json.loads(text)[0]
+            text = json.dumps([{**template, "name": f"Hero{n:02}"} for n in range(10)])
+        if target == "complete_with_reasoning_load" and operation == "moderate_prompt":
+            policy = GENERATION_POLICIES["moderation"]
+            assert payload["reasoning_effort"] == "minimal"
+            assert payload["max_tokens"] == policy.answer_tokens + policy.reasoning_reserve
+            observed = load("moderation_length_873")["body"]
+            assert payload["max_tokens"] > observed["usage"]["completion_tokens"]
+            observed["choices"][0]["message"]["content"] = "SAFE"
+            observed["choices"][0]["finish_reason"] = "stop"
+            return httpx.Response(200, json=observed)
         return httpx.Response(
             200,
             json={
@@ -127,6 +143,9 @@ def test_long_flow_stops_at_each_failed_stage(
             "PYTHON_AI_URL": ai_url,
             "DEV_AUTH_ENABLED": "true",
             "MEDIA_DIR": str(tmp_path / "media"),
+            "ICOMIC_E2E_ISOLATED_STACK": "1",
+            "ICOMIC_E2E_DAILY_IMAGES": "100",
+            "ICOMIC_E2E_MONTHLY_IMAGES": "1000",
         }
         with (tmp_path / "go.log").open("w") as log:
             backend = subprocess.Popen(
@@ -146,6 +165,26 @@ def test_long_flow_stops_at_each_failed_stage(
         )
         guard = runner.CostGuard(float("inf"), False)
         guard.script_file = repo_root / "tests/fixtures/the_tide_clock.txt"
+        if target.startswith("complete_with_"):
+            pages, _ = runner.run_flow(guard, tmp_path)
+            assert (guard.panel_count, pages, guard.pdf_page_count) == (51, 12, 13)
+            if target == "complete_with_extras":
+                characters = runner.json_request(f"/api/v1/projects/{guard.project_id}/characters")[
+                    "characters"
+                ]
+                assert len(characters) == 10
+                assert all(c.get("approved_at") for c in characters)
+                extras = [
+                    c for c in characters if c["visual_attributes"]["reference_role"] == "extra"
+                ]
+                assert len(extras) == 4 and all(not c.get("reference_image_url") for c in extras)
+                assert operation_counts["generate_character_reference"] == 6
+            else:
+                moderation = [
+                    c for c in ledger.report()["calls"] if c["operation"] == "moderate_prompt"
+                ]
+                assert moderation and all(c["usage"]["reasoning_tokens"] == 873 for c in moderation)
+            return
         with pytest.raises(runner.E2EError):
             runner.run_flow(guard, tmp_path)
         assert not (tmp_path / "latest.pdf").exists()

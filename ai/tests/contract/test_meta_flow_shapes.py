@@ -18,6 +18,7 @@ from app.adapters.language.fake import FakeLanguageAdapter
 from app.adapters.language.meta import MetaLanguageAdapter
 from app.adapters.language.port import Message
 from app.adapters.vision.meta import MetaVisionAdapter
+from app.costs import GENERATION_POLICIES
 from app.main import create_app
 from app.provider_costs import ProviderCostLedger
 
@@ -41,8 +42,21 @@ def test_entire_meta_service_flow_with_webp_and_moderation_costs(tmp_path):
         if request.url.path.endswith("/chat/completions"):
             assert any(m["role"] in {"user", "tool"} for m in payload["messages"])
             assert payload["max_tokens"] >= 1024 + 32
-            assert payload["reasoning_effort"] == "low"
             content = payload["messages"][-1]["content"]
+            stage = (
+                "palette"
+                if isinstance(content, list)
+                else (
+                    {"characters": "analysis", "outline": "outline", "panels": "panels"}.get(
+                        json.loads(content).get("operation")
+                    )
+                    if content.startswith("{")
+                    else "moderation"
+                )
+            )
+            policy = GENERATION_POLICIES[stage]
+            assert payload["max_tokens"] == policy.answer_tokens + policy.reasoning_reserve
+            assert payload["reasoning_effort"] == policy.effort
             if isinstance(content, list):
                 url = content[1]["image_url"]["url"]
                 assert url == "data:image/webp;base64," + base64.b64encode(webp).decode()

@@ -109,6 +109,7 @@ def request_for(operation, image_url):
         ("generate-panel-text", "truncated_json", "incomplete output"),
         ("generate-panel-text", "invalid_json", "invalid_or_incomplete_json"),
         ("moderate-prompt", "http_404", "404"),
+        ("moderate-prompt", "moderation_length_873", "incomplete output"),
         ("generate-panel-text", "http_400", "400"),
         ("suggest-colour-palette", "palette_schema_echo", "schema_echo"),
         ("suggest-colour-palette", "palette_list", "schema_mismatch"),

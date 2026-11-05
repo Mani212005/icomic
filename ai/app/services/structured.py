@@ -5,7 +5,7 @@ import json
 from jsonschema import Draft202012Validator, ValidationError
 
 from ..adapters.language.port import LanguagePort, Message
-from ..costs import STORY_INPUT_TOKEN_LIMIT, STORY_OUTPUT_TOKEN_LIMIT
+from ..costs import GENERATION_POLICIES, STORY_INPUT_TOKEN_LIMIT
 from ..provider_output import ProviderOutputError, reject_schema_echo
 
 
@@ -31,7 +31,10 @@ def complete_json(adapter: LanguagePort, model: str, operation: str, payload: di
             "Structured request exceeds the bounded input budget; split the source further."
         )
     result = adapter.complete(
-        model, messages, max_tokens=STORY_OUTPUT_TOKEN_LIMIT, response_format=response_format
+        model,
+        messages,
+        **GENERATION_POLICIES[{"characters": "analysis"}.get(operation, operation)].options(),
+        response_format=response_format,
     )
     try:
         parsed = json.loads(result)

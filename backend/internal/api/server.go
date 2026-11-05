@@ -25,6 +25,7 @@ type Server struct {
 	KillSwitch        domain.KillSwitchProvider
 	MaxPanelsPerPage  int
 	DefaultUserQuota  float64
+	MonthlyUserQuota  float64
 	AllowedOrigin     string
 }
 
@@ -124,11 +125,15 @@ func (s *Server) CheckKillSwitchAndQuota(r *http.Request, userID string) error {
 		}
 	}
 
+	monthlyLimit := s.MonthlyUserQuota
+	if monthlyLimit <= 0 {
+		monthlyLimit = s.DefaultUserQuota * 10
+	}
 	return domain.CheckKillSwitchAndQuota(
 		s.IsKillSwitchActive(),
 		float64(dailyCount),
 		s.DefaultUserQuota,
 		float64(monthlyCount),
-		s.DefaultUserQuota*10,
+		monthlyLimit,
 	)
 }

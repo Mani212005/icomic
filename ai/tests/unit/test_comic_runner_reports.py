@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 
+from app.costs import calculate_checklist_worst_case
 from app.provider_costs import ProviderCostLedger
 from app.provider_diagnostics import ProviderDiagnostics
 
@@ -41,7 +42,9 @@ def test_fake_failure_report_is_written_without_claiming_a_pdf(
 
 def test_runner_reconciles_all_provider_calls_including_moderation_and_failure(tmp_path):
     path = tmp_path / "costs.json"
-    ledger = ProviderCostLedger(2, prior="0.017006", reserve="0.0196245", path=path)
+    ledger = ProviderCostLedger(
+        2, prior="0.017006", reserve=round(calculate_checklist_worst_case(), 9), path=path
+    )
     first = ledger.before_call("language", {"model": "muse-spark-1.3", "max_tokens": 1056})
     ledger.finish_call(first, 200, {"usage": {"prompt_tokens": 17, "completion_tokens": 64}})
     second = ledger.before_call("image", {"model": "muse-image-1.0"})
@@ -81,7 +84,7 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
         ledger = ProviderCostLedger(
             2,
             prior="0.017006",
-            reserve="0.0196245",
+            reserve=round(calculate_checklist_worst_case(), 9),
             path=tmp_path / f"provider-costs-{run_id}.json",
             run_id=run_id,
         )

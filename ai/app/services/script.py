@@ -6,6 +6,7 @@ from pydantic import TypeAdapter
 
 from ..adapters.language.port import LanguagePort
 from ..gen.models import CharacterProfile
+from .characters import assign_reference_roles
 from .pacing import SOURCE_WORDS_PER_CALL, chapter_count, split_text
 from .structured import complete_json
 
@@ -40,6 +41,11 @@ class ScriptService:
         warnings = (
             ["Script is very short; fewer panels will be generated."] if word_count < 50 else []
         )
+        extras = assign_reference_roles(list(profiles.values()), script)
+        if extras:
+            warnings.append(
+                f"Retained {extras} extras with optional references; automatic references are limited to six main characters."
+            )
         return (
             list(profiles.values()),
             target_chapter_count or chapter_count(word_count),

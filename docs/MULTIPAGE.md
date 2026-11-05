@@ -76,7 +76,9 @@ or credential is required for either flow.
 
 ## Calls for this fixture, without retries or regeneration
 
-Let `C` be the number of character profiles retained by script analysis. The fake
+Let `C` be the number of main characters receiving automatic references, at most
+six; every other extracted profile remains an approved extra without an
+automatic reference. See [generation policy](GENERATION_POLICY.md). The fake
 fixture has `C = 1`; a live model can extract more characters, so reference calls
 must be expressed in terms of `C`. There are 51 panels and twelve comic pages.
 Moderation is a language-provider call and is listed separately to avoid counting
