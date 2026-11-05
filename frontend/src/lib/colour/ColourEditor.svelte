@@ -31,6 +31,7 @@
 	let lineArtCanvas;
 	let lineArtCtx;
 	let lineArtReady = false;
+	let lineArtError = '';
 	let appliedPaletteSignature = '';
 
 	let selectedColour = palette[0]?.hex_color || '#38BDF8';
@@ -49,8 +50,8 @@
 	let canUndo = false;
 	let canRedo = false;
 
-	const width = 600;
-	const height = 750;
+	let width = 600;
+	let height = 750;
 	$: paletteItems = Array.isArray(palette)
 		? palette
 		: Object.entries(palette || {}).map(([region_name, hex_color]) => ({ region_name, hex_color, label: region_name }));
@@ -67,6 +68,10 @@
 	}
 
 	onMount(() => {
+		canvas.width = width;
+		canvas.height = height;
+		lineArtCanvas.width = width;
+		lineArtCanvas.height = height;
 		ctx = canvas.getContext('2d', { willReadFrequently: true });
 		lineArtCtx = lineArtCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -78,25 +83,37 @@
 	});
 
 	function initLineArt() {
+		lineArtReady = false;
+		lineArtError = '';
+
+		if (!lineArtUrl) {
+			lineArtError = 'Page artwork is unavailable. Reload the page before colouring.';
+			return;
+		}
+
 		lineArtCtx.fillStyle = '#FFFFFF';
 		lineArtCtx.fillRect(0, 0, width, height);
 
-		if (lineArtUrl) {
-			const img = new Image();
-			img.crossOrigin = 'anonymous';
-			img.onload = () => {
-				lineArtCtx.drawImage(img, 0, 0, width, height);
-				lineArtReady = true;
-			};
-			img.onerror = () => {
-				drawFallbackLineArt();
-				lineArtReady = true;
-			};
-			img.src = lineArtUrl;
-		} else {
-			drawFallbackLineArt();
+		const img = new Image();
+		img.crossOrigin = 'anonymous';
+		img.onload = () => {
+			width = img.naturalWidth;
+			height = img.naturalHeight;
+			canvas.width = width;
+			canvas.height = height;
+			lineArtCanvas.width = width;
+			lineArtCanvas.height = height;
+			ctx.fillStyle = '#FFFFFF';
+			ctx.fillRect(0, 0, width, height);
+			lineArtCtx.fillStyle = '#FFFFFF';
+			lineArtCtx.fillRect(0, 0, width, height);
+			lineArtCtx.drawImage(img, 0, 0);
 			lineArtReady = true;
-		}
+		};
+		img.onerror = () => {
+			lineArtError = 'Page artwork could not be loaded. Check the connection and reload before colouring.';
+		};
+		img.src = lineArtUrl;
 	}
 
 	function applySuggestedPalette() {
@@ -120,32 +137,6 @@
 		composite.toBlob((blob) => {
 			if (blob) onApprove(blob);
 		}, 'image/png');
-	}
-
-	function drawFallbackLineArt() {
-
-		lineArtCtx.strokeStyle = '#000000';
-		lineArtCtx.lineWidth = 4;
-		lineArtCtx.fillStyle = '#000000';
-
-		lineArtCtx.strokeRect(20, 20, width - 40, height - 40);
-
-		lineArtCtx.strokeRect(30, 30, width - 60, 320);
-
-		lineArtCtx.strokeRect(30, 370, (width - 70) / 2, 340);
-
-		lineArtCtx.strokeRect(30 + (width - 70) / 2 + 10, 370, (width - 70) / 2, 340);
-
-		lineArtCtx.beginPath();
-		lineArtCtx.arc(150, 150, 40, 0, Math.PI * 2);
-		lineArtCtx.stroke();
-
-		lineArtCtx.beginPath();
-		lineArtCtx.moveTo(150, 190);
-		lineArtCtx.lineTo(100, 330);
-		lineArtCtx.lineTo(200, 330);
-		lineArtCtx.closePath();
-		lineArtCtx.stroke();
 	}
 
 	function handleCanvasClick(e) {
@@ -323,6 +314,7 @@
 			</button>
 		</div>
 	</header>
+	{#if lineArtError}<p class="colour-load-error" role="alert">{lineArtError}</p>{/if}
 
 	<div class="palette-bar">
 		<div class="swatches">
@@ -347,12 +339,10 @@
 	</div>
 
 	<div class="workspace-area">
-		<div class="canvas-viewport">
+		<div class="canvas-viewport" style="aspect-ratio: {width} / {height};">
 
 			<canvas
 				bind:this={canvas}
-				{width}
-				{height}
 				class="active-canvas"
 				tabindex="0"
 				aria-label="Canvas: arrows move; Enter paints."
@@ -366,8 +356,6 @@
 
 			<canvas
 				bind:this={lineArtCanvas}
-				{width}
-				{height}
 				class="line-art-overlay"
 			></canvas>
 			{#if keyboardCursor}<span class="canvas-cursor" aria-hidden="true" style="left: {keyboardCursor.x}%; top: {keyboardCursor.y}%"></span>{/if}
