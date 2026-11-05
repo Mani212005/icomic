@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import random
+import uuid
 from pathlib import Path
 
 import httpx
@@ -86,8 +87,45 @@ def test_image_timeout_keeps_reservation_without_retry(phase):
     assert report["actual_spend_usd"] == 0
     assert report["accounted_spend_usd"] == 0.01
     assert report["unpriced_calls"] == 1
+    assert report["uncertain_calls"] == 1
+    assert report["uncertain_amount_usd"] == 0.01
+    assert report["calls"][0]["status"] == "uncertain"
     assert report["calls"][0]["http_status"] is None
     assert report["calls"][0]["request_payload_bytes"] > 0
+    assert (
+        str(uuid.UUID(report["calls"][0]["idempotency_key"]))
+        == report["calls"][0]["idempotency_key"]
+    )
+
+
+def test_explicit_image_retry_is_a_new_key_and_keeps_both_reservations():
+    requests = []
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/meta/responses_image.json").read_text()
+    )
+
+    def attempt(request):
+        requests.append(request)
+        if len(requests) == 1:
+            raise httpx.ReadTimeout("response lost", request=request)
+        return httpx.Response(200, json=fixture)
+
+    ledger = ProviderCostLedger(2)
+    adapter = MetaImageAdapter(
+        api_key="mock-key",
+        transport=httpx.MockTransport(attempt),
+        cost_ledger=ledger,
+        cost_stage="image",
+    )
+    with pytest.raises(MetaUnknownOutcomeError):
+        adapter.generate("A lighthouse", [], "user-hash", "storybook")
+    adapter.generate("A lighthouse", [], "user-hash", "storybook")
+    report = ledger.report()
+    keys = [call["idempotency_key"] for call in report["calls"]]
+    assert len(set(keys)) == 2
+    assert report["uncertain_amount_usd"] == 0.01
+    assert report["accounted_spend_usd"] == 0.02
+    assert all(request.headers["idempotency-key"] in keys for request in requests)
 
 
 def test_text_timeouts_are_shorter_and_image_timeouts_configurable(monkeypatch):

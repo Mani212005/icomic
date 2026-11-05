@@ -33,13 +33,28 @@ def test_interrupted_claim_fails_without_repeating_provider_call(monkeypatch):
     worker.register("image", lambda request: (_ for _ in ()).throw(AssertionError("repeated call")))
     assert worker.run_once() is False
     saved = queue.get_job(QUEUE, "key")
-    assert saved["status"] == "failed"
+    assert saved["status"] == "uncertain"
     assert "outcome is unknown" in saved["error_message"]
     # A stale consumer cannot overwrite the terminal state.
     import pytest
 
     with pytest.raises(RuntimeError, match="no longer owns"):
         queue.finish(envelope, {"status": "done", "response": {}})
+
+
+def test_unknown_provider_outcome_is_saved_as_terminal_uncertain():
+    class UnknownOutcome(RuntimeError):
+        outcome_unknown = True
+
+    queue = RedisQueueAdapter(client=FakeRedis())
+    queue.enqueue(QUEUE, {"operation": "image", "request": {}}, "uncertain-key")
+    worker = GenerationWorker(queue)
+    worker.register("image", lambda _: (_ for _ in ()).throw(UnknownOutcome("outcome is unknown")))
+    assert worker.run_once()
+    saved = queue.get_job(QUEUE, "uncertain-key")
+    assert saved["status"] == "uncertain"
+    assert saved["http_status"] == 502
+    assert worker.run_once() is False
 
 
 def test_redelivery_after_saved_result_does_not_generate():

@@ -14,6 +14,32 @@ or a large explicit chapter count can produce smaller pages. The existing
 recommended. The comic runner verifies the default five-panel layout. A cover is
 additional to the comic pages.
 
+## Unknown provider outcomes and cost accounting
+
+An image POST that times out or loses its connection after transmission is recorded
+as `uncertain`. The provider cost ledger retains its $0.01 image reservation, and
+`uncertain_amount_usd`, `accounted_spend_usd`, and
+`cumulative_accounted_spend_usd` include that amount. `actual_spend_usd` remains
+limited to usage confirmed by a provider response. An uncertain operation is never
+retried automatically. Any reviewed retry must create a new generation job and
+idempotency key, with a separate reservation; it can incur a second image charge.
+
+Resume an existing project with `--resume-project-id`, `--resume-user-id`, the
+original `--script-file`, and `--attach-existing-stack`. The attach flag uses the API URL from
+`ICOMIC_E2E_API_URL`; attach mode never starts Compose services or applies the E2E
+quota overlay. A live attached resume also requires `--resume-cost-run-id` and the
+matching existing provider ledger in `--artifact-dir`, shared with the attached AI
+service, configured with the same run ID and budget. To explicitly retry one uncertain image job, add
+`--retry-uncertain-job-id <job-id>`; the runner creates a fresh key and reservation.
+
+The prior isolated live attempt persisted 51 panels,
+11 profiles, six references, four outlines, and 12 page allocations before the first
+draft image request became uncertain. Its database snapshot was isolated and may no
+longer exist. The recorded cumulative accounted floor, including its uncertain
+reservation, was $0.596778950 USD; this excludes historical unmetered calls as
+recorded in the attempt evidence. Do not treat the earlier observed-spend total as
+the cumulative accounted total.
+
 ## Audit of limits and lists
 
 | Area | Previous limitation | Current behavior |
@@ -116,4 +142,4 @@ chunks. This is a call inventory, not a cost estimate.
 
 The runtime policy defaults to 40 images per project/book, 80 per user over 24 hours and 800 over 30 days. A 51-panel, 12-page book needs about 30 images: 12 drafts, 12 final line art and main-character references. The book budget leaves revision room, and the daily cap permits two books.
 
-Each new image generation, regeneration or image edit counts once. Replaying an idempotency key never counts again. Failed or cancelled attempts count until a full refund commits; that refund releases all three budgets once. Partial refunds retain the image count. Approvals, colouring uploads, moderation and language calls do not count. Deleting a project retains daily/monthly usage. See ARCHITECTURE section 5.5 for transaction and upgrade details. Elevated runner quotas must remain confined to an explicit e2e profile on an isolated database; production defaults stay 40/80/800.
+Each new image generation, regeneration or image edit counts once. Replaying an idempotency key never counts again. Failed or cancelled attempts count until a full refund commits; that refund releases all three budgets once. Partial refunds retain the image count. An uncertain provider outcome retains its debit and image slot because the provider may have billed it. Approvals, colouring uploads, moderation and language calls do not count. Deleting a project retains daily/monthly usage. See ARCHITECTURE section 5.5 for transaction and upgrade details. Elevated runner quotas must remain confined to an explicit e2e profile on an isolated database; production defaults stay 40/80/800.

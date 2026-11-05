@@ -68,6 +68,7 @@
         "running",
         "done",
         "failed",
+        "uncertain",
         "cancelled"
       ],
       "description": "Execution status"
@@ -92,7 +93,7 @@
     },
     "error_message": {
       "type": ["string", "null"],
-      "description": "Error details if status is failed"
+      "description": "Error details for failed or uncertain outcomes; uncertain means the provider may have accepted a billed request"
     },
     "created_at": {
       "type": "string",

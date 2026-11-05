@@ -138,6 +138,17 @@ class ProviderCostLedger:
             "accounted_spend_usd": float(charged),
             "cumulative_accounted_spend_usd": float(self.prior + charged),
             "unpriced_calls": sum(c["actual_cost_usd"] is None for c in self.state["calls"]),
+            "uncertain_calls": sum(c["status"] == "uncertain" for c in self.state["calls"]),
+            "uncertain_amount_usd": float(
+                sum(
+                    (
+                        Decimal(str(c["reserved_cost_usd"]))
+                        for c in self.state["calls"]
+                        if c["status"] == "uncertain"
+                    ),
+                    Decimal(0),
+                )
+            ),
         }
 
     def report(self):
@@ -193,11 +204,16 @@ class ProviderCostLedger:
             )
             return index
 
-    def finish_call(self, index, status, data=None, *, elapsed_seconds=None):
+    def finish_call(self, index, status, data=None, *, elapsed_seconds=None, uncertain=False):
         with self._locked():
             call = self.state["calls"][index]
+            outcome = (
+                "uncertain"
+                if status is None or uncertain
+                else ("completed" if 200 <= status < 300 else "failed")
+            )
             call.update(
-                status="completed" if status is not None and 200 <= status < 300 else "failed",
+                status=outcome,
                 http_status=status,
             )
             if elapsed_seconds is not None:

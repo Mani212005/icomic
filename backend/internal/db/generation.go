@@ -298,7 +298,7 @@ func (p *PostgresRepository) TransitionGeneration(ctx context.Context, id, statu
 		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE generation_jobs
-        SET status=$2::varchar, actual_cost=COALESCE($3::numeric,actual_cost),error_message=COALESCE($4::text,error_message),completed_at=CASE WHEN $2::varchar IN ('done','failed','cancelled') THEN COALESCE(completed_at,clock_timestamp()) ELSE completed_at END
+        SET status=$2::varchar, actual_cost=COALESCE($3::numeric,actual_cost),error_message=COALESCE($4::text,error_message),completed_at=CASE WHEN $2::varchar IN ('done','failed','uncertain','cancelled') THEN COALESCE(completed_at,clock_timestamp()) ELSE completed_at END
         WHERE id=$1::uuid`, id, status, cost, msg)
 	if err != nil {
 		return err

@@ -85,6 +85,7 @@ const (
 	Failed    JobStatusResponseStatus = "failed"
 	Pending   JobStatusResponseStatus = "pending"
 	Running   JobStatusResponseStatus = "running"
+	Uncertain JobStatusResponseStatus = "uncertain"
 )
 
 // Valid indicates whether the value is a known member of the JobStatusResponseStatus enum.
@@ -99,6 +100,8 @@ func (e JobStatusResponseStatus) Valid() bool {
 	case Pending:
 		return true
 	case Running:
+		return true
+	case Uncertain:
 		return true
 	default:
 		return false

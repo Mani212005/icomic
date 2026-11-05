@@ -26,7 +26,7 @@ for _, key in ipairs(expired) do
     if raw then
         local job = cjson.decode(raw)
         if job.status == 'running' then
-            job.status = 'failed'
+            job.status = 'uncertain'
             job.error_message = 'Worker delivery expired; generation outcome is unknown.'
             job.http_status = 503
             redis.call('SET', key, cjson.encode(job))
@@ -74,9 +74,10 @@ return 1
 class RedisQueueAdapter(QueuePort):
     """Redis state survives service restarts; clients are injectable for hermetic tests.
 
-    The delivery lease bounds abandoned running jobs. An expired delivery fails
-    rather than repeating a possibly completed, billed provider operation. Completed
-    results are saved before ack, so an ack failure/redelivery never generates again.
+    The delivery lease bounds abandoned running jobs. An expired delivery becomes
+    uncertain rather than repeating a possibly completed, billed provider operation.
+    Completed results are saved before ack, so an ack failure/redelivery never
+    generates again.
     """
 
     synchronous = False

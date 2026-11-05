@@ -303,6 +303,6 @@ class AssemblePdfResponse(BaseModel):
 
 class JobStatusResponse(BaseModel):
     job_id: str
-    status: Literal["pending", "running", "done", "failed", "cancelled"]
+    status: Literal["pending", "running", "done", "failed", "uncertain", "cancelled"]
     actual_cost: float | None = None
     error_message: str | None = None

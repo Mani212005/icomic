@@ -28,6 +28,8 @@ def test_budget_includes_prior_spend_reserve_and_pending_calls_across_restart(tm
     assert report["accounted_spend_usd"] == 0.01
     assert report["actual_spend_usd"] == 0
     assert report["unpriced_calls"] == 1
+    assert report["uncertain_calls"] == 0
+    assert report["uncertain_amount_usd"] == 0
 
 
 def test_concurrent_guards_cannot_reserve_the_same_remaining_budget(tmp_path):

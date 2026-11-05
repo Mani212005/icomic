@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import sys
+import types
 from pathlib import Path
 from uuid import UUID
 
@@ -91,7 +93,7 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
         index = ledger.before_call("language", {"model": "muse-spark-1.3", "max_tokens": 1056})
         ledger.finish_call(index, 200, {"usage": {"prompt_tokens": 17, "completion_tokens": 64}})
         index = ledger.before_call("image", {"model": "muse-image-1.0"})
-        ledger.finish_call(index, 500)
+        ledger.finish_call(index, 500, uncertain=True)
         diagnostics = ProviderDiagnostics(tmp_path / f"diagnostics-{run_id}")
         diagnostics.capture(b'{"error":"full synthetic failed body"}', 500)
         diagnostics.failure("HTTPError")
@@ -128,6 +130,9 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
     assert report["alert_threshold_usd"] == 0.0172
     assert report["alert_raised"] is True
     assert report["provider_cost_report"]["accounted_spend_usd"] == 0.01029325
+    assert report["accounted_spend_usd"] == 0.01029325
+    assert report["cumulative_accounted_spend_usd"] == 0.02729925
+    assert report["uncertain_amount_usd"] == 0.01
     assert report["cost_complete"] is False
     assert report["status"] == "failed" and report["pdf_path"] is None
     assert len(report["diagnostic_files"]) == 1
@@ -149,6 +154,160 @@ def test_runner_refuses_artifacts_at_repository_root(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     assert runner.main(["--artifact-dir", str(tmp_path)]) == 2
     assert not (tmp_path / ".gitignore").exists()
+
+
+def test_resume_requires_explicit_existing_stack_attachment(tmp_path):
+    assert (
+        runner.main(
+            [
+                "--resume-project-id",
+                "project-1",
+                "--resume-user-id",
+                "user-1",
+                "--script-file",
+                str(tmp_path / "story.txt"),
+                "--artifact-dir",
+                str(tmp_path / "artifacts"),
+            ]
+        )
+        == 2
+    )
+
+
+@pytest.mark.parametrize("explicit_retry", [False, True])
+def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
+    monkeypatch, tmp_path, explicit_retry
+):
+    source = "Nia guides a boat home at sunrise."
+    script_file = tmp_path / "story.txt"
+    script_file.write_text(source)
+    panel_ids = [f"panel-{index}" for index in range(1, 5)]
+    page = {
+        "id": "page-1",
+        "panel_ids": panel_ids,
+        "draft_image_job_id": "uncertain-1",
+    }
+    chapter = {"id": "chapter-1", "status": "approved"}
+    calls = []
+    fake_colouring = types.ModuleType("colouring")
+    fake_colouring.colour_enclosed_regions = lambda image, palette: b"fake png"
+    monkeypatch.setitem(sys.modules, "colouring", fake_colouring)
+    monkeypatch.setattr(runner, "fetch_line_art_image", lambda _: b"fake line art")
+
+    def request(path, method="GET", payload=None, extra_headers=None):
+        if method != "GET":
+            calls.append((method, path, extra_headers))
+        if path == "/api/v1/projects/project-1":
+            return {
+                "project": {
+                    "id": "project-1",
+                    "user_id": "user-1",
+                    "original_script": source,
+                    "chapter_count": 1,
+                    "art_style": "storybook",
+                }
+            }
+        if path.endswith("/characters"):
+            return {
+                "characters": [
+                    {
+                        "id": "character-1",
+                        "name": "Nia",
+                        "visual_attributes": {"reference_role": "extra"},
+                        "approved_at": "saved",
+                    }
+                ]
+            }
+        if path.endswith("/chapters"):
+            return {"chapters": [chapter]}
+        if path.endswith("/panels"):
+            return {"panels": [{"id": panel_id} for panel_id in panel_ids]}
+        if path.endswith("/pages"):
+            return {"pages": [page | {"line_art_image_url": "http://local/storage/fake/art"}]}
+        if path == "/api/v1/pages/page-1/colour-palette":
+            return {"palette": {}}
+        if path == "/api/v1/generation-jobs/uncertain-1":
+            return {
+                "job": {
+                    "id": "uncertain-1",
+                    "status": "uncertain",
+                    "project_id": "project-1",
+                    "job_type": "draft_sketch",
+                }
+            }
+        if path == "/api/v1/generation-jobs/job-1":
+            return {"job": {"status": "done", "actual_cost": 0.01}}
+        if path == "/api/v1/exports/export-1":
+            return {"export": {"status": "completed"}}
+        if path == "/api/v1/exports/export-1/download":
+            return b"%PDF-1.7 /Type /Page /Type /Page"
+        if path == "/api/v1/projects/project-1/export":
+            return {"export": {"id": "export-1"}}
+        if path.endswith(("/draft", "/line-art")):
+            return {"job_id": "job-1"}
+        if path.endswith("/suggest"):
+            return {"palette": {"sea": "#123456"}}
+        return {}
+
+    monkeypatch.setattr(runner, "json_request", request)
+    monkeypatch.setattr(runner, "binary_request", lambda *args: {})
+    guard = runner.CostGuard(float("inf"), live=False)
+    guard.script_file = script_file
+    if explicit_retry:
+        count, project_id = runner.run_flow(
+            guard,
+            tmp_path / "artifacts",
+            resume_project_id="project-1",
+            resume_user_id="user-1",
+            retry_uncertain_job_id="uncertain-1",
+        )
+    else:
+        with pytest.raises(runner.E2EError, match="uncertain provider outcome"):
+            runner.run_flow(
+                guard,
+                tmp_path / "artifacts",
+                resume_project_id="project-1",
+                resume_user_id="user-1",
+            )
+        assert not any(path == "/api/v1/pages/page-1/draft" for _, path, _ in calls)
+        return
+    assert (count, project_id) == (1, "project-1")
+    provider_actions = [path for method, path, _ in calls if method == "POST"]
+    assert "/api/v1/projects/project-1/analyze" not in provider_actions
+    assert "/api/v1/projects/project-1/chapters" not in provider_actions
+    assert "/api/v1/chapters/chapter-1/panels" not in provider_actions
+    assert provider_actions[0] == "/api/v1/characters/character-1/approve"
+    retry_requests = [item for item in calls if item[1] == "/api/v1/pages/page-1/draft"]
+    assert len(retry_requests) == 1
+    assert retry_requests[0][2]["Idempotency-Key"]
+    assert "/api/v1/pages/page-1/line-art" not in provider_actions
+
+
+def test_resume_refuses_script_mismatch_before_project_mutation(monkeypatch, tmp_path):
+    script_file = tmp_path / "story.txt"
+    script_file.write_text("new script")
+    calls = []
+
+    def request(path, method="GET", payload=None, extra_headers=None):
+        calls.append((method, path))
+        return {
+            "project": {
+                "id": "project-1",
+                "original_script": "different stored script",
+            }
+        }
+
+    monkeypatch.setattr(runner, "json_request", request)
+    guard = runner.CostGuard(float("inf"), live=False)
+    guard.script_file = script_file
+    with pytest.raises(runner.E2EError, match="script file differs"):
+        runner.run_flow(
+            guard,
+            tmp_path,
+            resume_project_id="project-1",
+            resume_user_id="user-1",
+        )
+    assert calls == [("GET", "/api/v1/projects/project-1")]
 
 
 def test_consecutive_flows_provision_distinct_users_and_use_their_headers(monkeypatch, tmp_path):

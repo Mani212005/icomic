@@ -2395,8 +2395,8 @@ func (s *Server) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 	if (job.Status == jobs.StatusPending || job.Status == jobs.StatusRunning) && s.AIClient != nil {
 		// Reconcile a failed worker delivery even if the submitting HTTP connection
 		// was interrupted. Successful jobs complete after saving the entity link.
-		if status, statusErr := s.AIClient.GetJobStatus(r.Context(), job.ID); statusErr == nil && status != nil && status.Status == jobs.StatusFailed {
-			if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, jobs.StatusFailed, status.ActualCost, status.ErrorMessage); err != nil {
+		if status, statusErr := s.AIClient.GetJobStatus(r.Context(), job.ID); statusErr == nil && status != nil && (status.Status == jobs.StatusFailed || status.Status == jobs.StatusUncertain) {
+			if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, string(status.Status), status.ActualCost, status.ErrorMessage); err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}

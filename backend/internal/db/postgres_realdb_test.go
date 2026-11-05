@@ -382,6 +382,15 @@ func TestRealDBGenerationTransactionsAndRepositories(t *testing.T) {
 	if updated.Status != "done" || updated.ActualCost == nil || *updated.ActualCost != actualCost {
 		t.Fatal("legacy job update did not persist")
 	}
+	uncertain := makeJob("script_analysis", "text", "", uuid.NewString())
+	must(t, repo.CreateJobWithDebit(ctx, uncertain, .01))
+	unknownMessage := "provider image request outcome is unknown"
+	must(t, repo.TransitionGeneration(ctx, uncertain.ID, "uncertain", nil, &unknownMessage, []string{"pending"}))
+	uncertainSaved, err := repo.GetJob(ctx, uncertain.ID)
+	must(t, err)
+	if uncertainSaved.Status != "uncertain" || uncertainSaved.ActualCost != nil || uncertainSaved.CompletedAt == nil {
+		t.Fatalf("uncertain provider attempt was not persisted as terminal without fabricated actual cost: %+v", uncertainSaved)
+	}
 	must(t, repo.RecordAdjustment(ctx, user.ID, "", 1))
 	must(t, repo.RecordAdjustment(ctx, user.ID, project.ID, 1))
 

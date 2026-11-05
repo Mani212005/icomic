@@ -30,7 +30,7 @@ class GenerationWorker:
         if envelope is None:
             return False
         saved = self.queue.get_job(QUEUE, envelope.idempotency_key)
-        if saved and saved["status"] in ("done", "failed"):
+        if saved and saved["status"] in ("done", "failed", "uncertain"):
             self.queue.ack(envelope)
             return True
         if saved and saved.get("delivery_id") != envelope.delivery_id:
@@ -41,12 +41,15 @@ class GenerationWorker:
             result, cost = self.handlers[envelope.payload["operation"]](envelope.payload["request"])
         except Exception as exc:
             logger.exception("Generation consumer failed")
+            uncertain = bool(getattr(exc, "outcome_unknown", False))
             self.queue.finish(
                 envelope,
                 {
-                    "status": "failed",
+                    "status": "uncertain" if uncertain else "failed",
                     "error_message": str(exc),
-                    "http_status": 400 if isinstance(exc, ValueError) else 500,
+                    "http_status": 502
+                    if uncertain
+                    else (400 if isinstance(exc, ValueError) else 500),
                     "actual_cost": getattr(exc, "actual_cost", None),
                 },
             )
@@ -75,6 +78,8 @@ class GenerationWorker:
                 return job["response"]
             if job["status"] == "failed":
                 raise HTTPException(job.get("http_status", 500), job["error_message"])
+            if job["status"] == "uncertain":
+                raise HTTPException(job.get("http_status", 502), job["error_message"])
             if self.stop.wait(0.05):
                 raise HTTPException(503, "Worker is stopping; retry with the same job ID")
 

@@ -19,6 +19,7 @@ const (
 	StatusRunning   = "running"
 	StatusDone      = "done"
 	StatusFailed    = "failed"
+	StatusUncertain = "uncertain"
 	StatusCancelled = "cancelled"
 )
 
@@ -91,7 +92,7 @@ func generateJobID() string {
 
 func isValidStatus(status string) bool {
 	switch status {
-	case StatusPending, StatusRunning, StatusDone, StatusFailed, StatusCancelled:
+	case StatusPending, StatusRunning, StatusDone, StatusFailed, StatusUncertain, StatusCancelled:
 		return true
 	default:
 		return false
@@ -161,7 +162,7 @@ func (s *InMemoryJobService) CancelJob(ctx context.Context, jobID string) error 
 		return ErrJobNotFound
 	}
 
-	if job.Status == StatusDone || job.Status == StatusFailed || job.Status == StatusCancelled {
+	if job.Status == StatusDone || job.Status == StatusFailed || job.Status == StatusUncertain || job.Status == StatusCancelled {
 		return ErrCannotCancelJob
 	}
 
@@ -198,7 +199,7 @@ func (s *InMemoryJobService) UpdateJobStatus(ctx context.Context, jobID string, 
 	if errMsg != nil {
 		job.ErrorMessage = errMsg
 	}
-	if status == StatusDone || status == StatusFailed || status == StatusCancelled {
+	if status == StatusDone || status == StatusFailed || status == StatusUncertain || status == StatusCancelled {
 		if job.CompletedAt == nil {
 			now := time.Now().UTC()
 			job.CompletedAt = &now
@@ -239,7 +240,7 @@ func (s *InMemoryJobService) CompleteJob(ctx context.Context, jobID string, actu
 		return ErrJobNotFound
 	}
 
-	if job.Status == StatusDone || job.Status == StatusFailed || job.Status == StatusCancelled {
+	if job.Status == StatusDone || job.Status == StatusFailed || job.Status == StatusUncertain || job.Status == StatusCancelled {
 		return fmt.Errorf("%w: cannot complete job in status %s", ErrJobAlreadyTerminal, job.Status)
 	}
 
@@ -263,7 +264,7 @@ func (s *InMemoryJobService) FailJob(ctx context.Context, jobID string, errMsg s
 		return ErrJobNotFound
 	}
 
-	if job.Status == StatusDone || job.Status == StatusFailed || job.Status == StatusCancelled {
+	if job.Status == StatusDone || job.Status == StatusFailed || job.Status == StatusUncertain || job.Status == StatusCancelled {
 		return fmt.Errorf("%w: cannot fail job in status %s", ErrJobAlreadyTerminal, job.Status)
 	}
 
