@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiClient } from '../src/lib/api/client.js';
+import { formatCostQuote } from '../src/lib/api/types.js';
+
+test('formatCostQuote labels configured estimates as unverified unless confirmed', () => {
+	assert.equal(
+		formatCostQuote({ estimated_cost: 0.0275, currency: 'USD', price_verified: false }),
+		'Unverified estimate: $0.0275'
+	);
+	assert.equal(
+		formatCostQuote({ estimated_cost: 0.01, currency: 'USD', price_verified: true }),
+		'Estimate: $0.01'
+	);
+	assert.equal(formatCostQuote(null), 'Estimate unavailable');
+});
 
 test('ApiClient initializes with default or custom baseUrl', () => {
 	const defaultClient = new ApiClient();

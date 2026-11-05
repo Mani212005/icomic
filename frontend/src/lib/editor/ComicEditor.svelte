@@ -4,7 +4,7 @@
 	import ColourEditor from '$lib/colour/ColourEditor.svelte';
 	import ExportView from '$lib/export/ExportView.svelte';
 	import { pollJob } from '$lib/api/jobPolling.js';
-	import { STAGES, isApprovalStale, hasValidApproval, formatApiError } from '$lib/api/types.js';
+	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote } from '$lib/api/types.js';
 
 	export let project = {
 		id: 'proj-demo-1',
@@ -45,6 +45,10 @@
 		failedImages = new Set([...failedImages, event.currentTarget.getAttribute('src')]);
 	}
 	let creditUsage = { remaining_credits: 1000 };
+	let costQuotes = {};
+	function quoteLabel(stage) {
+		return formatCostQuote(costQuotes[stage]);
+	}
 
 	let isJobActive = false;
 	let currentJobStatus = '';
@@ -162,6 +166,15 @@
 				palettesByPage = {};
 				palette = [];
 			}
+			const stages = ['character_reference', 'draft_sketch', 'final_line_art', 'colour_suggestion'];
+			const quotes = await Promise.all(stages.map(async (stage) => {
+				try {
+					return [stage, await apiClient.estimateCost(project.id, stage, 1)];
+				} catch {
+					return [stage, null];
+				}
+			}));
+			costQuotes = Object.fromEntries(quotes);
 		} catch (e) {
 			console.error('Project:', e);
 			jobError = formatApiError(e);
@@ -619,8 +632,8 @@
 						{/if}
 
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)} aria-label="Regenerate">
-								<Icon name="regenerate" size={18} /> Regen ($0.01)
+							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)}>
+								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('character_reference')})
 							</button>
 
 							{#if isApprovalStale(char.approved_at, char.updated_at)}
@@ -819,8 +832,8 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-			<button class="secondary-btn" on:click={() => generateDraft(page.id)} aria-label="Regenerate">
-								<Icon name="regenerate" size={18} /> Regen ($0.01)
+							<button class="secondary-btn" on:click={() => generateDraft(page.id)}>
+								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('draft_sketch')})
 							</button>
 
 							{#if isApprovalStale(page.draft_approved_at, page.updated_at)}
@@ -892,8 +905,8 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-			<button class="secondary-btn" on:click={() => generateLineArt(page.id)} aria-label="Regenerate">
-								<Icon name="regenerate" size={18} /> Regen ($0.01)
+							<button class="secondary-btn" on:click={() => generateLineArt(page.id)}>
+								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('final_line_art')})
 							</button>
 
 							{#if isApprovalStale(page.line_art_approved_at, page.updated_at)}
@@ -938,7 +951,7 @@
 				<div class="page-colour-heading">
 					<h3>Page {page.page_number}</h3>
 					<button class="secondary-btn" on:click={() => suggestNewPalette(page.id)}>
-						<Icon name="colour" size={18} /> Suggest palette
+						<Icon name="colour" size={18} /> Suggest palette ({quoteLabel('colour_suggestion')})
 					</button>
 				</div>
 				<ColourEditor

@@ -175,4 +175,8 @@ type CostEstimate struct {
 	EstimatedCost   float64  `json:"estimated_cost"`
 	Assumptions     []string `json:"assumptions"`
 	IsEstimatePrice bool     `json:"is_estimate_price"`
+	ModelID         string   `json:"model_id"`
+	Currency        string   `json:"currency"`
+	PricingVersion  string   `json:"pricing_version"`
+	PriceVerified   bool     `json:"price_verified"`
 }

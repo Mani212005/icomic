@@ -58,7 +58,9 @@ services:
       ADAPTER_STORAGE: "${ADAPTER_STORAGE:-fake}"
       ADAPTER_QUEUE: "${ADAPTER_QUEUE:-fake}"
       ADAPTER_CLOCK: "${ADAPTER_CLOCK:-fake}"
-      # Model IDs and the Meta endpoint come from the adapter defaults.
+      # Model IDs are shared with the backend quote configuration.
+      META_IMAGE_MODEL: "${META_IMAGE_MODEL:-muse-image-1.0}"
+      META_VISION_MODEL: "${META_VISION_MODEL:-muse-spark-1.3}"
       META_API_KEY: "${META_API_KEY:-}"
       META_REASONING_EFFORT: "${META_REASONING_EFFORT:-low}"
       META_REASONING_RESERVE_TOKENS: "${META_REASONING_RESERVE_TOKENS:-1024}"
@@ -108,6 +110,12 @@ services:
       DATABASE_URL: "postgres://icomic:icomic@postgres:5432/icomic?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
       DEV_AUTH_ENABLED: "true"
+      META_IMAGE_MODEL: "${META_IMAGE_MODEL:-muse-image-1.0}"
+      META_VISION_MODEL: "${META_VISION_MODEL:-muse-spark-1.3}"
+      META_IMAGE_PRICE_USD: "${META_IMAGE_PRICE_USD:-0.01}"
+      META_COLOUR_ESTIMATE_USD: "${META_COLOUR_ESTIMATE_USD:-0.005}"
+      PRICING_VERSION: "${PRICING_VERSION:-}"
+      PRICING_VERIFIED: "${PRICING_VERIFIED:-false}"
     ports:
       - "8080:8080"
     healthcheck:

@@ -27,11 +27,13 @@ func (s *PersistentJobService) CreateJob(ctx context.Context, req CreateJobReque
 	if req.IdempotencyKey == "" {
 		req.IdempotencyKey = uuid.NewString()
 	}
-	switch kind {
-	case "character_reference", "draft_sketch", "final_line_art":
-		req.DebitAmount = credits.ImageUnitPrice
-	case "colour_suggestion":
-		req.DebitAmount = credits.ColourSuggestionUnitPrice
+	if req.DebitAmount == 0 {
+		switch kind {
+		case "character_reference", "draft_sketch", "final_line_art":
+			req.DebitAmount = credits.ImageUnitPrice
+		case "colour_suggestion":
+			req.DebitAmount = credits.ColourSuggestionUnitPrice
+		}
 	}
 	switch stage {
 	case "script", "panels", "outline":

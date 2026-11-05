@@ -457,10 +457,15 @@ export class MockApiClient {
 		const unitCost = STAGE_ESTIMATED_COSTS[stage] || 0.01;
 		const estimatedCost = unitCost * imageCount;
 		return {
-			stage,
-			image_count: imageCount,
-			estimated_cost_usd: estimatedCost,
-			current_balance_usd: this.creditUsage.remaining_credits
+			stage_name: stage,
+			image_count: stage === 'colour_suggestion' ? 0 : imageCount,
+			estimated_cost: estimatedCost,
+			assumptions: ['Mock configured estimate.'],
+			is_estimate_price: stage === 'colour_suggestion',
+			model_id: stage === 'colour_suggestion' ? 'muse-spark-1.3' : 'muse-image-1.0',
+			currency: 'USD',
+			pricing_version: 'mock-default',
+			price_verified: false
 		};
 	}
 

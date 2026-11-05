@@ -7,8 +7,8 @@ Go API service for Icomic (docs/ARCHITECTURE.md section 7).
 - **PostgreSQL Migrations and Schema**: Migration scripts located in `deploy/migrations/` creating all 13 core tables (`plans`, `users`, `projects`, `chapters`, `generation_jobs`, `characters`, `panels`, `pages`, `colour_palettes`, `colour_regions`, `stage_approvals`, `credit_ledger`, `exports`).
 - **Persistence Behind Repository Interfaces**: Persistence is abstracted behind `db.Repository`. An in-memory fake (`db.InMemoryRepository`) is used for hermetic unit tests with zero external database dependencies. A production PostgreSQL implementation (`db.PostgresRepository`) is selected when `DATABASE_URL` is configured.
 - **Credit Ledger and Cost Management**:
-  - Pricing basis: $0.01 per image attempt (`muse-image-1.0`) and estimated token cost for colour suggestion.
-  - Stage cost estimates: `POST /api/v1/projects/:id/estimate`.
+  - One backend pricing configuration supplies image/palette estimate rates, model IDs, generation debits and `POST /api/v1/projects/:id/estimate` quotes.
+  - Defaults retain the documented fake/development basis: $0.01 per image attempt and $0.005 per palette suggestion. They are labeled unverified until `PRICING_VERIFIED=true`; this is not an approved retail price or provider quote.
   - Transactional debits: Credit ledger entry and generation job record written atomically.
   - Automatic refunds on eligible failed jobs or user cancellations.
   - Quota enforcement (daily and monthly) and global operator kill switch.
@@ -48,6 +48,15 @@ DATABASE_URL="postgres://icomic:icomic@localhost:5432/icomic?sslmode=disable" go
 ```
 
 The server listens on `http://localhost:8080`.
+
+Pricing can be configured without a provider call using `META_IMAGE_MODEL`,
+`META_VISION_MODEL`, `META_IMAGE_PRICE_USD`, `META_COLOUR_ESTIMATE_USD`, and
+`PRICING_VERSION`. `PRICING_VERIFIED` controls the quote's verification label
+and defaults to `false`. Amounts must be finite, positive USD values; an
+invalid configured amount prevents startup. If a model or price is overridden
+without `PRICING_VERSION`, the backend derives a version from the effective
+configuration. These values are estimates and do not determine a user-facing
+selling price.
 
 ## Testing
 

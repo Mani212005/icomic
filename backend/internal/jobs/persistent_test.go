@@ -100,6 +100,28 @@ func TestPersistentJobsSurviveServiceRecreationWithoutSecondCharge(t *testing.T)
 	}
 }
 
+func TestPersistentJobsUseConfiguredDebitAmount(t *testing.T) {
+	ctx := context.Background()
+	repo := db.NewInMemoryRepository()
+	user := &domain.User{Email: "priced@example.com"}
+	if err := repo.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	store := &durableJobStore{Repository: repo}
+	service := jobs.NewPersistentJobService(store)
+	job, _, err := service.CreateJob(ctx, jobs.CreateJobRequest{
+		ProjectID: "project", UserID: user.ID, EntityID: "page", JobType: "draft_sketch",
+		Stage: "draft", IdempotencyKey: "configured-price", ModelID: "muse-image-configured",
+		DebitAmount: 0.0275, EstimatedCost: 0.0275,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.amount != 0.0275 || job.EstimatedCost != 0.0275 || job.ModelID != "muse-image-configured" {
+		t.Fatalf("configured pricing did not reach durable job/debit: amount=%v job=%+v", store.amount, job)
+	}
+}
+
 func TestPersistentJobStorageEnumsPreservePublicLabels(t *testing.T) {
 	for _, test := range []struct{ kind, stage, storedKind, storedStage string }{
 		{"script_analysis", "script", "script_analysis", "text"},

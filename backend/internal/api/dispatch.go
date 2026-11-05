@@ -37,9 +37,9 @@ func (s *Server) refundFailedGeneration(ctx context.Context, job *domain.Generat
 	amount := 0.0
 	switch job.JobType {
 	case "character_reference", "draft_sketch", "final_line_art":
-		amount = credits.ImageUnitPrice
+		amount = s.Pricing.ImagePriceUSD
 	case "colour_suggestion":
-		amount = credits.ColourSuggestionUnitPrice
+		amount = s.Pricing.ColourEstimateUSD
 	}
 	if amount == 0 {
 		return nil

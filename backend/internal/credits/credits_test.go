@@ -10,6 +10,78 @@ import (
 	"icomic/backend/internal/domain"
 )
 
+func TestPricingConfigDrivesEstimateAndStageMetadata(t *testing.T) {
+	pricing, err := credits.PricingFromEnv(func(key string) string {
+		switch key {
+		case "META_IMAGE_MODEL":
+			return "muse-image-test"
+		case "META_IMAGE_PRICE_USD":
+			return "0.0275"
+		case "META_VISION_MODEL":
+			return "meta-vision-test"
+		case "META_COLOUR_ESTIMATE_USD":
+			return "0.003"
+		case "PRICING_VERSION":
+			return "test-prices-2"
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	image := pricing.Estimate("draft_sketch", 3)
+	if image.EstimatedCost != 0.0825 || image.ModelID != "muse-image-test" || image.PricingVersion != "test-prices-2" {
+		t.Fatalf("configured image price/model/version not reflected in quote: %+v", image)
+	}
+	colour := pricing.Estimate("colour_suggestion", 2)
+	if colour.EstimatedCost != 0.006 || colour.ModelID != "meta-vision-test" {
+		t.Fatalf("configured colour price/model not reflected in quote: %+v", colour)
+	}
+}
+
+func TestDefaultPricingIsUnverifiedAndConfigurationRejectsInvalidValues(t *testing.T) {
+	if quote := credits.DefaultPricing().Estimate("draft_sketch", 1); quote.PriceVerified {
+		t.Fatalf("default pricing must not claim verified provider or retail pricing: %+v", quote)
+	}
+	for _, value := range []string{"0", "-0.01", "NaN", "not-a-price"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := credits.PricingFromEnv(func(key string) string {
+				if key == "META_IMAGE_PRICE_USD" {
+					return value
+				}
+				return ""
+			})
+			if err == nil {
+				t.Fatalf("expected invalid price %q to be rejected", value)
+			}
+		})
+	}
+}
+
+func TestPricingVersionChangesWhenPricingChangesWithoutExplicitVersion(t *testing.T) {
+	getenv := func(price string) func(string) string {
+		return func(key string) string {
+			if key == "META_IMAGE_PRICE_USD" {
+				return price
+			}
+			return ""
+		}
+	}
+	first, err := credits.PricingFromEnv(getenv("0.02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := credits.PricingFromEnv(getenv("0.03"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Version == second.Version || first.Version == "default" || second.Version == "default" {
+		t.Fatalf("pricing version did not identify changed configuration: first=%q second=%q", first.Version, second.Version)
+	}
+}
+
 func TestInMemoryCreditService(t *testing.T) {
 	ctx := context.Background()
 	svc := credits.NewInMemoryCreditService(map[string]float64{

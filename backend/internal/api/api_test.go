@@ -114,7 +114,11 @@ func TestCreateProject(t *testing.T) {
 }
 
 func TestEstimateCost(t *testing.T) {
-	_, handler, repo := setupTestServer(true, "test-user")
+	server, handler, repo := setupTestServer(true, "test-user")
+	server.Pricing = credits.PricingConfig{
+		ImageModelID: "muse-image-configured", VisionModelID: "vision-configured",
+		ImagePriceUSD: 0.0275, ColourEstimateUSD: 0.003, Version: "api-test-v2", Verified: false,
+	}
 	if err := repo.CreateProject(context.Background(), &domain.Project{ID: "03f4a2ef-fa27-509e-a9e3-feb2b84c0a28", UserID: "test-user"}); err != nil {
 		t.Fatal(err)
 	}
@@ -136,8 +140,8 @@ func TestEstimateCost(t *testing.T) {
 
 	var resp map[string]interface{}
 	_ = json.NewDecoder(rec.Body).Decode(&resp)
-	if resp["estimated_cost"] != 0.05 {
-		t.Fatalf("expected 0.05 estimated cost, got %v", resp["estimated_cost"])
+	if resp["estimated_cost"] != 0.1375 || resp["model_id"] != "muse-image-configured" || resp["pricing_version"] != "api-test-v2" || resp["price_verified"] != false {
+		t.Fatalf("estimate did not use configured pricing metadata: %+v", resp)
 	}
 }
 

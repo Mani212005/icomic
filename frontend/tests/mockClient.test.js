@@ -94,9 +94,11 @@ test('MockApiClient calculates cost estimates based on stage and count', async (
 	const client = new MockApiClient();
 	const estimate = await client.estimateCost('proj-1', 'draft_sketch', 5);
 
-	assert.equal(estimate.stage, 'draft_sketch');
+	assert.equal(estimate.stage_name, 'draft_sketch');
 	assert.equal(estimate.image_count, 5);
-	assert.equal(estimate.estimated_cost_usd, 0.05);
+	assert.equal(estimate.estimated_cost, 0.05);
+	assert.equal(estimate.currency, 'USD');
+	assert.equal(estimate.price_verified, false);
 });
 
 test('MockApiClient handles export workflow', async () => {
