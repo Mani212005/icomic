@@ -47,6 +47,7 @@ class MetaImageAdapter(ImagePort):
             self._client = http_client
         else:
             try:
+                client_kwargs.setdefault("call_type", "image")
                 self._client = MetaHttpClient(
                     api_key=api_key,
                     base_url=base_url,

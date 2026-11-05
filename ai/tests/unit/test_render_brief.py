@@ -7,11 +7,12 @@ import pytest
 from app.adapters.storage.fake import FakeStorageAdapter
 from app.gen.models import CharacterRenderIdentity, PanelTextItem
 from app.services.render_brief import build_page_render_request
+from tests.image_fixtures import image_bytes
 
 
 def example_request():
     storage = FakeStorageAdapter()
-    url = storage.put("characters/nia.png", b"Nia reference pixels", "image/png")
+    url = storage.put("characters/nia.png", image_bytes("Nia reference pixels"), "image/png")
     return {
         "page_number": 2,
         "style": "classic-comic",
@@ -44,7 +45,7 @@ def test_golden_shared_render_brief():
     prompt, images = build_page_render_request(**example_request())
     expected = Path(__file__).parents[1] / "fixtures/render_brief_v1.txt"
     assert prompt + "\n" == expected.read_text()
-    assert images == [b"Nia reference pixels"]
+    assert images == [image_bytes("Nia reference pixels")]
 
 
 @pytest.mark.parametrize("field", list(PanelTextItem.model_fields))
@@ -67,7 +68,7 @@ def test_identity_edits_and_changed_reference_pixels_change_brief():
     ]
     changed, _ = build_page_render_request(**request)
     assert original != changed
-    request["storage"].put("characters/nia.png", b"new reference pixels", "image/png")
+    request["storage"].put("characters/nia.png", image_bytes("new reference pixels"), "image/png")
     changed_pixels, images = build_page_render_request(**request)
     assert changed != changed_pixels
-    assert images == [b"new reference pixels"]
+    assert images == [image_bytes("new reference pixels")]

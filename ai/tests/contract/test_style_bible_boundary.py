@@ -19,6 +19,7 @@ from app.main import create_app
 from app.services.character import CharacterService
 from app.services.line_art import LineArtService
 from app.services.render_brief import build_page_render_request
+from tests.image_fixtures import image_bytes
 
 
 def test_style_bible_module_and_resolver_exist():
@@ -69,7 +70,7 @@ def test_draft_and_line_art_briefs_carry_style_bible():
     from app.services.style_bible import resolve_style_bible
 
     storage = FakeStorageAdapter()
-    url = storage.put("ref.png", b"ref", "image/png")
+    url = storage.put("ref.png", image_bytes("reference"), "image/png")
     prompt, _ = build_page_render_request(
         page_number=1,
         panels=[
@@ -117,7 +118,7 @@ def test_line_art_stage_avoids_contradictory_no_shading_for_manga_and_noir():
     """Defect 4: Line art stage forces 'no shading, flat white fills' contradicting manga/noir."""
     app = create_app()
     storage = app.state.storage_adapter
-    draft_url = storage.put("draft.png", b"draft", "image/png")
+    draft_url = storage.put("draft.png", image_bytes("draft"), "image/png")
     service = LineArtService(app.state.image_adapter, storage)
 
     # Manga ink requires screentones, cross-hatching, and value modeling

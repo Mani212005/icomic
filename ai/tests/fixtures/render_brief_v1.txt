@@ -19,17 +19,21 @@ Render every scene, action, camera/framing, background and image_prompt detail i
   "reading_order": "Follow panels in array order, left to right then top to bottom. Do not reorder or omit panels.",
   "references": [
     {
+      "bytes": 80,
       "character_id": "nia",
       "description": "Lighthouse keeper",
+      "height": 64,
       "input_image_index": 1,
       "name": "Nia",
       "role": "character identity: face, hair, silhouette, costume and signature props",
-      "sha256": "9592259b14724c099c038c6223b1e6afef5d599f8f202f243ffabd063cd2c7e4",
+      "sha256": "a13be028adbafd52430d07d634a75153a94ef18c1f8a75251e91ed0516effd74",
+      "source_sha256": "a13be028adbafd52430d07d634a75153a94ef18c1f8a75251e91ed0516effd74",
       "source_url": "http://localhost:8000/storage/fake/characters/nia.png",
       "visual_attributes": {
         "clothing": "yellow raincoat",
         "hair_style": "braid"
-      }
+      },
+      "width": 64
     }
   ],
   "style": "classic-comic",
@@ -74,5 +78,5 @@ Render every scene, action, camera/framing, background and image_prompt detail i
     "values": "High-contrast black-and-white value hierarchy, punchy ink shadows, balanced negative white space, graphic chiaroscuro without muddy grey gradients.",
     "version": "style-bible-v1"
   },
-  "version": "page-render-brief-v1"
+  "version": "page-render-brief-v2"
 }

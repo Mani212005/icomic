@@ -25,6 +25,7 @@ from app.adapters.meta_http import MetaConfigurationError, MetaEmptyResponseErro
 from app.adapters.vision.fake import FakeVisionAdapter
 from app.adapters.vision.meta import MetaVisionAdapter
 from app.adapters.vision.port import PaletteSuggestion, VisionPort
+from tests.image_fixtures import image_bytes
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "meta"
 MOCK_BASE_URL = "http://mock.meta.internal/v1"
@@ -241,7 +242,9 @@ def test_meta_image_adapter_generate_payload_and_byte_preservation():
     )
     assert isinstance(adapter, ImagePort)
 
-    ref_bytes = b"\x89PNG\r\n\x1a\nref-image-turnaround"
+    ref_bytes = image_bytes(
+        "89504e470d0a1a0a7265662d696d6167652d7475726e61726f756e64", format="PNG"
+    )
     result = adapter.generate(
         prompt="Detective walking through rainy alley",
         reference_images=[ref_bytes],

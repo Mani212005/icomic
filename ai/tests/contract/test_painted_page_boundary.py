@@ -13,14 +13,15 @@ from fastapi.testclient import TestClient
 
 from app.adapters.image.meta import MetaImageAdapter
 from app.main import create_app
+from tests.image_fixtures import image_bytes
 
 
 @pytest.mark.parametrize("variant", ["draft-conditioned", "direct-from-brief"])
 def test_painted_page_endpoint_accepts_variants_and_preserves_story(variant):
     app = create_app()
     storage = app.state.storage_adapter
-    draft_url = storage.put("draft.png", b"draft-composition-bytes", "image/png")
-    char_url = storage.put("nia.png", b"nia-identity-bytes", "image/png")
+    draft_url = storage.put("draft.png", image_bytes("draft-composition-bytes"), "image/png")
+    char_url = storage.put("nia.png", image_bytes("nia-identity-bytes"), "image/png")
 
     panel = {
         "panel_number": 1,
@@ -85,8 +86,8 @@ def test_painted_page_stage_constraints_roles_and_wire_conditioning(variant):
     app = create_app(replace(fakes, image=adapter))
     storage = app.state.storage_adapter
 
-    draft_content = b"\x89PNG\r\n\x1a\ndraft-sketch-composition"
-    char_content = b"\x89PNG\r\n\x1a\nNia-character-identity"
+    draft_content = image_bytes("89504e470d0a1a0a64726166742d736b657463682d636f6d706f736974696f6e")
+    char_content = image_bytes("89504e470d0a1a0a4e69612d6368617261637465722d6964656e74697479")
     draft_url = storage.put("draft.png", draft_content, "image/png")
     char_url = storage.put("char.png", char_content, "image/png")
 
@@ -170,7 +171,7 @@ def test_painted_page_immutable_derivative_storage():
     """Verify that multiple generations for the same page produce distinct immutable paths."""
     app = create_app()
     storage = app.state.storage_adapter
-    char_url = storage.put("char.png", b"nia", "image/png")
+    char_url = storage.put("char.png", image_bytes("Nia"), "image/png")
 
     page_id = str(uuid4())
     payload = {

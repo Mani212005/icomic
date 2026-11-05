@@ -8,6 +8,7 @@ from app.services.painted_page import (
     VARIANT_DRAFT_CONDITIONED,
     PaintedPageService,
 )
+from tests.image_fixtures import image_bytes
 
 
 def make_service():
@@ -34,8 +35,8 @@ def sample_panels():
 
 def test_painted_page_stage_constraints_exclude_no_shading():
     service, storage, image = make_service()
-    draft_url = storage.put("draft.png", b"draft-pixels", "image/png")
-    char_url = storage.put("nia.png", b"nia-pixels", "image/png")
+    draft_url = storage.put("draft.png", image_bytes("draft-pixels"), "image/png")
+    char_url = storage.put("nia.png", image_bytes("nia-pixels"), "image/png")
 
     url, model_id, provenance, variant = service.generate_painted_page(
         page_id="test-page-1",
@@ -74,12 +75,12 @@ def test_painted_page_stage_constraints_exclude_no_shading():
     assert "black and white" not in prompt
 
     # Composition reference attached first, character second
-    assert call["reference_images"] == [b"draft-pixels", b"nia-pixels"]
+    assert call["reference_images"] == [image_bytes("draft-pixels"), image_bytes("nia-pixels")]
 
 
 def test_painted_page_direct_from_brief_variant_omits_draft():
     service, storage, image = make_service()
-    char_url = storage.put("nia.png", b"nia-pixels", "image/png")
+    char_url = storage.put("nia.png", image_bytes("nia-pixels"), "image/png")
 
     url, model_id, provenance, variant = service.generate_painted_page(
         page_id="test-page-2",
@@ -112,13 +113,13 @@ def test_painted_page_direct_from_brief_variant_omits_draft():
     assert "flat white fills" not in prompt
 
     # Direct-from-brief attaches only character references, NO draft image
-    assert call["reference_images"] == [b"nia-pixels"]
+    assert call["reference_images"] == [image_bytes("nia-pixels")]
 
 
 def test_painted_page_supports_style_reference():
     service, storage, image = make_service()
-    style_url = storage.put("style.png", b"style-sample-pixels", "image/png")
-    char_url = storage.put("nia.png", b"nia-pixels", "image/png")
+    style_url = storage.put("style.png", image_bytes("style-sample-pixels"), "image/png")
+    char_url = storage.put("nia.png", image_bytes("nia-pixels"), "image/png")
 
     service.generate_painted_page(
         page_id="test-page-3",
@@ -140,5 +141,8 @@ def test_painted_page_supports_style_reference():
     )
 
     call = image.recorded_calls[0]
-    assert call["reference_images"] == [b"nia-pixels", b"style-sample-pixels"]
+    assert call["reference_images"] == [
+        image_bytes("nia-pixels"),
+        image_bytes("style-sample-pixels"),
+    ]
     assert "approved style reference" in call["prompt"]

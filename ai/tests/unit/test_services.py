@@ -19,6 +19,7 @@ from app.services.moderation import ModerationService
 from app.services.panel import PanelService
 from app.services.pdf import PdfAssemblyService
 from app.services.script import ScriptService
+from tests.image_fixtures import image_bytes
 
 
 def test_script_service_basic():
@@ -222,8 +223,8 @@ def test_draft_service_character_consistency_anchoring():
     storage = FakeStorageAdapter()
     svc = DraftService(img, storage)
 
-    char_bytes_1 = b"\x89PNG\r\n\x1a\nchar-1-bytes"
-    char_bytes_2 = b"\x89PNG\r\n\x1a\nchar-2-bytes"
+    char_bytes_1 = image_bytes("character-1")
+    char_bytes_2 = image_bytes("character-2")
     url1 = storage.put("characters/char-1/reference.png", char_bytes_1, "image/png")
     url2 = storage.put("characters/char-2/reference.png", char_bytes_2, "image/png")
 
@@ -288,7 +289,7 @@ def test_line_art_service_without_character_references():
             image_prompt="Panel 1",
         )
     ]
-    draft_bytes = b"\x89PNG\r\n\x1a\ndraft"
+    draft_bytes = image_bytes("89504e470d0a1a0a6472616674")
     storage.put("pages/page-101/draft_page_1.png", draft_bytes, "image/png")
     url, model_id, prov = svc.generate_line_art(
         page_id="page-101",
@@ -311,10 +312,10 @@ def test_line_art_service_character_consistency_anchoring():
     storage = FakeStorageAdapter()
     svc = LineArtService(img, storage)
 
-    char_bytes = b"\x89PNG\r\n\x1a\nleo-ref-bytes"
+    char_bytes = image_bytes("Leo")
     char_url = storage.put("characters/leo/reference.png", char_bytes, "image/png")
     draft_url = "http://localhost:8000/storage/fake/pages/page-303/draft_page_1.png"
-    draft_bytes = b"\x89PNG\r\n\x1a\ndraft"
+    draft_bytes = image_bytes("89504e470d0a1a0a6472616674")
     storage.put(draft_url, draft_bytes, "image/png")
 
     panels = [
