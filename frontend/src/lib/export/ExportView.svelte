@@ -1,7 +1,7 @@
 <script>
-	import Icon from '$lib/design/Icon.svelte';
-	import { pollJob } from '$lib/api/jobPolling.js';
-	import { EXPORT_FORMATS, PAGE_SIZES, formatApiError } from '$lib/api/types.js';
+	import Icon from '#lib/design/Icon.svelte';
+	import { pollJob } from '#lib/api/jobPolling.js';
+	import { EXPORT_FORMATS, PAGE_SIZES, formatApiError } from '#lib/api/types.js';
 
 	export let projectId = '';
 	export let apiClient;

@@ -1,5 +1,5 @@
 <script>
-	import Icon from '$lib/design/Icon.svelte';
+	import Icon from '#lib/design/Icon.svelte';
 	export let error = null;
 	export let onDismiss = () => {};
 </script>

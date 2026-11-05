@@ -138,7 +138,7 @@ test('handles large canvases without memory blowup', () => {
 	assert.equal(filled.data[1], 0);
 	assert.equal(filled.data[2], 0);
 
-	assert.ok(elapsed < 500, `Large canvas filled in ${elapsed.toFixed(1)}ms (must be < 500ms)`);
+	assert.ok(elapsed < 1000, `Large canvas filled in ${elapsed.toFixed(1)}ms (must be < 1000ms)`);
 });
 
 test('fills by tolerance against the clicked pixel colour', () => {

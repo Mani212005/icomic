@@ -1,10 +1,10 @@
 <script>
-	import '$lib/design/theme.css';
-	import { focusDialog } from '$lib/design/dialog.js';
-	import Icon from '$lib/design/Icon.svelte';
-	import ComicEditor from '$lib/editor/ComicEditor.svelte';
-	import { createDefaultClient, formatApiError } from '$lib/api/index.js';
-	import { AGE_TERMS_ADVISORY } from '$lib/config/policies.js';
+	import '#lib/design/theme.css';
+	import { focusDialog } from '#lib/design/dialog.js';
+	import Icon from '#lib/design/Icon.svelte';
+	import ComicEditor from '#lib/editor/ComicEditor.svelte';
+	import { createDefaultClient, formatApiError } from '#lib/api/index.js';
+	import { AGE_TERMS_ADVISORY } from '#lib/config/policies.js';
 	import { onMount } from 'svelte';
 
 	let apiClient = createDefaultClient();

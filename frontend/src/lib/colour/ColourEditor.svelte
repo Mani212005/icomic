@@ -1,5 +1,5 @@
 <script>
-	import Icon from '$lib/design/Icon.svelte';
+	import Icon from '#lib/design/Icon.svelte';
 	import { onMount } from 'svelte';
 	import { keyboardCanvas } from './keyboardCanvas.js';
 	import { drawColourComposite } from './colourComposite.js';

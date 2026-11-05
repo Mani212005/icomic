@@ -1,10 +1,10 @@
 <script>
 	import ErrorBanner from './ErrorBanner.svelte';
-	import Icon from '$lib/design/Icon.svelte';
-	import ColourEditor from '$lib/colour/ColourEditor.svelte';
-	import ExportView from '$lib/export/ExportView.svelte';
-	import { pollJob } from '$lib/api/jobPolling.js';
-	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote } from '$lib/api/types.js';
+	import Icon from '#lib/design/Icon.svelte';
+	import ColourEditor from '#lib/colour/ColourEditor.svelte';
+	import ExportView from '#lib/export/ExportView.svelte';
+	import { pollJob } from '#lib/api/jobPolling.js';
+	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote } from '#lib/api/types.js';
 	const INK_VARIANT = 'ink';
 
 	export let project = {

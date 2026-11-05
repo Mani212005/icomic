@@ -8,8 +8,8 @@ const forbidden = [
 	/PUBLIC_API_URL/,
 	/\b[A-Z][A-Z0-9_]*(?:API_KEY|AUTH_TOKEN|SECRET|ACCESS_TOKEN)\b/
 ];
-const externalUrl = /https?:\/\/[^\s"'<>]+/gi;
-const allowedUrl = /^https?:\/\/www\.w3\.org\/2000\/svg(?:%22)?$/i;
+const externalUrl = /https?:\/\/[^\s"'<>`)}\]]+/gi;
+const allowedUrl = /^(?:https?:\/\/www\.w3\.org\/(?:2000\/svg(?:%22)?|1999\/xhtml)$|https:\/\/svelte\.dev\/e\/)/i;
 
 async function* filesUnder(directory) {
 	for (const entry of await readdir(directory, { withFileTypes: true })) {

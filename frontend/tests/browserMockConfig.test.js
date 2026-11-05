@@ -18,7 +18,7 @@ test('browser build exposes PUBLIC_USE_MOCK_API and selects MockApiClient', asyn
 			root,
 			mode: 'production',
 			logLevel: 'silent',
-			build: { write: false, minify: false, rollupOptions: { output: { format: 'es' } } },
+			build: { minify: false, rollupOptions: { output: { format: 'es' } } },
 			plugins: [
 				{
 					name: 'capture-browser-bundle',
