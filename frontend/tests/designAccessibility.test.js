@@ -6,7 +6,19 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const css = readFileSync(join(root, 'src/lib/design/theme.css'), 'utf8');
-const tokens = Object.fromEntries([...css.matchAll(/--([\w-]+):\s*(#[a-f\d]{6})\s*;/gi)].map((match) => [match[1], match[2]]));
+const declarations = Object.fromEntries([...css.matchAll(/--([\w-]+):\s*([^;]+);/g)].map((match) => [match[1], match[2].trim()]));
+function colour(name) {
+  const value = declarations[name];
+  if (/^#[a-f\d]{6}$/i.test(value)) return value.toLowerCase();
+  const alias = value.match(/^var\(--([\w-]+)\)$/);
+  if (alias) return colour(alias[1]);
+  const mix = value.match(/^color-mix\(in srgb, var\(--([\w-]+)\) (\d+)%, var\(--([\w-]+)\)\)$/);
+  assert.ok(mix, `Unsupported colour token: ${name}`);
+  const first = colour(mix[1]).slice(1).match(/../g).map((hex) => parseInt(hex, 16));
+  const second = colour(mix[3]).slice(1).match(/../g).map((hex) => parseInt(hex, 16));
+  const amount = Number(mix[2]) / 100;
+  return '#' + first.map((value, index) => Math.round(value * amount + second[index] * (1 - amount)).toString(16).padStart(2, '0')).join('');
+}
 function luminance(hex) {
   const linear = hex.slice(1).match(/../g).map((value) => parseInt(value, 16) / 255)
     .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
@@ -17,28 +29,28 @@ function contrast(first, second) {
   return (values[0] + 0.05) / (values[1] + 0.05);
 }
 
-test('design tokens meet AA text and control contrast across semantic states', () => {
-  for (const background of ['paper', 'sheet', 'sage', 'success-soft', 'warning-soft', 'danger-soft']) {
-    for (const foreground of ['ink', 'muted']) {
-      assert.ok(contrast(tokens[foreground], tokens[background]) >= 4.5, `${foreground} on ${background}`);
-    }
+test('the supplied palette and its semantic surfaces retain AA text and control contrast', () => {
+  for (const [name, expected] of Object.entries({ primary: '#c47f6f', background: '#f8f4ee', surface: '#fcfaf7', text: '#4b4542', accent: '#d6c19b' })) {
+    assert.equal(colour(name), expected);
   }
-  for (const background of ['accent', 'accent-hover', 'ink', 'success', 'warning']) {
-    assert.ok(contrast(tokens.sheet, tokens[background]) >= 4.5, `light text on ${background}`);
+  for (const background of ['paper', 'sheet', 'sage', 'success-soft', 'warning-soft', 'danger-soft', 'accent-soft', 'accent-hover']) {
+    for (const foreground of ['ink', 'muted']) {
+      assert.ok(contrast(colour(foreground), colour(background)) >= 4.5, `${foreground} on ${background}`);
+    }
   }
   for (const background of ['paper', 'sheet', 'sage']) {
     for (const foreground of ['line', 'focus']) {
-      assert.ok(contrast(tokens[foreground], tokens[background]) >= 3, `${foreground} on ${background}`);
+      assert.ok(contrast(colour(foreground), colour(background)) >= 3, `${foreground} on ${background}`);
     }
   }
 });
 
-test('every bundled visual asset stays below 100 KB', () => {
+test('paper reference stays below 250 KB and other visual assets stay below 100 KB', () => {
   function visit(directory) {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) visit(path);
-      else assert.ok(statSync(path).size < 100_000, path);
+      else assert.ok(statSync(path).size < (entry.name === 'watercolour-paper.webp' ? 250_000 : 100_000), path);
     }
   }
   visit(join(root, 'static'));

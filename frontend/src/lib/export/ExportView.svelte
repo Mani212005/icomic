@@ -6,6 +6,7 @@
 	export let projectId = '';
 	export let apiClient;
 	export let pages = [];
+	export let onComplete = () => {};
 
 	let format = EXPORT_FORMATS.PDF;
 	let pageSize = PAGE_SIZES.A4;
@@ -37,6 +38,7 @@
 			if (res.export) {
 				currentExport = res.export;
 				downloadUrl = res.export.download_url || apiClient.getExportDownloadUrl(res.export.id);
+				onComplete();
 			}
 		} catch (err) {
 			exportError = err.message || 'Export failed';
@@ -74,7 +76,6 @@
 				<option value={PAGE_SIZES.US_LETTER}>US Letter (8.5 × 11 in)</option>
 				<option value={PAGE_SIZES.CUSTOM}>Custom (6.625 × 10.25 in)</option>
 			</select>
-			<small>Print-ready.</small>
 		</div>
 	</div>
 
@@ -89,7 +90,7 @@
 						<div class="page-preview-box">
 							<span class="page-num">Page {i + 1}</span>
 							<span class="page-status"><Icon name={page.colour_approved_at ? 'colour' : page.line_art_approved_at ? 'line_art' : 'draft'} size={16} />
-								{page.colour_approved_at ? 'Coloured' : page.line_art_approved_at ? 'Line Art' : 'Draft'}
+								{page.colour_approved_at ? 'Coloured' : page.line_art_approved_at ? 'Lines' : 'Draft'}
 							</span>
 						</div>
 					</div>

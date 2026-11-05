@@ -16,6 +16,23 @@
 	};
 	export let apiClient;
 	export let activeStage = STAGES.SCRIPT;
+	let stageNavOpen = false;
+	let stageDrawerToggle;
+	let exportCompleted = false;
+	function selectStage(id) {
+		activeStage = id;
+		stageNavOpen = false;
+		if (stageDrawerToggle?.offsetParent) stageDrawerToggle.focus();
+	}
+	function handleStageNavKeydown(event) {
+		if (event.key === 'Escape' && stageNavOpen) {
+			stageNavOpen = false;
+			stageDrawerToggle.focus();
+		}
+	}
+	function markExported() {
+		exportCompleted = true;
+	}
 
 	let characters = [];
 	let chapters = [];
@@ -61,15 +78,27 @@
 	}
 
 	const stageList = [
-		{ id: STAGES.SCRIPT, label: 'Script' },
-		{ id: STAGES.CHARACTERS, label: 'Characters' },
-		{ id: STAGES.CHAPTERS, label: 'Outline' },
-		{ id: STAGES.PANELS, label: 'Panels' },
-		{ id: STAGES.DRAFT, label: 'Drafts' },
-		{ id: STAGES.LINE_ART, label: 'Lines' },
-		{ id: STAGES.COLOUR, label: 'Colour' },
-		{ id: STAGES.EXPORT, label: 'Export' }
+		{ id: STAGES.SCRIPT, label: '1. Script' },
+		{ id: STAGES.CHARACTERS, label: '2. Characters' },
+		{ id: STAGES.CHAPTERS, label: '3. Outline' },
+		{ id: STAGES.PANELS, label: '4. Panels' },
+		{ id: STAGES.DRAFT, label: '5. Drafts' },
+		{ id: STAGES.LINE_ART, label: '6. Lines' },
+		{ id: STAGES.COLOUR, label: '7. Colour' },
+		{ id: STAGES.EXPORT, label: '8. Export' }
 	];
+
+	$: currentStage = stageList.find((stage) => stage.id === activeStage);
+	$: stageCompleted = {
+		[STAGES.SCRIPT]: characters.length > 0,
+		[STAGES.CHARACTERS]: allCharactersApproved,
+		[STAGES.CHAPTERS]: allChaptersApproved,
+		[STAGES.PANELS]: panels.length > 0,
+		[STAGES.DRAFT]: allDraftsApproved,
+		[STAGES.LINE_ART]: allLineArtApproved,
+		[STAGES.COLOUR]: allColoursApproved,
+		[STAGES.EXPORT]: exportCompleted
+	};
 
 	$: effectiveScript = project ? (project.original_script || project.script || '') : '';
 	$: scriptWordCount = effectiveScript ? effectiveScript.trim().split(/\s+/).filter(Boolean).length : 0;
@@ -93,6 +122,8 @@
 	let lastProjectId = null;
 	$: if (project && project.id && project.id !== lastProjectId) {
 		lastProjectId = project.id;
+		exportCompleted = false;
+		stageNavOpen = false;
 		reloadProjectData();
 	}
 
@@ -242,6 +273,8 @@
 	async function generateChapters() {
 		jobError = null;
 		isJobActive = true;
+		activeJobType = stageList.find((stage) => stage.id === activeStage).label.slice(3);
+		currentJobStatus = 'Generating…';
 		try {
 			await apiClient.createChapters(project.id, { chapter_count: project.chapter_count });
 			await reloadProjectData();
@@ -255,6 +288,8 @@
 	async function generatePanels() {
 		jobError = null;
 		isJobActive = true;
+		activeJobType = stageList.find((stage) => stage.id === activeStage).label.slice(3);
+		currentJobStatus = 'Generating…';
 		try {
 			for (const chapter of chapters) {
 				const existing = await apiClient.getPanels(chapter.id);
@@ -360,7 +395,7 @@
 	async function generateLineArt(pageId) {
 		jobError = null;
 		isJobActive = true;
-		activeJobType = 'Line art';
+		activeJobType = 'Lines';
 		currentJobStatus = 'Generating…';
 
 		try {
@@ -433,19 +468,30 @@
 
 <div class="comic-editor-container">
 
-	<nav class="stepper-nav" aria-label="Stages">
+	<aside class="stage-sidebar">
+		<button class="stage-drawer-toggle" on:keydown={handleStageNavKeydown} bind:this={stageDrawerToggle} aria-expanded={stageNavOpen} aria-controls="stage-navigation" on:click={() => stageNavOpen = !stageNavOpen}>
+			<Icon name={currentStage.id} size={22} />
+			<span>{currentStage.label}</span>
+			<span class="drawer-chevron" class:open={stageNavOpen}><Icon name="arrow" size={18} /></span>
+		</button>
+	<nav id="stage-navigation" class="stepper-nav" class:open={stageNavOpen} aria-label="Stages">
 		{#each stageList as stage}
 			<button
 				class="step-item"
+				on:keydown={handleStageNavKeydown}
 				class:active={activeStage === stage.id}
+				class:complete={stageCompleted[stage.id]}
 				aria-current={activeStage === stage.id ? 'step' : undefined}
-				on:click={() => (activeStage = stage.id)}
+				on:click={() => selectStage(stage.id)}
 			>
 				<Icon name={stage.id} size={22} />
 				<span class="step-title">{stage.label}</span>
+				{#if stageCompleted[stage.id]}<span class="completion-mark"><Icon name="check" label="Complete" size={15} /></span>{/if}
 			</button>
 		{/each}
 	</nav>
+	</aside>
+	<div class="stage-workspace">
 
 	{#if isJobActive}
 		<div class="job-banner" role="status">
@@ -494,7 +540,6 @@
 				<textarea
 					id="script-textarea"
 					rows="8"
-					placeholder="Script…"
 					bind:value={project.script}
 				></textarea>
 			</div>
@@ -502,7 +547,7 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
-					aria-label="Analyze script"
+					
 					on:click={runScriptAnalysis}
 					disabled={isJobActive || scriptWordCount === 0}
 				>
@@ -540,7 +585,7 @@
 							{#if char.reference_image_url && !failedImages.has(char.reference_image_url)}
 								<img src={char.reference_image_url} alt={char.name} class="char-img" on:error={markImageFailed} />
 							{:else}
-								<div class="placeholder-avatar"><Icon name="characters" size={48} />No image</div>
+								<div class="placeholder-avatar"><Icon name="characters" size={48} />Pending</div>
 							{/if}
 						</div>
 
@@ -912,7 +957,9 @@
 				projectId={project.id}
 				{apiClient}
 				{pages}
+				onComplete={markExported}
 			/>
 		</section>
 	{/if}
+	</div>
 </div>
