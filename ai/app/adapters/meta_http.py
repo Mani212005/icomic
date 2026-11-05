@@ -625,7 +625,15 @@ def build_responses_image_request(
 
     full_prompt = prompt
     if style:
-        full_prompt = f"{prompt}. Style: {style}"
+        already_styled = (
+            f"Style: {style}" in prompt
+            or f"Style bible [{style}" in prompt
+            or f"Style bible: {style}" in prompt
+            or f'"style_id": "{style}"' in prompt
+            or f'"style": "{style}"' in prompt
+        )
+        if not already_styled:
+            full_prompt = f"{prompt}. Style: {style}"
 
     content_parts.append(
         {

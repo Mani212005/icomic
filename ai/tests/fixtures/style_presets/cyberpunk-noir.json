@@ -1,0 +1,42 @@
+{
+  "bible_hash": "0a16f784e3169e84afd4dc7a828d9e31e6e7946d43312d144b2f8d4da4a67f49",
+  "depth": "Dense vertical layering, atmospheric smog and rain precipitation curtains, illuminated foreground reflections receding into hazy illuminated spires.",
+  "environment": "Rain-slicked asphalt, dense multi-tiered megacity alleys, glowing neon signage, wet concrete reflections and dystopian industrial sprawl.",
+  "label": "Cyberpunk Noir",
+  "lighting": "Low-key atmospheric night illumination, intense multi-point colored neon rim lights, puddle specular reflections, moody silhouette backlighting.",
+  "line_treatment": "Sharp precision technical ink contours, fine architectural linework, crisp geometric separation and stark silhouette cuts.",
+  "materials": "Reflective wet glass, brushed chrome, holographic displays, distressed synthetics, worn leather and dark carbon fiber.",
+  "mood": "Gritty cyber-dystopian tension, investigative noir mystery, rain-drenched urban isolation.",
+  "negative_constraints": [
+    "no sunny daylight fills",
+    "no pastel countryside tones",
+    "no rustic pastoral materials",
+    "no generic flat cartoon fills",
+    "no soft watercolor bleeds"
+  ],
+  "palette": {
+    "accent_tones": [
+      "hot magenta",
+      "electric cyan",
+      "acid yellow"
+    ],
+    "dominant_tones": [
+      "midnight obsidian",
+      "deep cyan-slate",
+      "charcoal"
+    ],
+    "suggested_regions": {
+      "accent_lighting": "#00F0FF",
+      "architecture_shadows": "#0D1B2A",
+      "background_sky": "#0A0E17",
+      "character_clothing": "#212121",
+      "character_skin": "#FFD1A4",
+      "neon_glow": "#FF007F"
+    },
+    "temperature": "cool moody night with intense hot neon accents",
+    "theme": "Neon Drenched Midnight"
+  },
+  "style_id": "cyberpunk-noir",
+  "values": "Stark chiaroscuro contrast, deep obsidian ink pools, illuminated edge highlights cut sharply against heavy atmospheric darks.",
+  "version": "style-bible-v1"
+}

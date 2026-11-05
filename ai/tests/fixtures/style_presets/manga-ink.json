@@ -1,0 +1,42 @@
+{
+  "bible_hash": "85792b8f2b8a83ed8fdc1e94b101c53a1b5bf68a961785f929e66832369c6f1a",
+  "depth": "Extreme focal perspective, converging speedline depth cues, sharp foreground ink framing against screentoned distant layers.",
+  "environment": "Traditional Japanese manga backdrops, dense speedline bursts, atmospheric screentone skies, crisp interior line art.",
+  "label": "Shonen Manga Ink",
+  "lighting": "Directional graphic chiaroscuro, screentone form shadows, dramatic rim lighting cut by cross-hatching, high-contrast action bursts.",
+  "line_treatment": "Expressive G-pen inking, delicate hairline-to-bold dynamic stroke transitions, sharp speedlines, intricate hair and facial detailing.",
+  "materials": "Traditional sumi ink on Kent paper, mechanical screentone film (Benday halftone dots), cross-hatching, white gouache correction accents.",
+  "mood": "High-octane shonen energy, disciplined martial focus, dramatic kinetic tension.",
+  "negative_constraints": [
+    "no western-style flat colored fills",
+    "no muddy digital airbrush smears",
+    "no uniform stick-figure outlines",
+    "no color fringing or chromatic aberration",
+    "no unhatched blurry grey gradients"
+  ],
+  "palette": {
+    "accent_tones": [
+      "delicate 20% light grey tone",
+      "dense 70% shadow tone",
+      "subtle vermilion ink accent"
+    ],
+    "dominant_tones": [
+      "sumi black",
+      "50% midtone grey screentone",
+      "pure paper white"
+    ],
+    "suggested_regions": {
+      "accent_lighting": "#FFFFFF",
+      "architecture_shadows": "#17202A",
+      "background_sky": "#7F8C8D",
+      "character_clothing": "#2B2B2B",
+      "character_skin": "#FDFEFE",
+      "screentone_midtones": "#BDC3C7"
+    },
+    "temperature": "monochromatic neutral with sumi warmth",
+    "theme": "Monochrome Screentone Ink"
+  },
+  "style_id": "manga-ink",
+  "values": "Disciplined monochromatic value scale, rich sumi blacks, multi-density grey screentone modeling, dense cross-hatch shadows, pure paper-white highlights.",
+  "version": "style-bible-v1"
+}

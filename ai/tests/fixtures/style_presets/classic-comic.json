@@ -1,0 +1,41 @@
+{
+  "bible_hash": "35671d88e2720643a0733db21ec5bf90423ac2699465af7ca7eb82c2dedb5da5",
+  "depth": "Three-plane theatrical staging: distinct foreground silhouette framing, focused midground action, graphic background scenery.",
+  "environment": "Newsprint comic texture, graphic halftone dot screens, metropolitan streets and pulp environments.",
+  "label": "Classic Comic",
+  "lighting": "High-contrast key lighting, defined graphic cast shadows, crisp rim light delineating silhouettes.",
+  "line_treatment": "Dynamic variable-width black ink contours, expressive brush lines, clean defined silhouettes and bold exterior weights.",
+  "materials": "Matte paper tooth, printed ink grain, weathered canvas, cotton fabrics and graphic metals.",
+  "mood": "Classic golden-age pulp adventure, optimistic heroism, energetic narrative punch.",
+  "negative_constraints": [
+    "no photorealistic airbrushing",
+    "no muddy 3D CGI gradients",
+    "no modern lens flare",
+    "no unshaded flat vector clip-art",
+    "no desaturated washed-out haze"
+  ],
+  "palette": {
+    "accent_tones": [
+      "canary yellow",
+      "crimson red",
+      "cobalt blue"
+    ],
+    "dominant_tones": [
+      "deep navy",
+      "warm newsprint white",
+      "ink black"
+    ],
+    "suggested_regions": {
+      "accent_lighting": "#FFEB3B",
+      "architecture_shadows": "#1A237E",
+      "background_sky": "#1976D2",
+      "character_clothing": "#D32F2F",
+      "character_skin": "#FFCC80"
+    },
+    "temperature": "warm balanced vintage",
+    "theme": "Four-Color Vintage Print"
+  },
+  "style_id": "classic-comic",
+  "values": "High-contrast black-and-white value hierarchy, punchy ink shadows, balanced negative white space, graphic chiaroscuro without muddy grey gradients.",
+  "version": "style-bible-v1"
+}

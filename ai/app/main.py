@@ -317,6 +317,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         theme, palette = colour_service.suggest_palette(
             line_art_image_bytes=line_art_image_bytes,
             panel_context=req.panel_context,
+            style=req.style,
         )
         return SuggestColourPaletteResponse(
             job_id=str(req.job_id),

@@ -365,6 +365,9 @@ type SuggestColourPaletteRequest struct {
 	PageID          string `json:"page_id"`
 	PanelContext    string `json:"panel_context"`
 	ProjectID       string `json:"project_id"`
+
+	// Style Style identifier to resolve palette and color guidance from the shared style bible
+	Style *string `json:"style,omitempty"`
 }
 
 // SuggestColourPaletteResponse defines model for SuggestColourPaletteResponse.

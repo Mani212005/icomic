@@ -60,10 +60,15 @@ def build_page_render_request(
         if url not in named_urls:
             add_reference(url, "character reference: identity only; name unspecified")
 
+    from .style_bible import resolve_style_bible
+
+    style_bible = resolve_style_bible(style)
+
     brief = {
         "version": RENDER_BRIEF_VERSION,
         "page_number": page_number,
-        "style": style,
+        "style": style_bible.style_id,
+        "style_bible": style_bible.to_dict(),
         "reading_order": "Follow panels in array order, left to right then top to bottom. Do not reorder or omit panels.",
         "identity_policy": "Match named characters to their indexed reference images. Preserve identity anchors across panels; expressions and poses may change with the story. Do not add every reference character to every panel.",
         "dialogue_policy": "Only the exact dialogue field may appear in speech bubbles in its own panel. Empty dialogue means no speech bubble. Narration is story context, not a caption to draw. Do not invent, paraphrase or duplicate text.",

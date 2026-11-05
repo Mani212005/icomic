@@ -32,6 +32,19 @@ class FakeVisionAdapter(VisionPort):
                 )
             finally:
                 self.last_usage = getattr(self.replay_adapter, "last_usage", None)
+        style_bible = kwargs.get("style_bible")
+        if style_bible is not None and hasattr(style_bible, "palette"):
+            return PaletteSuggestion(
+                theme=style_bible.palette.theme,
+                palette=[
+                    ColourItem(
+                        region_name=k,
+                        hex_color=v,
+                        label=k.replace("_", " ").title(),
+                    )
+                    for k, v in style_bible.palette.suggested_regions.items()
+                ],
+            )
         return PaletteSuggestion(
             theme="Neo-Noir Sunset",
             palette=[

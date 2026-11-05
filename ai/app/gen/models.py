@@ -204,6 +204,11 @@ class SuggestColourPaletteRequest(BaseModel):
     page_id: str
     line_art_image_url: str
     panel_context: str
+    style: str | None = Field(
+        None,
+        description="Style identifier to resolve palette and color guidance from the shared style bible",
+        examples=["classic-comic"],
+    )
 
 
 class SuggestColourPaletteResponse(BaseModel):

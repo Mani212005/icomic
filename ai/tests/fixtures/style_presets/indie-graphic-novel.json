@@ -1,0 +1,42 @@
+{
+  "bible_hash": "3994e05485be2038aa4440744280ea07887e0df168bcfd72ce3f676d674298e4",
+  "depth": "Atmospheric tonal perspective, thoughtful room-scale framing, naturalistic spatial staging without artificial distortion.",
+  "environment": "Lived-in intimate domestic interiors, European city streets, overgrown coastal foliage, weathered wooden structures.",
+  "label": "Indie Graphic Novel",
+  "lighting": "Soft natural ambient window light, gentle golden-hour diffusion, subtle bounced warmth, delicate soft-edged cast shadows.",
+  "line_treatment": "Organic textured dip-pen and brush inking, subtle line wobble and human hand idiosyncrasy, delicate cross-hatching.",
+  "materials": "Heavy rough watercolor paper tooth, matte gouache finishes, worn linen, natural grain wood, ceramic and aged paper textures.",
+  "mood": "Introspective, poetic narrative depth, literary graphic novel sensitivity, quiet human observation.",
+  "negative_constraints": [
+    "no high-gloss synthetic neons",
+    "no superhero muscular exaggeration",
+    "no rigid vector geometric lines",
+    "no harsh digital gradients",
+    "no commercial clip-art flat fills"
+  ],
+  "palette": {
+    "accent_tones": [
+      "moss olive",
+      "dusty rose",
+      "antique ochre"
+    ],
+    "dominant_tones": [
+      "slate blue",
+      "weathered terracotta",
+      "warm parchment"
+    ],
+    "suggested_regions": {
+      "accent_lighting": "#D4AC0D",
+      "architecture_shadows": "#3E2723",
+      "background_sky": "#A3B18A",
+      "character_clothing": "#5D6D7E",
+      "character_skin": "#EDBB99",
+      "environment_earth": "#8D6E63"
+    },
+    "temperature": "warm muted desaturated earthy",
+    "theme": "Muted Earthy Literary"
+  },
+  "style_id": "indie-graphic-novel",
+  "values": "Gentle midtone modeling, soft shadow boundaries, restrained tonal washes, warm grey transitions rather than harsh graphic cuts.",
+  "version": "style-bible-v1"
+}

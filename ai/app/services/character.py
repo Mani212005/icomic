@@ -26,16 +26,16 @@ class CharacterService:
         reference_images: list[bytes] | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
         """Generate a character reference image and store it in object storage."""
-        full_prompt = (
-            f"Character reference sheet for {character_name}: {prompt}. "
-            f"Full turnaround, clear facial details, front and side view. Style: {style}. "
-            f"{IMAGE_ONLY_INSTRUCTIONS}"
-        )
+        from .style_bible import resolve_style_bible
+
+        style_bible = resolve_style_bible(style)
+        character_prompt = style_bible.format_for_character_reference(character_name, prompt)
+        full_prompt = f"{character_prompt}\n{IMAGE_ONLY_INSTRUCTIONS}"
         result = self.image_adapter.generate(
             prompt=full_prompt,
             reference_images=reference_images or [],
             hashed_user_id=hashed_user_id,
-            style=style,
+            style=style_bible.style_id,
         )
 
         url = store_image(

@@ -29,20 +29,20 @@ class LineArtService:
         character_identities: list[CharacterRenderIdentity] | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
         """Generate final clean closed-contour inking from approved draft."""
+        from .style_bible import resolve_style_bible
+
+        style_bible = resolve_style_bible(style)
         brief, reference_images = build_page_render_request(
             page_number=page_number,
             panels=panels,
-            style=style,
+            style=style_bible.style_id,
             storage=self.storage_adapter,
             character_identities=character_identities,
             character_reference_image_urls=character_reference_image_urls,
             draft_image_url=draft_image_url,
         )
-        stage_prompt = (
-            f"Comic book page {page_number} final black and white line art, {len(panels)}-panel grid. "
-            "portrait-oriented full comic page, taller than wide, composed to fit the canvas without cropping. "
-            "Bold clean closed-contour comic book lines, thick outlines, flat white fills, "
-            "no shading, high contrast graphic novel inking. Follow the approved draft composition. "
+        stage_prompt = style_bible.format_for_line_art(
+            page_number=page_number, panel_count=len(panels)
         )
         prompt = f"{stage_prompt}\n{brief}"
 
@@ -50,7 +50,7 @@ class LineArtService:
             prompt=prompt,
             reference_images=reference_images,
             hashed_user_id=hashed_user_id,
-            style=style,
+            style=style_bible.style_id,
         )
 
         url = store_page_image(

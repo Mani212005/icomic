@@ -1862,6 +1862,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 			PageID:          pg.ID,
 			LineArtImageURL: lineArtURL,
 			PanelContext:    fmt.Sprintf("Page %d of chapter %d", pg.PageNumber, c.ChapterNumber),
+			Style:           &proj.ArtStyle,
 		})
 	})
 	if err != nil {
