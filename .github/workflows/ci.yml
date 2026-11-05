@@ -14,6 +14,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  service-images:
+    name: Backend & AI Service Images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image and verify complete server package
+        run: python3 scripts/check_backend_container.py
+
+      - name: Build AI service image
+        run: docker build --file ai/Dockerfile ai
+
   hermetic-guard:
     name: Hermetic Guard
     runs-on: ubuntu-latest
