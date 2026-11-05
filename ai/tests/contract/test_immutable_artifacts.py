@@ -25,7 +25,9 @@ def png(colour):
     return buffer.getvalue()
 
 
-@pytest.mark.parametrize("operation", ["character-reference", "draft-sketch", "line-art", "pdf"])
+@pytest.mark.parametrize(
+    "operation", ["character-reference", "draft-sketch", "line-art", "painted-page", "pdf"]
+)
 @pytest.mark.parametrize("queue_kind", ["fake", "redis"])
 def test_saved_attempt_url_keeps_original_bytes(operation, queue_kind):
     storage = FakeStorageAdapter()
@@ -56,7 +58,7 @@ def test_saved_attempt_url_keeps_original_bytes(operation, queue_kind):
         )
     else:
         payload.update(page_id=str(uuid4()), page_number=1, panels=[], style="comic")
-        if operation == "line-art":
+        if operation in ("line-art", "painted-page"):
             payload["draft_image_url"] = source
     endpoint = f"/internal/v1/{'assemble-pdf' if operation == 'pdf' else 'generate-' + operation}"
     url_field = "pdf_url" if operation == "pdf" else "image_url"

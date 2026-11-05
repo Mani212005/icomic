@@ -191,6 +191,38 @@ class GenerateLineArtResponse(BaseModel):
     provenance_metadata: dict[str, Any]
 
 
+class GeneratePaintedPageRequest(BaseModel):
+    job_id: str
+    hashed_user_id: str
+    project_id: str
+    page_id: str
+    page_number: int
+    draft_image_url: str | None = Field(
+        None, description="Approved draft sketch composition URL for draft-conditioned variant"
+    )
+    panels: list[PanelTextItem]
+    style: str
+    variant: Literal["draft-conditioned", "direct-from-brief"] = Field(
+        "draft-conditioned",
+        description="Finished painted page variant (composition-conditioned vs direct-from-brief)",
+    )
+    character_reference_image_urls: list[str] = []
+    character_identities: list[CharacterRenderIdentity] = Field(
+        [],
+        description="Stable ordered identities; reference images precede legacy URL-only references.",
+        validate_default=True,
+    )
+    style_reference_image_url: str | None = None
+
+
+class GeneratePaintedPageResponse(BaseModel):
+    job_id: str
+    image_url: str
+    model_id: str
+    variant: Literal["draft-conditioned", "direct-from-brief"]
+    provenance_metadata: dict[str, Any]
+
+
 class ColourRegionSuggestion(BaseModel):
     region_name: str = Field(..., examples=["background_sky"])
     hex_color: str = Field(..., examples=["#4A90E2"], pattern="^#[0-9A-Fa-f]{6}$")

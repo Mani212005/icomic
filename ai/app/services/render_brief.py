@@ -20,6 +20,7 @@ def build_page_render_request(
     character_identities: list[CharacterRenderIdentity] | None = None,
     character_reference_image_urls: list[str] | None = None,
     draft_image_url: str | None = None,
+    style_reference_image_url: str | None = None,
 ) -> tuple[str, list[bytes]]:
     """Build text and ordered image inputs together so reference indices cannot drift.
 
@@ -59,6 +60,11 @@ def build_page_render_request(
     for url in character_reference_image_urls or []:
         if url not in named_urls:
             add_reference(url, "character reference: identity only; name unspecified")
+    if style_reference_image_url:
+        add_reference(
+            style_reference_image_url,
+            "approved style reference: finish, lighting, materials, texture and palette",
+        )
 
     from .style_bible import resolve_style_bible
 

@@ -251,6 +251,10 @@ func (s *Server) publicFields(pattern string) map[string]string {
 		return map[string]string{"scene_description": "text", "dialogue": "text", "narration": "text", "character_actions": "text", "camera_angle": "text", "background": "text", "image_prompt": "text"}
 	case "PATCH /api/v1/pages/{id}":
 		return map[string]string{"panel_ids": "ids"}
+	case "POST /api/v1/pages/{id}/line-art":
+		return map[string]string{"variant": "text", "route": "text"}
+	case "POST /api/v1/pages/{id}/painted-page":
+		return map[string]string{"variant": "text"}
 	case "PATCH /api/v1/pages/{id}/colour-palette":
 		return map[string]string{"palette": "object"}
 	case "POST /api/v1/projects/{id}/estimate":

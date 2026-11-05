@@ -90,6 +90,10 @@ type Page struct {
 	ColourImageURL        string     `json:"colour_image_url,omitempty"`
 	ColourImageUploadedAt *time.Time `json:"colour_image_uploaded_at,omitempty"`
 	ColourApprovedAt      *time.Time `json:"colour_approved_at,omitempty"`
+	PaintedPageImageURL   string     `json:"painted_page_image_url,omitempty"`
+	PaintedPageImageJobID *string    `json:"painted_page_image_job_id,omitempty"`
+	PaintedPageApprovedAt *time.Time `json:"painted_page_approved_at,omitempty"`
+	PaintedPageVariant    string     `json:"painted_page_variant,omitempty"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 }
 

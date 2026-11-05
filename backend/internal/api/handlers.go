@@ -1559,6 +1559,20 @@ func (s *Server) ApproveDraft(w http.ResponseWriter, r *http.Request) {
 
 // GenerateLineArt handles POST /api/v1/pages/{id}/line-art
 func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
+	var reqBody struct {
+		Variant string `json:"variant,omitempty"`
+		Route   string `json:"route,omitempty"`
+	}
+	if r.Body != nil {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		_ = json.Unmarshal(bodyBytes, &reqBody)
+	}
+	if r.URL.Query().Get("variant") == "painted" || reqBody.Variant == "painted" || reqBody.Route == "painted" {
+		s.GeneratePaintedPage(w, r)
+		return
+	}
+
 	userID := s.getUserID(r)
 	pageID := r.PathValue("id")
 
@@ -1741,6 +1755,248 @@ func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
 	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
 		ProjectID:                proj.ID,
 		EntityType:               "line_art_page",
+		EntityID:                 pg.ID,
+		ApprovedByUserID:         userID,
+		ApprovedAt:               now,
+		CreditEstimateAtApproval: credits.ImageUnitPrice,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to save approval")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "page": pg})
+}
+
+// GeneratePaintedPage handles POST /api/v1/pages/{id}/painted-page (opt-in prototype route)
+func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
+	userID := s.getUserID(r)
+	pageID := r.PathValue("id")
+
+	pg, err := s.Repo.GetPage(r.Context(), pageID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Page not found")
+		return
+	}
+
+	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Chapter not found")
+		return
+	}
+
+	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
+	if err != nil || proj.UserID != userID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	// Kill switch and quota check (SPEC 5.5)
+	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
+		writeGenerationError(w, err)
+		return
+	}
+
+	var reqBody struct {
+		Variant string `json:"variant"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+	}
+
+	chosenVariant := reqBody.Variant
+	if chosenVariant == "" || chosenVariant == "painted" {
+		chosenVariant = "draft-conditioned"
+	}
+	if chosenVariant != "draft-conditioned" && chosenVariant != "direct-from-brief" {
+		chosenVariant = "draft-conditioned"
+	}
+
+	// Gate checks:
+	// 1. Chapter outline and character references must be approved
+	allChars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
+	allRefsApproved := len(allChars) > 0
+	for _, ch := range allChars {
+		approval, err := s.Repo.GetLatestApproval(r.Context(), "character_reference", ch.ID)
+		if err != nil || ch.ReferenceImageURL == "" || domain.IsApprovalStale(&approval.ApprovedAt, ch.UpdatedAt) {
+			allRefsApproved = false
+			break
+		}
+	}
+	outlineApproval, err := s.Repo.GetLatestApproval(r.Context(), "chapter_outline", c.ID)
+	outlineApproved := err == nil && domain.CheckChapterOutlineApproval(&outlineApproval.ApprovedAt, c.UpdatedAt) == nil
+
+	if chosenVariant == "draft-conditioned" {
+		draftApproved := pg.DraftApprovedAt != nil && !domain.IsApprovalStale(pg.DraftApprovedAt, pg.UpdatedAt)
+		if err := domain.CheckApprovalGate("final_line_art", domain.ApprovedPrereqs{
+			AllCharactersApproved:  allRefsApproved,
+			ChapterOutlineApproved: outlineApproved,
+			DraftSketchApproved:    draftApproved,
+		}); err != nil {
+			writeError(w, http.StatusBadRequest, "Draft sketch must be approved before generating draft-conditioned painted page")
+			return
+		}
+	} else {
+		// direct-from-brief variant: does not require draft approval, but requires character & outline approvals
+		if err := domain.CheckApprovalGate("draft_sketch", domain.ApprovedPrereqs{
+			AllCharactersApproved:  allRefsApproved,
+			ChapterOutlineApproved: outlineApproved,
+		}); err != nil {
+			writeError(w, http.StatusBadRequest, "Prerequisite stage approvals missing for direct-from-brief generation")
+			return
+		}
+	}
+
+	if s.AIClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI service not available")
+		return
+	}
+
+	allPanels, _ := s.Repo.ListPanels(r.Context(), c.ID)
+	panelMap := make(map[string]*domain.Panel)
+	for _, p := range allPanels {
+		panelMap[p.ID] = p
+	}
+
+	var panelItems []gen.PanelTextItem
+	for idx, pid := range pg.PanelIDs {
+		if p, ok := panelMap[pid]; ok {
+			panelItems = append(panelItems, gen.PanelTextItem{
+				PanelNumber:      p.PanelNumber,
+				SceneDescription: p.SceneDescription,
+				CharacterActions: p.CharacterActions,
+				CameraAngle:      p.CameraAngle,
+				Background:       p.Background,
+				Narration:        p.Narration,
+				Dialogue:         p.Dialogue,
+				ImagePrompt:      p.ImagePrompt,
+			})
+		} else {
+			panelItems = append(panelItems, gen.PanelTextItem{
+				PanelNumber:      idx + 1,
+				SceneDescription: fmt.Sprintf("Panel %d", idx+1),
+				ImagePrompt:      fmt.Sprintf("Panel %d", idx+1),
+			})
+		}
+	}
+
+	idempKey := generationKey(r)
+	hashedUID := domain.HashUserID(userID)
+
+	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+		EntityID:         pg.ID,
+		DebitAmount:      credits.ImageUnitPrice,
+		KillSwitchActive: s.IsKillSwitchActive(),
+		ProjectID:        proj.ID,
+		UserID:           userID,
+		JobType:          "final_line_art",
+		Stage:            "line_art",
+		ModelID:          "muse-image-1.0",
+		IdempotencyKey:   idempKey,
+		EstimatedCost:    credits.ImageUnitPrice,
+		HashedUserID:     hashedUID,
+	})
+	if err != nil {
+		writeGenerationError(w, err)
+		return
+	}
+	if existed {
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": pg.PaintedPageImageURL, "variant": pg.PaintedPageVariant})
+		return
+	}
+
+	artStyle := proj.ArtStyle
+	if artStyle == "" {
+		artStyle = "classic-comic"
+	}
+
+	r = r.WithContext(context.WithoutCancel(r.Context()))
+	variantVal := gen.GeneratePaintedPageRequestVariant(chosenVariant)
+	var draftURL *string
+	if chosenVariant == "draft-conditioned" && pg.DraftImageURL != "" {
+		draftURL = &pg.DraftImageURL
+	}
+
+	paintedResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GeneratePaintedPageResponse, error) {
+		return s.AIClient.GeneratePaintedPage(ctx, gen.GeneratePaintedPageRequest{
+			JobID:               job.ID,
+			HashedUserID:        hashedUID,
+			ProjectID:           proj.ID,
+			PageID:              pg.ID,
+			PageNumber:          pg.PageNumber,
+			DraftImageURL:       draftURL,
+			Panels:              panelItems,
+			Style:               artStyle,
+			Variant:             &variantVal,
+			CharacterIdentities: characterRenderIdentities(allChars),
+		})
+	})
+	if err != nil {
+		if failErr := s.failGeneration(r.Context(), job, err, credits.ImageUnitPrice); failErr != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
+			return
+		}
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Painted page generation failed: %v", err))
+		return
+	}
+
+	imgURL := s.ImageHosting.ResolveURL(paintedResp.ImageURL)
+	now := time.Now().UTC()
+
+	pg.PaintedPageImageURL = imgURL
+	pg.PaintedPageImageJobID = &job.ID
+	pg.PaintedPageVariant = chosenVariant
+	domain.StaleOnPaintedPageRegeneration(pg, now)
+	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to save page")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"job":       job,
+		"image_url": imgURL,
+		"variant":   chosenVariant,
+		"page":      pg,
+	})
+}
+
+// ApprovePaintedPage handles POST /api/v1/pages/{id}/painted-page/approve
+func (s *Server) ApprovePaintedPage(w http.ResponseWriter, r *http.Request) {
+	userID := s.getUserID(r)
+	pageID := r.PathValue("id")
+
+	pg, err := s.Repo.GetPage(r.Context(), pageID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Page not found")
+		return
+	}
+
+	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Chapter not found")
+		return
+	}
+
+	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
+	if err != nil || proj.UserID != userID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	if pg.PaintedPageImageURL == "" {
+		writeError(w, http.StatusBadRequest, "No painted page generated to approve")
+		return
+	}
+
+	now := time.Now().UTC()
+	pg.PaintedPageApprovedAt = &now
+	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to save page")
+		return
+	}
+
+	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
+		ProjectID:                proj.ID,
+		EntityType:               "painted_page",
 		EntityID:                 pg.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
@@ -2198,25 +2454,81 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 	for _, ch := range chapters {
 		pages, _ := s.Repo.ListPages(r.Context(), ch.ID)
 		for _, pg := range pages {
-			imgURL := pg.LineArtImageURL
+			type finishCandidate struct {
+				url         string
+				originalURL *string
+				approvedAt  time.Time
+			}
+			var candidates []finishCandidate
+
+			if pg.LineArtImageURL != "" && pg.LineArtApprovedAt != nil && !domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt) {
+				var orig *string
+				if pg.DraftImageURL != "" {
+					orig = &pg.DraftImageURL
+				}
+				candidates = append(candidates, finishCandidate{
+					url:         pg.LineArtImageURL,
+					originalURL: orig,
+					approvedAt:  *pg.LineArtApprovedAt,
+				})
+			}
+
 			if pg.ColourImageURL != "" && pg.ColourImageUploadedAt != nil {
 				approval, approvalErr := s.Repo.GetLatestApproval(r.Context(), "colour_page", pg.ID)
 				if approvalErr == nil && approval.ApprovedAt.After(*pg.ColourImageUploadedAt) && !domain.IsApprovalStale(&approval.ApprovedAt, pg.UpdatedAt) {
-					imgURL = pg.ColourImageURL
+					var orig *string
+					if pg.LineArtImageURL != "" {
+						orig = &pg.LineArtImageURL
+					} else if pg.DraftImageURL != "" {
+						orig = &pg.DraftImageURL
+					}
+					candidates = append(candidates, finishCandidate{
+						url:         pg.ColourImageURL,
+						originalURL: orig,
+						approvedAt:  approval.ApprovedAt,
+					})
 				}
 			}
-			if imgURL == "" {
-				imgURL = pg.DraftImageURL
+
+			if pg.PaintedPageImageURL != "" && pg.PaintedPageApprovedAt != nil && !domain.IsApprovalStale(pg.PaintedPageApprovedAt, pg.UpdatedAt) {
+				var orig *string
+				if pg.DraftImageURL != "" {
+					orig = &pg.DraftImageURL
+				} else if pg.LineArtImageURL != "" {
+					orig = &pg.LineArtImageURL
+				}
+				candidates = append(candidates, finishCandidate{
+					url:         pg.PaintedPageImageURL,
+					originalURL: orig,
+					approvedAt:  *pg.PaintedPageApprovedAt,
+				})
 			}
-			if imgURL == "" {
-				imgURL = fmt.Sprintf("pages/%s.png", pg.ID)
+
+			var imgURL string
+			var originalImageURL *string
+
+			if len(candidates) > 0 {
+				best := candidates[0]
+				for _, cand := range candidates[1:] {
+					if cand.approvedAt.After(best.approvedAt) {
+						best = cand
+					}
+				}
+				imgURL = best.url
+				originalImageURL = best.originalURL
+			} else {
+				if pg.LineArtImageURL != "" {
+					imgURL = pg.LineArtImageURL
+				} else if pg.PaintedPageImageURL != "" {
+					imgURL = pg.PaintedPageImageURL
+				} else if pg.DraftImageURL != "" {
+					imgURL = pg.DraftImageURL
+				} else {
+					imgURL = fmt.Sprintf("pages/%s.png", pg.ID)
+				}
 			}
 			panelCount := len(pg.PanelIDs)
 			provenance := map[string]interface{}{"c2pa": true}
-			var originalImageURL *string
-			if imgURL == pg.ColourImageURL && pg.LineArtImageURL != "" {
-				originalImageURL = &pg.LineArtImageURL
-			}
 			exportPages = append(exportPages, gen.PageExportItem{
 				PageNumber:         len(exportPages) + 1,
 				ImageURL:           imgURL,

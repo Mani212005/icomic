@@ -24,6 +24,42 @@ func (e AssemblePdfRequestPageSize) Valid() bool {
 	}
 }
 
+// Defines values for GeneratePaintedPageRequestVariant.
+const (
+	GeneratePaintedPageRequestVariantDirectFromBrief  GeneratePaintedPageRequestVariant = "direct-from-brief"
+	GeneratePaintedPageRequestVariantDraftConditioned GeneratePaintedPageRequestVariant = "draft-conditioned"
+)
+
+// Valid indicates whether the value is a known member of the GeneratePaintedPageRequestVariant enum.
+func (e GeneratePaintedPageRequestVariant) Valid() bool {
+	switch e {
+	case GeneratePaintedPageRequestVariantDirectFromBrief:
+		return true
+	case GeneratePaintedPageRequestVariantDraftConditioned:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GeneratePaintedPageResponseVariant.
+const (
+	GeneratePaintedPageResponseVariantDirectFromBrief  GeneratePaintedPageResponseVariant = "direct-from-brief"
+	GeneratePaintedPageResponseVariantDraftConditioned GeneratePaintedPageResponseVariant = "draft-conditioned"
+)
+
+// Valid indicates whether the value is a known member of the GeneratePaintedPageResponseVariant enum.
+func (e GeneratePaintedPageResponseVariant) Valid() bool {
+	switch e {
+	case GeneratePaintedPageResponseVariantDirectFromBrief:
+		return true
+	case GeneratePaintedPageResponseVariantDraftConditioned:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ImageBudgetErrorCode.
 const (
 	BookBudgetReached      ImageBudgetErrorCode = "book_budget_reached"
@@ -253,6 +289,42 @@ type GenerateLineArtResponse struct {
 	ProvenanceMetadata map[string]interface{} `json:"provenance_metadata"`
 }
 
+// GeneratePaintedPageRequest defines model for GeneratePaintedPageRequest.
+type GeneratePaintedPageRequest struct {
+	// CharacterIdentities Stable ordered identities; reference images precede legacy URL-only references.
+	CharacterIdentities         *[]CharacterRenderIdentity `json:"character_identities,omitempty"`
+	CharacterReferenceImageURLs *[]string                  `json:"character_reference_image_urls,omitempty"`
+
+	// DraftImageURL Approved draft sketch composition URL for draft-conditioned variant
+	DraftImageURL          *string         `json:"draft_image_url,omitempty"`
+	HashedUserID           string          `json:"hashed_user_id"`
+	JobID                  string          `json:"job_id"`
+	PageID                 string          `json:"page_id"`
+	PageNumber             int             `json:"page_number"`
+	Panels                 []PanelTextItem `json:"panels"`
+	ProjectID              string          `json:"project_id"`
+	Style                  string          `json:"style"`
+	StyleReferenceImageURL *string         `json:"style_reference_image_url,omitempty"`
+
+	// Variant Finished painted page variant (composition-conditioned vs direct-from-brief)
+	Variant *GeneratePaintedPageRequestVariant `json:"variant,omitempty"`
+}
+
+// GeneratePaintedPageRequestVariant Finished painted page variant (composition-conditioned vs direct-from-brief)
+type GeneratePaintedPageRequestVariant string
+
+// GeneratePaintedPageResponse defines model for GeneratePaintedPageResponse.
+type GeneratePaintedPageResponse struct {
+	ImageURL           string                             `json:"image_url"`
+	JobID              string                             `json:"job_id"`
+	ModelID            string                             `json:"model_id"`
+	ProvenanceMetadata map[string]interface{}             `json:"provenance_metadata"`
+	Variant            GeneratePaintedPageResponseVariant `json:"variant"`
+}
+
+// GeneratePaintedPageResponseVariant defines model for GeneratePaintedPageResponse.Variant.
+type GeneratePaintedPageResponseVariant string
+
 // GeneratePanelTextRequest defines model for GeneratePanelTextRequest.
 type GeneratePanelTextRequest struct {
 	ChapterID     string `json:"chapter_id"`
@@ -421,6 +493,9 @@ type GenerateDraftSketchJSONRequestBody = GenerateDraftSketchRequest
 
 // GenerateLineArtJSONRequestBody defines body for GenerateLineArt for application/json ContentType.
 type GenerateLineArtJSONRequestBody = GenerateLineArtRequest
+
+// GeneratePaintedPageJSONRequestBody defines body for GeneratePaintedPage for application/json ContentType.
+type GeneratePaintedPageJSONRequestBody = GeneratePaintedPageRequest
 
 // GeneratePanelTextJSONRequestBody defines body for GeneratePanelText for application/json ContentType.
 type GeneratePanelTextJSONRequestBody = GeneratePanelTextRequest
