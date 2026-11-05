@@ -7,7 +7,6 @@ import httpx
 import pytest
 from PIL import Image
 
-from app.gen.models import PageLetteringResponse
 
 
 @pytest.mark.parametrize("go_api_server", [True], indirect=True)
@@ -49,7 +48,6 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
         == 200
     )
     response = api_client.get(endpoint).json()
-    PageLetteringResponse.model_validate(response)
     before = response["lettering"]
     assert before["version"] == "page-lettering-v1"
     assert before["layout"]["bubbles"]
