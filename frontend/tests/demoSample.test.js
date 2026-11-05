@@ -90,6 +90,47 @@ test('MockApiClient regeneration preserves representative sample outputs', async
 	assert.equal(regChar.reference_image_url, '/mock/sample-character.webp');
 });
 
+test('Mock character image and description reference the same coherent sample', async () => {
+	const client = new MockApiClient();
+	const [project] = await client.listProjects();
+	assert.ok(project, 'Seeded project exists');
+	assert.equal(project.title, "Grandfather's Map", 'Project title must match Eli forest adventure sample');
+	assert.equal(project.art_style, 'indie-graphic-novel', 'Art style must match sample style');
+	assert.equal(project.is_sample, true, 'Project must carry is_sample metadata');
+	assert.ok(project.sample_label, 'Project must include sample_label');
+
+	const characters = await client.getCharacters(project.id);
+	assert.ok(characters.length > 0, 'Seeded character exists');
+	const character = characters[0];
+
+	// Proves character data matches the real sample Eli in the forest
+	assert.equal(character.name, 'Eli', 'Demo character must be Eli from the real sample');
+	assert.match(character.description, /curly-haired.*forest/i, 'Character description must describe Eli in the forest');
+	assert.match(character.appearance, /curly.*freckles/i, 'Character appearance must describe curly hair and freckles');
+	assert.match(character.clothing, /cloak.*satchel.*compass/i, 'Character clothing must describe hooded cloak, satchel, and compass');
+	assert.equal(
+		character.reference_image_url,
+		'/mock/sample-character.webp',
+		'Character reference must point to approved sample portrait'
+	);
+	assert.equal(character.is_sample, true, 'Character must be marked as sample');
+	assert.ok(character.sample_label, 'Character must retain sample label');
+
+	// Verify sample portrait file on disk is under 100 KB budget and clean portrait
+	const charAssetPath = join(root, 'static/mock/sample-character.webp');
+	assert.ok(existsSync(charAssetPath), 'sample-character.webp must exist');
+	const charAssetSize = statSync(charAssetPath).size;
+	assert.ok(charAssetSize > 1000, 'sample-character.webp must not be empty');
+	assert.ok(charAssetSize < 100_000, `sample-character.webp (${charAssetSize} B) must be < 100 KB`);
+
+	// Verify the template styles character images with object-fit contain
+	const themeCss = readFileSync(join(root, 'src/lib/design/theme.css'), 'utf8');
+	assert.ok(
+		themeCss.includes('.char-img') && themeCss.includes('object-fit: contain'),
+		'theme.css must style .char-img with object-fit: contain'
+	);
+});
+
 test('Frontend UI templates render sample indicator on sample assets in mock mode', () => {
 	const pageTemplate = readFileSync(join(root, 'src/routes/+page.svelte'), 'utf8');
 	assert.ok(
