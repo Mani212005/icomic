@@ -374,6 +374,37 @@ def verify_pdf(pdf: bytes, expected_comic_pages: int) -> int:
     return page_count
 
 
+def resolve_project_title(
+    script_file: Path | None, explicit_title: str | None = None
+) -> str:
+    """Choose the supplied title or derive one from the script title line."""
+    if explicit_title and explicit_title.strip():
+        return explicit_title.strip()
+    if script_file is not None:
+        try:
+            first_line = next(
+                (
+                    line.strip()
+                    for line in script_file.read_text().splitlines()
+                    if line.strip()
+                ),
+                "",
+            )
+        except OSError:
+            first_line = ""
+        title_line = first_line.lstrip("# ").strip()
+        if title_line and (
+            first_line.startswith("#")
+            or title_line.isupper()
+            or (len(title_line) <= 80 and not title_line.endswith((".", "!", "?", ":")))
+        ):
+            return title_line.title() if title_line.isupper() else title_line
+        stem = script_file.stem.replace("_", " ").replace("-", " ").strip()
+        if stem:
+            return " ".join(word.capitalize() for word in stem.split())
+    return "Untitled Comic"
+
+
 def provision_run_user() -> str:
     """Create an isolated fixture without changing existing users or quota policy."""
     user_id = str(uuid.uuid4())
@@ -469,7 +500,9 @@ def run_flow(
             "/api/v1/projects",
             "POST",
             {
-                "title": "Lighthouse Bird",
+                "title": resolve_project_title(
+                    guard.script_file, getattr(guard, "project_title", None)
+                ),
                 "original_script": script,
                 "art_style": "storybook",
                 "chapter_count": expected_chapters,
@@ -797,6 +830,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="complete story source; defaults to the short smoke script",
     )
     parser.add_argument(
+        "--title",
+        help="project title for the new comic; defaults to the script's first non-empty line",
+    )
+    parser.add_argument(
         "--live",
         action="store_true",
         help="explicitly authorize configured real adapters",
@@ -1085,6 +1122,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
     guard.script_file = args.script_file
+    guard.project_title = args.title
     project_id = None
     page_count = 0
     failure = None

@@ -3,6 +3,8 @@
 import re
 import zlib
 from hashlib import sha256
+from io import BytesIO
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -89,12 +91,71 @@ def test_export_keeps_rgb_master_pixels_and_original_attachment_bytes():
         ],
     )
     pdf = storage.get(pdf_url)
-    _, _, rgb_pixels = parse_png_to_rgb(current_art)
     offset = pdf.find(original_master)
     assert offset >= 0
     extracted_original = pdf[offset : offset + len(original_master)]
     assert sha256(extracted_original).digest() == sha256(original_master).digest()
-    assert zlib.compress(rgb_pixels) in pdf
+    assert current_art not in pdf
+    assert original_master in pdf
+
+
+def test_twelve_page_native_art_export_stays_under_25_mb():
+    image = Image.new("RGB", (1280, 1920), "#edf0e8")
+    for x in range(0, 1280, 32):
+        for y in range(0, 1920, 48):
+            image.paste(
+                ((x * 3) % 256, (y * 2) % 256, ((x + y) // 4) % 256), (x, y, x + 32, y + 48)
+            )
+    encoded = BytesIO()
+    image.save(encoded, "PNG", optimize=True)
+    display = encoded.getvalue()
+    original = b"\x89PNG\r\n\x1a\n" + b"raw-original-provenance"
+    pages = [
+        {
+            "page_number": number,
+            "image_bytes": display,
+            "original_image_bytes": original,
+        }
+        for number in range(1, 13)
+    ]
+    pdf = PdfWriter().build_pdf("size-test", "Twelve Page Test", True, pages)
+    assert len(pdf) < 25 * 1024 * 1024
+    assert pdf.count(original) == 12
+    assert len(re.findall(rb"/Type /Page /Parent", pdf)) == 13
+
+
+def test_cover_uses_first_page_art_and_falls_back_without_an_image():
+    cover_art = Path(__file__).parent.parent / "fixtures/pdf_export/comic-01.jpg"
+    pdf = PdfWriter().build_pdf(
+        "cover-art",
+        "The Tide Clock",
+        True,
+        [{"page_number": 1, "image_bytes": cover_art.read_bytes()}],
+    )
+    assert b"/CoverIm" in pdf
+    assert b"The Tide Clock" in pdf
+    assert "MANDATORY AI-GENERATION DISCLOSURE" in pdf_text(pdf)
+    assert "PROJECT & PROVENANCE RECORD" in pdf_text(pdf)
+
+    fallback = PdfWriter().build_pdf("cover-no-art", "Short Title", True, [{"page_number": 1}])
+    assert "Artwork preview unavailable" in pdf_text(fallback)
+    assert "Short Title" in pdf_text(fallback)
+    assert "MANDATORY AI-GENERATION DISCLOSURE" in pdf_text(fallback)
+
+
+def test_cover_and_every_comic_header_use_the_project_title():
+    image = Path(__file__).parent.parent / "fixtures/pdf_export/comic-01.jpg"
+    title = "The Tide Clock"
+    pdf = PdfWriter().build_pdf(
+        "title-consistency",
+        title,
+        True,
+        [{"page_number": number, "image_bytes": image.read_bytes()} for number in range(1, 4)],
+    )
+    content = pdf_text(pdf)
+    assert "(The Tide Clock) Tj" in content
+    for number in range(1, 4):
+        assert f"({title} - Page {number}) Tj" in content
 
 
 def test_palette_png_renders_with_its_palette_colours():

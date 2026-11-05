@@ -477,7 +477,7 @@ def test_pdf_service_valid_multipage_and_structural_validation():
     assert parsed["page_count"] == 3
 
     # 3. Embedded image XObjects
-    assert len(parsed["images"]) == 2
+    assert len(parsed["images"]) == 3  # Cover preview plus two comic pages.
     for img in parsed["images"]:
         assert img["width"] == 64
         assert img["height"] == 64
