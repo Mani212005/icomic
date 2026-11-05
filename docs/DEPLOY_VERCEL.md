@@ -2,6 +2,8 @@
 
 The frontend is a browser-only SvelteKit SPA: it has no server routes or server-side data requirements, and all editor stages use the in-browser mock API. The static adapter prerenders the app shell and supplies a `200.html` fallback for client-side routing. It needs no backend, API keys, or environment variables.
 
+Live demo: https://icomic.vercel.app
+
 ## Deploy
 
 From the frontend directory on the Mac where you are signed in to Vercel:

@@ -45,14 +45,14 @@ export class MockApiClient {
 
 		this.projects.set(projId, {
 			id: projId,
-			title: "Grandfather's Map",
+			title: 'The Lighthouse Bird',
 			art_style: 'indie-graphic-novel',
-			chapter_count: 3,
+			chapter_count: 1,
 			is_sample: true,
 			sample_label: 'Sample',
 			sample_source: 'Meta AI',
-			script: "Eli heads out early into the east woods with grandfather's brass compass, searching for the old bridge...",
-			original_script: "Eli heads out early into the east woods with grandfather's brass compass, searching for the old bridge...",
+			script: 'Nia, a young lighthouse keeper, discovers a tiny brass bird during a storm. The bird lights the dark sea, guiding a lost boat safely home. At sunrise, Nia sets it free and watches it fly toward the bright horizon.',
+			original_script: 'Nia, a young lighthouse keeper, discovers a tiny brass bird during a storm. The bird lights the dark sea, guiding a lost boat safely home. At sunrise, Nia sets it free and watches it fly toward the bright horizon.',
 			created_at: now,
 			updated_at: now
 		});
@@ -60,13 +60,13 @@ export class MockApiClient {
 		const char1 = {
 			id: 'char-1',
 			project_id: projId,
-			name: 'Eli',
-			description: 'Curly-haired child exploring the forest',
+			name: 'Nia',
+			description: 'A young lighthouse keeper who finds a tiny brass bird during a storm',
 			age_range: '8-12',
-			appearance: 'Curly hair, freckles, expressive curious eyes',
-			hair_style: 'Messy dark curls',
-			clothing: 'Green patched hooded cloak, leather satchel, brass compass',
-			personality: 'Curious, hopeful, gentle, adventurous',
+			appearance: 'Dark curly hair, freckles, warm brown skin, expressive curious eyes',
+			hair_style: 'Windblown dark curls tied back',
+			clothing: 'Navy lighthouse keeper coat over a cream sweater',
+			personality: 'Curious, brave, gentle, and caring',
 			reference_image_url:
 				'/mock/sample-character.webp',
 			is_sample: true,
@@ -81,8 +81,8 @@ export class MockApiClient {
 			id: 'chap-1',
 			project_id: projId,
 			chapter_number: 1,
-			title: 'The East Woods',
-			summary: "Eli follows grandfather's map through the autumn forest toward the old bridge.",
+			title: 'The Lighthouse Bird',
+			summary: 'Nia finds a tiny brass bird in a storm; its light guides a lost boat home, and she frees it at sunrise.',
 			approved_at: now,
 			status: 'approved',
 			created_at: now,
@@ -90,24 +90,27 @@ export class MockApiClient {
 		};
 		this.chapters.set(chap1.id, chap1);
 
-		const panel1 = {
-			id: 'panel-1',
+		const panelBeats = [
+			{ scene_description: 'During a storm, Nia discovers a tiny brass bird inside the lighthouse.', dialogue: 'Nia: Oh! What are you, little one?', narration: 'Rain lashes the lighthouse as a golden light flickers to life.', image_prompt: 'Nia discovers a tiny glowing brass bird in a storm-lit lighthouse.' },
+			{ scene_description: 'The brass bird shines brighter than the lighthouse lamp over the dark sea.', dialogue: 'Nia: Your light is brighter than the lamp!', narration: 'The bird sends a warm beam over the rough waves.', image_prompt: 'Nia holds the shining brass bird above the stormy sea.' },
+			{ scene_description: 'The bird guides a lost boat safely toward the lighthouse.', dialogue: 'Sailor: We see it! Steer home!', narration: 'A lost boat follows the bird\'s golden light through the storm.', image_prompt: 'The bird guides a small boat through dark waves toward safety.' },
+			{ scene_description: 'At sunrise, Nia sets the bird free and watches it fly toward the bright horizon.', dialogue: 'Nia: Fly free, little light.', narration: 'The storm clears as the brass bird rises into the sunrise.', image_prompt: 'Nia releases the tiny brass bird into a peach-colored sunrise.' }
+		];
+		const seededPanels = panelBeats.map((beat, index) => ({
+			id: `panel-${index + 1}`,
 			chapter_id: chap1.id,
-			panel_number: 1,
-			scene_description: "Eli heads out early into the woods, compass in hand.",
-			dialogue: "Grandfather's map said there'd be an old bridge past the east woods...",
-			narration: 'Morning mist settled over the quiet autumn trees.',
-			image_prompt: 'Curly-haired child in hooded cloak holding brass compass in misty forest',
+			panel_number: index + 1,
+			...beat,
 			created_at: now,
 			updated_at: now
-		};
-		this.panels.set(panel1.id, panel1);
+		}));
+		seededPanels.forEach((panel) => this.panels.set(panel.id, panel));
 
 		const page1 = {
 			id: 'page-1',
 			chapter_id: chap1.id,
 			page_number: 1,
-			panel_ids: [panel1.id],
+			panel_ids: seededPanels.map((panel) => panel.id),
 			draft_image_url:
 				'/mock/sample-draft.webp',
 			draft_approved_at: now,
@@ -126,11 +129,11 @@ export class MockApiClient {
 		this.pages.set(page1.id, page1);
 
 		this.palettes.set(page1.id, [
-			{ region_name: 'sky', hex_color: '#7DA0C4', label: 'Morning Sky' },
-			{ region_name: 'foliage', hex_color: '#2D5A27', label: 'Forest Green' },
-			{ region_name: 'cloak', hex_color: '#4A6B32', label: 'Forest Cloak' },
-			{ region_name: 'skin', hex_color: '#EDBB99', label: 'Warm Skin' },
-			{ region_name: 'earth', hex_color: '#8D6E63', label: 'Woodland Path' }
+			{ region_name: 'sea', hex_color: '#23415A', label: 'Stormy Sea' },
+			{ region_name: 'coat', hex_color: '#24364B', label: 'Nia’s Navy Coat' },
+			{ region_name: 'bird', hex_color: '#DCA83D', label: 'Brass Bird' },
+			{ region_name: 'lamp', hex_color: '#F6C46B', label: 'Lantern Glow' },
+			{ region_name: 'sky', hex_color: '#E9A77E', label: 'Sunrise Sky' }
 		]);
 	}
 
