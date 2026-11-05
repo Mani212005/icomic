@@ -76,81 +76,45 @@ def escape_pdf_string(text: str) -> str:
     return cleaned
 
 
+def _wrap_cover_title(title: str, max_chars: int) -> list[str]:
+    """Wrap a cover title into readable lines that fit the title column."""
+    words = title.split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        while len(word) > max_chars:
+            if current:
+                lines.append(current)
+                current = ""
+            lines.append(word[:max_chars])
+            word = word[max_chars:]
+        candidate = f"{current} {word}".strip()
+        if len(candidate) > max_chars and current:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines
+
+
 def parse_png_to_rgb(png_data: bytes) -> tuple[int, int, bytes]:
     """Parse a PNG image binary and extract width, height, and raw RGB byte stream.
 
-    Supports PNG color types 2 (RGB), 6 (RGBA), and 0 (Grayscale) with standard filters.
+    Decode indexed and truecolor PNGs consistently, compositing transparency onto
+    the white page background used by the PDF image XObject.
     """
     if not png_data.startswith(b"\x89PNG\r\n\x1a\n"):
         raise ValueError("Invalid PNG header signature")
-
-    pos = 8
-    width = 0
-    height = 0
-    color_type = 2
-    idat_chunks = bytearray()
-
-    while pos < len(png_data):
-        length = struct.unpack(">I", png_data[pos : pos + 4])[0]
-        tag = png_data[pos + 4 : pos + 8]
-        data = png_data[pos + 8 : pos + 8 + length]
-        if tag == b"IHDR":
-            width, height, _bit_depth, color_type, _, _, _ = struct.unpack(">IIBBBBB", data)
-        elif tag == b"IDAT":
-            idat_chunks.extend(data)
-        elif tag == b"IEND":
-            break
-        pos += 12 + length
-
-    decompressed = zlib.decompress(bytes(idat_chunks))
-    bpp = 3 if color_type == 2 else (4 if color_type == 6 else 1)
-    stride = width * bpp
-    rgb_output = bytearray()
-
-    offset = 0
-    prev_line = bytearray(stride)
-    for _ in range(height):
-        filter_type = decompressed[offset]
-        offset += 1
-        curr_line = bytearray(decompressed[offset : offset + stride])
-        offset += stride
-
-        if filter_type == 0:  # None
-            pass
-        elif filter_type == 1:  # Sub
-            for x in range(bpp, stride):
-                curr_line[x] = (curr_line[x] + curr_line[x - bpp]) & 0xFF
-        elif filter_type == 2:  # Up
-            for x in range(stride):
-                curr_line[x] = (curr_line[x] + prev_line[x]) & 0xFF
-        elif filter_type == 3:  # Average
-            for x in range(stride):
-                left = curr_line[x - bpp] if x >= bpp else 0
-                up = prev_line[x]
-                curr_line[x] = (curr_line[x] + ((left + up) >> 1)) & 0xFF
-        elif filter_type == 4:  # Paeth
-            for x in range(stride):
-                a = curr_line[x - bpp] if x >= bpp else 0
-                b = prev_line[x]
-                c = prev_line[x - bpp] if x >= bpp else 0
-                p = a + b - c
-                pa = abs(p - a)
-                pb = abs(p - b)
-                pc = abs(p - c)
-                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
-                curr_line[x] = (curr_line[x] + pr) & 0xFF
-
-        prev_line = curr_line
-        if color_type == 2:
-            rgb_output.extend(curr_line)
-        elif color_type == 6:
-            for i in range(0, stride, 4):
-                rgb_output.extend(curr_line[i : i + 3])
-        elif color_type == 0:
-            for byte in curr_line:
-                rgb_output.extend((byte, byte, byte))
-
-    return width, height, bytes(rgb_output)
+    with Image.open(BytesIO(png_data)) as image:
+        rgba = image.convert("RGBA")
+        rgb = Image.new("RGB", rgba.size, "white")
+        rgb.paste(rgba, mask=rgba.getchannel("A"))
+        width, height = rgb.size
+        return width, height, rgb.tobytes()
 
 
 def _generate_fallback_png(width: int = 64, height: int = 64) -> bytes:
@@ -249,17 +213,23 @@ class PdfWriter:
 
         # Main Title & Subtitle
         esc_title = escape_pdf_string(title)
-        cover_lines.append(b"BT /F2 26 Tf 0.1 0.1 0.15 rg")
-        cover_lines.append(f"50 {self.height - 155:.2f} Td ({esc_title}) Tj ET".encode())
+        title_max_chars = max(18, int((self.width - 100) / 14))
+        title_lines = _wrap_cover_title(title, title_max_chars)
+        title_extra = max(0, len(title_lines) - 1) * 31
+        for line_number, title_line in enumerate(title_lines):
+            esc_title_line = escape_pdf_string(title_line)
+            cover_lines.append(b"BT /F2 26 Tf 0.1 0.1 0.15 rg")
+            title_y = self.height - 155 - line_number * 30
+            cover_lines.append(f"50 {title_y:.2f} Td ({esc_title_line}) Tj ET".encode())
 
         cover_lines.append(b"BT /F3 13 Tf 0.35 0.35 0.4 rg")
         cover_lines.append(
-            f"50 {self.height - 185:.2f} Td (AI-Generated Story & Artwork) Tj ET".encode()
+            f"50 {self.height - 185 - title_extra:.2f} Td (AI-Generated Story & Artwork) Tj ET".encode()
         )
 
         # Mandatory AI Generation Disclosure Box
         if include_ai_disclosure:
-            box_y = self.height - 345
+            box_y = self.height - 345 - title_extra
             box_h = 125
             box_w = self.width - 100
 
@@ -286,7 +256,7 @@ class PdfWriter:
                 y_pos -= 18
 
         # Project Specifications & Provenance Summary
-        spec_y = self.height - 425
+        spec_y = self.height - 425 - title_extra
         cover_lines.append(b"BT /F2 11 Tf 0.15 0.15 0.2 rg")
         cover_lines.append(f"50 {spec_y:.2f} Td (PROJECT & PROVENANCE RECORD) Tj ET".encode())
 
@@ -336,8 +306,9 @@ class PdfWriter:
             page_lines: list[bytes] = []
 
             # 1. Page Header
-            page_lines.append(b"BT /F2 10 Tf 0.2 0.2 0.2 rg")
             esc_hdr = escape_pdf_string(f"{title} - Page {p.get('page_number', idx)}")
+            header_font_size = min(10.0, max(6.0, (self.width - 100) / (len(esc_hdr) * 0.55)))
+            page_lines.append(f"BT /F2 {header_font_size:.2f} Tf 0.2 0.2 0.2 rg".encode())
             page_lines.append(f"50 {self.height - 40:.2f} Td ({esc_hdr}) Tj ET".encode())
 
             page_lines.append(b"0.7 0.7 0.7 RG 0.5 w")
@@ -443,9 +414,28 @@ class PdfWriter:
                 )
                 source_files.append(f"({original_filename}) {original_file_id} 0 R")
 
-            # Scale and center image
-            avail_w = self.width - 100
-            avail_h = self.height * 0.48
+            panels = p.get("panels", [])
+            dialogue_text = p.get("dialogue_text")
+            script_rows = 0
+            panel_gaps = 0
+            if panels:
+                for panel in panels:
+                    narr = panel.get("narration", "").strip()
+                    dial = panel.get("dialogue", "").strip()
+                    scene = panel.get("scene_description", "").strip()
+                    script_rows += (
+                        1 + bool(narr) + bool(dial) + bool(not narr and not dial and scene)
+                    )
+                    panel_gaps += 1
+            elif dialogue_text:
+                script_rows = len(dialogue_text.splitlines())
+
+            has_script = bool(script_rows)
+            script_height = 55 + script_rows * 13 + panel_gaps * 4 if has_script else 0
+
+            # Fit artwork into the page area left by the actual transcript and footer.
+            avail_w = self.width - 80
+            avail_h = max(80, self.height - 58 - 60 - script_height)
             scale = min(avail_w / img_w, avail_h / img_h)
             display_w = img_w * scale
             display_h = img_h * scale
@@ -466,11 +456,12 @@ class PdfWriter:
 
             # 3. Panel Dialogue and Narration Section
             text_start_y = img_y - 24
-            page_lines.append(b"BT /F2 10 Tf 0.15 0.2 0.35 rg")
-            page_lines.append(f"50 {text_start_y:.2f} Td (PANEL SCRIPT & DIALOGUE) Tj ET".encode())
+            if has_script:
+                page_lines.append(b"BT /F2 10 Tf 0.15 0.2 0.35 rg")
+                page_lines.append(
+                    f"50 {text_start_y:.2f} Td (PANEL SCRIPT & DIALOGUE) Tj ET".encode()
+                )
 
-            panels = p.get("panels", [])
-            dialogue_text = p.get("dialogue_text")
             curr_y = text_start_y - 18
 
             if panels:
@@ -506,7 +497,7 @@ class PdfWriter:
                     esc_l = escape_pdf_string(line)
                     page_lines.append(f"60 {curr_y:.2f} Td ({esc_l}) Tj ET".encode())
                     curr_y -= 13
-            else:
+            elif has_script:
                 page_lines.append(b"BT /F3 9 Tf 0.4 0.4 0.4 rg")
                 page_lines.append(
                     f"60 {curr_y:.2f} Td (Visual storytelling panel - dialogue integrated in artwork.) Tj ET".encode()

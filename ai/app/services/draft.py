@@ -38,6 +38,7 @@ class DraftService:
         )
         stage_prompt = (
             f"Rough comic book page layout draft sketch, {len(panels)}-panel grid composition, "
+            "portrait-oriented full comic page, taller than wide, composed to fit the canvas without cropping. "
             f"rough pencil layout for page {page_number}. Style: {style}. "
         )
         prompt = f"{stage_prompt}\n{brief}"
