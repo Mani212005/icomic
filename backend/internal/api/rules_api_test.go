@@ -144,10 +144,11 @@ func TestCascadeChapterOutlineEditStalesDraft(t *testing.T) {
 
 	// Approved character
 	now := time.Now().UTC()
+	approvedAt := now.Add(time.Microsecond)
 	ch := &domain.Character{
 		ProjectID:  proj.ID,
 		Name:       "Hero",
-		ApprovedAt: &now,
+		ApprovedAt: &approvedAt,
 		UpdatedAt:  now,
 	}
 	_ = repo.CreateCharacter(nil, ch)
@@ -224,6 +225,7 @@ func TestCascadePanelEditStalesDraftApproval(t *testing.T) {
 	_, handler, repo := setupTestServer(true, "test-user")
 
 	now := time.Now().UTC()
+	approvedAt := now.Add(time.Microsecond)
 	proj := &domain.Project{
 		UserID:         "test-user",
 		Title:          "Panel Cascade Test",
@@ -235,7 +237,7 @@ func TestCascadePanelEditStalesDraftApproval(t *testing.T) {
 	ch := &domain.Character{
 		ProjectID:  proj.ID,
 		Name:       "Knight",
-		ApprovedAt: &now,
+		ApprovedAt: &approvedAt,
 		UpdatedAt:  now,
 	}
 	_ = repo.CreateCharacter(nil, ch)
@@ -269,7 +271,7 @@ func TestCascadePanelEditStalesDraftApproval(t *testing.T) {
 		ProjectID:  proj.ID,
 		EntityType: "chapter_outline",
 		EntityID:   chap.ID,
-		ApprovedAt: now,
+		ApprovedAt: now.Add(time.Microsecond),
 	})
 
 	// Generate and approve draft
@@ -340,6 +342,7 @@ func TestCascadeDraftRegenerationStalesLineArtApproval(t *testing.T) {
 	_, handler, repo := setupTestServer(true, "test-user")
 
 	now := time.Now().UTC()
+	approvedAt := now.Add(time.Microsecond)
 	proj := &domain.Project{
 		UserID:         "test-user",
 		Title:          "Regen Cascade Test",
@@ -351,7 +354,7 @@ func TestCascadeDraftRegenerationStalesLineArtApproval(t *testing.T) {
 	ch := &domain.Character{
 		ProjectID:  proj.ID,
 		Name:       "Pilot",
-		ApprovedAt: &now,
+		ApprovedAt: &approvedAt,
 		UpdatedAt:  now,
 	}
 	_ = repo.CreateCharacter(nil, ch)
@@ -375,7 +378,7 @@ func TestCascadeDraftRegenerationStalesLineArtApproval(t *testing.T) {
 		ProjectID:  proj.ID,
 		EntityType: "chapter_outline",
 		EntityID:   chap.ID,
-		ApprovedAt: now,
+		ApprovedAt: now.Add(time.Microsecond),
 	})
 
 	// Generate draft & approve

@@ -89,7 +89,7 @@ func IsApprovalStale(approvedAt *time.Time, latestActivity time.Time) bool {
 	if approvedAt == nil {
 		return true
 	}
-	return approvedAt.Before(latestActivity)
+	return !approvedAt.After(latestActivity)
 }
 
 // CheckChapterOutlineApproval verifies that a chapter outline has a valid, non-stale approval (SPEC 3.4, ARCHITECTURE 5.3).

@@ -49,7 +49,7 @@ func colourImageFixture(t *testing.T) (*api.Server, http.Handler, db.Repository,
 		DraftApprovedAt:   &approvedAt,
 		LineArtImageURL:   "http://storage/line-art.png",
 		LineArtApprovedAt: &approvedAt,
-		UpdatedAt:         approvedAt,
+		UpdatedAt:         approvedAt.Add(-time.Microsecond),
 	}
 	if err := repo.CreatePage(context.Background(), page); err != nil {
 		t.Fatal(err)

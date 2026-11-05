@@ -301,25 +301,26 @@ func (p *PostgresRepository) CreateCharacter(ctx context.Context, ch *domain.Cha
 		ch.ID = uuid.NewString()
 	}
 	if ch.UpdatedAt.IsZero() {
-		ch.UpdatedAt = time.Now()
+		ch.UpdatedAt = time.Now().UTC()
 	}
+	ch.UpdatedAt = ch.UpdatedAt.UTC().Truncate(time.Microsecond)
 	vaBytes, _ := json.Marshal(ch.VisualAttributes)
 	query := `
-		INSERT INTO characters (id, project_id, name, description, reference_image_url, reference_image_job_id, visual_attributes, approved_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO characters (id, project_id, name, description, reference_image_url, reference_image_job_id, visual_attributes, approved_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
-	_, err := p.db.ExecContext(ctx, query, ch.ID, ch.ProjectID, ch.Name, ch.Description, ch.ReferenceImageURL, ch.ReferenceImageJobID, vaBytes, ch.ApprovedAt)
+	_, err := p.db.ExecContext(ctx, query, ch.ID, ch.ProjectID, ch.Name, ch.Description, ch.ReferenceImageURL, ch.ReferenceImageJobID, vaBytes, ch.ApprovedAt, ch.UpdatedAt)
 	return err
 }
 
 func (p *PostgresRepository) GetCharacter(ctx context.Context, id string) (*domain.Character, error) {
-	query := `SELECT id, project_id, name, description, reference_image_url, reference_image_job_id, visual_attributes, approved_at FROM characters WHERE id = $1`
+	query := `SELECT id, project_id, name, description, reference_image_url, reference_image_job_id, visual_attributes, approved_at, updated_at FROM characters WHERE id = $1`
 	var ch domain.Character
 	var vaBytes []byte
 	var refURL sql.NullString
 	var refJobID sql.NullString
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&ch.ID, &ch.ProjectID, &ch.Name, &ch.Description, &refURL, &refJobID, &vaBytes, &ch.ApprovedAt,
+		&ch.ID, &ch.ProjectID, &ch.Name, &ch.Description, &refURL, &refJobID, &vaBytes, &ch.ApprovedAt, &ch.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -341,7 +342,7 @@ func (p *PostgresRepository) GetCharacter(ctx context.Context, id string) (*doma
 }
 
 func (p *PostgresRepository) ListCharacters(ctx context.Context, projectID string) ([]*domain.Character, error) {
-	query := `SELECT id, project_id, name, description, reference_image_url, reference_image_job_id, visual_attributes, approved_at FROM characters WHERE project_id = $1`
+	query := `SELECT id, project_id, name, description, reference_image_url, reference_image_job_id, visual_attributes, approved_at, updated_at FROM characters WHERE project_id = $1`
 	rows, err := p.db.QueryContext(ctx, query, projectID)
 	if err != nil {
 		return nil, err
@@ -354,7 +355,7 @@ func (p *PostgresRepository) ListCharacters(ctx context.Context, projectID strin
 		var vaBytes []byte
 		var refURL sql.NullString
 		var refJobID sql.NullString
-		if err := rows.Scan(&ch.ID, &ch.ProjectID, &ch.Name, &ch.Description, &refURL, &refJobID, &vaBytes, &ch.ApprovedAt); err != nil {
+		if err := rows.Scan(&ch.ID, &ch.ProjectID, &ch.Name, &ch.Description, &refURL, &refJobID, &vaBytes, &ch.ApprovedAt, &ch.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if refURL.Valid {
@@ -373,12 +374,16 @@ func (p *PostgresRepository) ListCharacters(ctx context.Context, projectID strin
 }
 
 func (p *PostgresRepository) UpdateCharacter(ctx context.Context, ch *domain.Character) error {
+	if ch.UpdatedAt.IsZero() {
+		ch.UpdatedAt = time.Now().UTC()
+	}
+	ch.UpdatedAt = ch.UpdatedAt.UTC().Truncate(time.Microsecond)
 	vaBytes, _ := json.Marshal(ch.VisualAttributes)
 	query := `
-		UPDATE characters SET name = $2, description = $3, reference_image_url = $4, reference_image_job_id = $5, visual_attributes = $6, approved_at = $7
+		UPDATE characters SET name = $2, description = $3, reference_image_url = $4, reference_image_job_id = $5, visual_attributes = $6, approved_at = $7, updated_at = $8
 		WHERE id = $1
 	`
-	res, err := p.db.ExecContext(ctx, query, ch.ID, ch.Name, ch.Description, ch.ReferenceImageURL, ch.ReferenceImageJobID, vaBytes, ch.ApprovedAt)
+	res, err := p.db.ExecContext(ctx, query, ch.ID, ch.Name, ch.Description, ch.ReferenceImageURL, ch.ReferenceImageJobID, vaBytes, ch.ApprovedAt, ch.UpdatedAt)
 	if err != nil {
 		return err
 	}

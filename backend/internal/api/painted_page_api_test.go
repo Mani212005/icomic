@@ -80,7 +80,7 @@ func paintedPageFixture(t *testing.T) (*api.Server, http.Handler, db.Repository,
 		PanelIDs:        []string{panel.ID},
 		DraftImageURL:   "http://storage/draft.png",
 		DraftApprovedAt: &now,
-		UpdatedAt:       now,
+		UpdatedAt:       now.Add(-time.Microsecond),
 	}
 	if err := repo.CreatePage(ctx, page); err != nil {
 		t.Fatal(err)

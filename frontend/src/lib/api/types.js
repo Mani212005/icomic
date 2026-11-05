@@ -51,18 +51,24 @@ export const STAGE_ESTIMATED_COSTS = {
 	pdf_assembly: 0.001
 };
 
+function timestampMicros(value) {
+	if (typeof value !== 'string') return null;
+	const match = /^(.*?)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)$/.exec(value);
+	if (!match) return null;
+	const milliseconds = Date.parse(`${match[1]}${match[3]}`);
+	if (!Number.isFinite(milliseconds)) return null;
+	const fractionalMicros = Number((match[2] || '').slice(0, 6).padEnd(6, '0'));
+	return milliseconds * 1000 + fractionalMicros;
+}
+
 export function isApprovalStale(approvedAt, updatedAt) {
-	if (!approvedAt || !updatedAt) return false;
-	const approvedTime = new Date(approvedAt).getTime();
-	const updatedTime = new Date(updatedAt).getTime();
-	if (Number.isNaN(approvedTime) || Number.isNaN(updatedTime)) return false;
-	return approvedTime < updatedTime;
+	const approvedTime = timestampMicros(approvedAt);
+	const updatedTime = timestampMicros(updatedAt);
+	if (approvedTime === null || updatedTime === null) return true;
+	return approvedTime <= updatedTime;
 }
 
 export function hasValidApproval(approvedAt, updatedAt) {
-	if (!approvedAt) return false;
-	const approvedTime = new Date(approvedAt).getTime();
-	if (Number.isNaN(approvedTime)) return false;
 	return !isApprovalStale(approvedAt, updatedAt);
 }
 
