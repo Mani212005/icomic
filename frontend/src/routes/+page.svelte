@@ -1,6 +1,5 @@
 <script>
 	import '$lib/design/theme.css';
-	import Paper from '$lib/design/Paper.svelte';
 	import { focusDialog } from '$lib/design/dialog.js';
 	import Icon from '$lib/design/Icon.svelte';
 	import ComicEditor from '$lib/editor/ComicEditor.svelte';
@@ -149,7 +148,6 @@
 </script>
 
 <div class="app-layout">
-	<Paper />
 
 	<header class="navbar">
 		<div class="brand">
@@ -201,7 +199,7 @@
 				</div>
 			</div>
 			<button class="enable-dev-btn" on:click={enableDevIdentity} >
-				<Icon name="script" size={18} /> Enable dev identity
+				<Icon name="script" size={18} /> Enable dev
 			</button>
 		</div>
 	{/if}
@@ -225,7 +223,7 @@
 					{/each}
 				</select>
 			{:else}
-				<span class="no-projects-label">No projects</span>
+				<span class="no-projects-label">None</span>
 			{/if}
 		</div>
 
@@ -263,6 +261,16 @@
 			</button>
 		</div>
 	</section>
+
+	{#if authMode === 'mock'}
+		<div class="demo-sample-banner" role="status">
+			<span class="sample-banner-icon"><Icon name="check" size={18} /></span>
+			<div class="sample-banner-body">
+				<strong>Real Meta AI samples.</strong>
+				Mock controls; no keys or credits.
+			</div>
+		</div>
+	{/if}
 
 	{#if projectError}
 		<div class="project-error-banner" role="alert">
@@ -312,7 +320,7 @@
 			>
 				<header class="modal-header">
 					<h2 id="modal-title">New project</h2>
-					<button class="close-btn" on:click={closeCreateModal} aria-label="Close dialog"><Icon name="close" size={18} /></button>
+					<button class="close-btn" on:click={closeCreateModal} aria-label="Close"><Icon name="close" size={18} /></button>
 				</header>
 
 				{#if createError}

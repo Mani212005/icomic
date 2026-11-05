@@ -334,7 +334,7 @@
 
 		<div class="custom-picker">
 			<input type="color" bind:value={customColour} on:change={addCustomColour} aria-label="Choose color" />
-			<button class="small-btn" on:click={addCustomColour} aria-label="Set color">Set</button>
+			<button class="small-btn" on:click={addCustomColour}>Set</button>
 		</div>
 	</div>
 
@@ -345,7 +345,7 @@
 				bind:this={canvas}
 				class="active-canvas"
 				tabindex="0"
-				aria-label="Canvas: arrows move; Enter paints."
+				aria-label="Canvas: arrows; Enter paints."
 				use:keyboardCanvas={canvasKeyboardHandlers}
 				on:click={handleCanvasClick}
 				on:pointerdown={handlePointerDown}
