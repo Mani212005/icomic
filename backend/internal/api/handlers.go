@@ -67,6 +67,30 @@ func (s *Server) getUserID(r *http.Request) string {
 	return auth.UserIDFromContext(r.Context())
 }
 
+func (s *Server) getOwnedProject(r *http.Request, projectID string) (*domain.Project, int) {
+	proj, err := s.Repo.GetProject(r.Context(), projectID)
+	if err != nil {
+		return nil, http.StatusNotFound
+	}
+	if proj.UserID != s.getUserID(r) {
+		return nil, http.StatusForbidden
+	}
+	return proj, http.StatusOK
+}
+
+func (s *Server) getOwnedPage(r *http.Request, pageID string) (*domain.Page, int) {
+	page, err := s.Repo.GetPage(r.Context(), pageID)
+	if err != nil {
+		return nil, http.StatusNotFound
+	}
+	chapter, err := s.Repo.GetChapter(r.Context(), page.ChapterID)
+	if err != nil {
+		return nil, http.StatusNotFound
+	}
+	_, status := s.getOwnedProject(r, chapter.ProjectID)
+	return page, status
+}
+
 // checkPromptModeration screens a prompt with the AI service before dispatch (SPEC 4.5).
 func (s *Server) checkPromptModeration(r *http.Request, prompt string, hashedUID string) (bool, string, error) {
 	if s.AIClient == nil || strings.TrimSpace(prompt) == "" {
@@ -1729,6 +1753,14 @@ func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
 // GetColourPalette handles GET /api/v1/pages/{id}/colour-palette
 func (s *Server) GetColourPalette(w http.ResponseWriter, r *http.Request) {
 	pageID := r.PathValue("id")
+	if _, status := s.getOwnedPage(r, pageID); status != http.StatusOK {
+		message := "forbidden"
+		if status == http.StatusNotFound {
+			message = "Page not found"
+		}
+		writeError(w, status, message)
+		return
+	}
 	cp, err := s.Repo.GetColourPalette(r.Context(), pageID)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"palette": map[string]string{}})
@@ -1863,6 +1895,14 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 // UpdateColourPalette handles PATCH /api/v1/pages/{id}/colour-palette
 func (s *Server) UpdateColourPalette(w http.ResponseWriter, r *http.Request) {
 	pageID := r.PathValue("id")
+	if _, status := s.getOwnedPage(r, pageID); status != http.StatusOK {
+		message := "forbidden"
+		if status == http.StatusNotFound {
+			message = "Page not found"
+		}
+		writeError(w, status, message)
+		return
+	}
 	var body struct {
 		Palette map[string]interface{} `json:"palette"`
 	}
@@ -2007,6 +2047,14 @@ func (s *Server) ApproveColour(w http.ResponseWriter, r *http.Request) {
 
 // EstimateCost handles POST /api/v1/projects/{id}/estimate
 func (s *Server) EstimateCost(w http.ResponseWriter, r *http.Request) {
+	if _, status := s.getOwnedProject(r, r.PathValue("id")); status != http.StatusOK {
+		message := "forbidden"
+		if status == http.StatusNotFound {
+			message = "Project not found"
+		}
+		writeError(w, status, message)
+		return
+	}
 	var body struct {
 		Stage      string `json:"stage"`
 		ImageCount int    `json:"image_count"`
