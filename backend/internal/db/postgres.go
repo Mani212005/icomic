@@ -768,15 +768,15 @@ func (p *PostgresRepository) CreateJobWithDebit(ctx context.Context, job *domain
 }
 
 func (p *PostgresRepository) GetJob(ctx context.Context, id string) (*domain.GenerationJob, error) {
-	return scanJob(p.db.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM generation_jobs WHERE id=$1`, id))
+	return scanJob(p.db.QueryRowContext(ctx, `SELECT id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at, COALESCE(entity_id::text, '') FROM generation_jobs WHERE id=$1`, id))
 }
 
 func (p *PostgresRepository) GetJobByIdempotencyKey(ctx context.Context, key string) (*domain.GenerationJob, error) {
-	return scanJob(p.db.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM generation_jobs WHERE idempotency_key=$1`, key))
+	return scanJob(p.db.QueryRowContext(ctx, `SELECT id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at, COALESCE(entity_id::text, '') FROM generation_jobs WHERE idempotency_key=$1`, key))
 }
 
 func (p *PostgresRepository) GetActiveJobForEntity(ctx context.Context, projectID string, jobType string) (*domain.GenerationJob, error) {
-	return scanJob(p.db.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM generation_jobs WHERE project_id=$1 AND job_type=$2 AND status IN ('pending', 'running') LIMIT 1`, projectID, jobType))
+	return scanJob(p.db.QueryRowContext(ctx, `SELECT id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at, COALESCE(entity_id::text, '') FROM generation_jobs WHERE project_id=$1 AND job_type=$2 AND status IN ('pending', 'running') LIMIT 1`, projectID, jobType))
 }
 
 func (p *PostgresRepository) UpdateJob(ctx context.Context, job *domain.GenerationJob) error {
