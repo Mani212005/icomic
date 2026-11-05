@@ -1,6 +1,7 @@
 <p align="center">
   <img src="docs/assets/icomics-watercolor-poster.png" alt="Watercolor comic poster for Icomic, with an open book revealing a moonlit city" width="360">
 </p>
+<p align="center"><a href="https://icomic.vercel.app">Live demo: https://icomic.vercel.app</a></p>
 <p align="center">
   <img src="docs/assets/icomics-mark.svg" alt="Icomic open-book logo mark" width="72">
 </p>

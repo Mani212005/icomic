@@ -29,6 +29,8 @@ test('MockApiClient seeds an approved real sample instead of crude mock art', as
 	);
 	assert.equal(page.is_sample, true, 'Page must be identified with is_sample metadata');
 	assert.ok(page.sample_label, 'Page must include descriptive sample_label');
+	assert.equal(page.panel_ids.length, 4, 'Sample page must show all four beats of the lighthouse story');
+	assert.deepEqual(page.panel_ids, ['panel-1', 'panel-2', 'panel-3', 'panel-4']);
 
 	const characters = await client.getCharacters(project.id);
 	assert.ok(characters.length > 0, 'Seeded character exists');
@@ -94,8 +96,8 @@ test('Mock character image and description reference the same coherent sample', 
 	const client = new MockApiClient();
 	const [project] = await client.listProjects();
 	assert.ok(project, 'Seeded project exists');
-	assert.equal(project.title, "Grandfather's Map", 'Project title must match Eli forest adventure sample');
-	assert.equal(project.art_style, 'indie-graphic-novel', 'Art style must match sample style');
+	assert.equal(project.title, 'The Lighthouse Bird', 'Project title must match the lighthouse bird sample');
+	assert.equal(project.art_style, 'indie-graphic-novel', 'Art style must match the selected editor style');
 	assert.equal(project.is_sample, true, 'Project must carry is_sample metadata');
 	assert.ok(project.sample_label, 'Project must include sample_label');
 
@@ -103,11 +105,10 @@ test('Mock character image and description reference the same coherent sample', 
 	assert.ok(characters.length > 0, 'Seeded character exists');
 	const character = characters[0];
 
-	// Proves character data matches the real sample Eli in the forest
-	assert.equal(character.name, 'Eli', 'Demo character must be Eli from the real sample');
-	assert.match(character.description, /curly-haired.*forest/i, 'Character description must describe Eli in the forest');
-	assert.match(character.appearance, /curly.*freckles/i, 'Character appearance must describe curly hair and freckles');
-	assert.match(character.clothing, /cloak.*satchel.*compass/i, 'Character clothing must describe hooded cloak, satchel, and compass');
+	assert.equal(character.name, 'Nia', 'Demo character must be the lighthouse keeper in the sample story');
+	assert.match(character.description, /lighthouse keeper.*brass bird/i, 'Character description must describe Nia and the brass bird');
+	assert.match(character.appearance, /dark curly hair.*freckles/i, 'Character appearance must match the reference image');
+	assert.match(character.clothing, /navy.*coat.*cream sweater/i, 'Character clothing must match the reference image');
 	assert.equal(
 		character.reference_image_url,
 		'/mock/sample-character.webp',
@@ -115,6 +116,18 @@ test('Mock character image and description reference the same coherent sample', 
 	);
 	assert.equal(character.is_sample, true, 'Character must be marked as sample');
 	assert.ok(character.sample_label, 'Character must retain sample label');
+	assert.match(project.original_script, /^Nia, a young lighthouse keeper/);
+	assert.match(project.original_script, /At sunrise, Nia sets it free/);
+	const [chapter] = await client.getChapters(project.id);
+	assert.match(chapter.summary, /Nia.*brass bird.*lost boat.*sunrise/i);
+	const [page] = await client.getPages(chapter.id);
+	const panels = await client.getPanels(chapter.id);
+	assert.equal(panels.length, 4, 'Script beats must map to four sample panels');
+	assert.match(panels[0].scene_description, /Nia.*brass bird.*lighthouse/i);
+	assert.match(panels[1].dialogue, /^Nia:/, 'Model-baked speaker label stays in sample dialogue');
+	assert.match(panels[2].dialogue, /^Sailor:/, 'Model-baked speaker label stays in sample dialogue');
+	assert.match(panels[3].scene_description, /sunrise.*Nia.*bird/i);
+	assert.deepEqual(page.panel_ids, panels.map((panel) => panel.id));
 
 	// Verify sample portrait file on disk is under 100 KB budget and clean portrait
 	const charAssetPath = join(root, 'static/mock/sample-character.webp');
