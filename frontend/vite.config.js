@@ -1,4 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
+import adapter from '@sveltejs/adapter-static';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
@@ -12,13 +14,16 @@ export default defineConfig({
 				name: 'icomic-demo-api-entry',
 				enforce: 'pre',
 				resolveId(source) {
-					if (source === '$lib/api/index.js' || /\/api\/index\.js$/.test(source)) {
+					if (source === '#lib/api/index.js' || /\/api\/index\.js$/.test(source)) {
 						return new URL('./src/lib/api/demoIndex.js', import.meta.url).pathname;
 					}
 				}
 			}]
 			: []),
-		sveltekit()
+		sveltekit({
+			adapter: adapter({ fallback: '200.html' }),
+			preprocess: vitePreprocess()
+		})
 	],
 	server: {
 		port: 5173,

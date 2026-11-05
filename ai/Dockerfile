@@ -3,10 +3,12 @@ FROM python:3.10-slim
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH"
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN pip install --no-cache-dir uv \
+    && uv sync --locked --no-dev --no-install-project
 
 COPY . .
 
