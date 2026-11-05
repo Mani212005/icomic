@@ -256,7 +256,7 @@ retain the failing provider response body. Capture happens before output parsing
 and accounting validation; successful calls do not produce diagnostic files.
 Token-count preflight failures are captured too.
 
-Each diagnostic contains the HTTP status, internal operation/job IDs, error type
+Each complete-response diagnostic contains the HTTP status, internal operation/job IDs, error type
 and the redacted body, capped at 256 KiB with an explicit truncation flag. It
 contains no request payload, request URL, or HTTP headers. The configured credential,
 credential-shaped strings, bearer tokens and JSON credential fields are redacted
@@ -264,6 +264,14 @@ before truncation or writing. Files use mode 0600. Artifacts placed inside the
 repository receive a local `.gitignore`; keep production evidence outside the
 repository and review it before sharing. Provider output can still contain story
 content. Diagnostics are opt-in; no credential is read to enable capture.
+
+Interrupted response bodies are classified as unknown outcomes, including protocol and content-decoding failures.
+Their diagnostic is captured before the error leaves the HTTP client, with received and expected wire-byte counts, elapsed seconds, and only the length of the first bytes (at most 256), never those bytes themselves.
+It records `body_complete=false` and `body_saved=false`.
+Only Content-Type, Content-Length, Content-Encoding, Date and X-Request-ID response headers are permitted in this partial-response metadata; their values are redacted and bounded.
+Authorization, cookies, arbitrary headers and partial image/JSON content are excluded.
+The image reservation stays held, the queue and Go job become uncertain, and no automatic retransmission occurs.
+The project remains available for an explicitly approved new attempt through the resume flags in [MULTIPAGE.md](MULTIPAGE.md#unknown-provider-outcomes-and-cost-accounting).
 
 Historical shape fixtures and their evidence/reconstruction provenance live in
 `ai/tests/fixtures/meta/observed/README.md`. Some older failures retained only

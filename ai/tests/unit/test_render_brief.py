@@ -43,7 +43,7 @@ def example_request():
 
 def test_golden_shared_render_brief():
     prompt, images = build_page_render_request(**example_request())
-    expected = Path(__file__).parents[1] / "fixtures/render_brief_v3.txt"
+    expected = Path(__file__).parents[1] / "fixtures/render_brief_v4.txt"
     assert prompt + "\n" == expected.read_text()
     assert images == [image_bytes("Nia reference pixels")]
 

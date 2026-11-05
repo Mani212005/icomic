@@ -871,6 +871,22 @@ def parse_palette_json(content: str) -> PaletteSuggestion:
 # ---------------------------------------------------------------------------
 
 
+class _ObservedResponseStream(httpx.SyncByteStream):
+    """Count received wire bytes without retaining a diagnostic body prefix."""
+
+    def __init__(self, stream: httpx.SyncByteStream):
+        self.stream = stream
+        self.received = 0
+
+    def __iter__(self):
+        for chunk in self.stream:
+            self.received += len(chunk)
+            yield chunk
+
+    def close(self):
+        self.stream.close()
+
+
 class MetaHttpClient:
     """HTTP client for Meta API with auth, retries, backoff, and error mapping."""
 
@@ -1143,7 +1159,30 @@ class MetaHttpClient:
                         # A network failure has no response body. Never attribute
                         # a previous call or successful preflight body to it.
                         last_response.set(None)
-                    response = self._client.send(request)
+                    response = self._client.send(request, stream=True)
+                    request_id = response.headers.get("x-request-id")
+                    observed = _ObservedResponseStream(response.stream)
+                    response.stream = observed
+                    try:
+                        response.read()
+                    except httpx.RequestError:
+                        if self.diagnostics is not None:
+                            try:
+                                expected = int(response.headers["content-length"])
+                            except (KeyError, ValueError):
+                                expected = None
+                            self.diagnostics.capture_partial(
+                                status=response.status_code,
+                                received_bytes=response.num_bytes_downloaded,
+                                expected_bytes=expected,
+                                elapsed_seconds=time.monotonic() - started,
+                                headers=response.headers,
+                                first_bytes_length=observed.received,
+                                secret=self.api_key,
+                            )
+                        raise
+                    finally:
+                        response.close()
                 except Exception:
                     if reservation is not None:
                         self.cost_ledger.finish_call(
@@ -1253,7 +1292,13 @@ class MetaHttpClient:
                     request_id=request_id,
                 )
 
-            except (httpx.TimeoutException, httpx.NetworkError) as net_err:
+            except (
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.ProtocolError,
+                httpx.DecodingError,
+            ) as net_err:
+                self.record_invalid_response(type(net_err).__name__)
                 raise MetaUnknownOutcomeError(
                     f"Meta API connection failed and request outcome is unknown: {net_err}. "
                     "Do not retry automatically; start a new attempt only after review.",

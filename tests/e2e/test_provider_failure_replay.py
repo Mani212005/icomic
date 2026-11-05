@@ -40,6 +40,7 @@ from app.provider_diagnostics import ProviderDiagnostics
         ("generate_chapter_outline", "schema_echo", 2),
         ("generate_panel_text", "truncated_json", 2),
         ("generate_draft_sketch", "http_400", 1),
+        ("generate_draft_sketch", "partial_body", 1),
         ("generate_line_art", "invalid_image", 1),
         ("suggest_colour_palette", "palette_list", 1),
         ("assemble_pdf", "corrupt_stored_image", 1),
@@ -60,6 +61,16 @@ def test_long_flow_stops_at_each_failed_stage(
     ledger = ProviderCostLedger(2, path=tmp_path / "costs.json")
     diagnostics = ProviderDiagnostics(tmp_path / "diagnostics")
 
+    class DisconnectedBody(httpx.SyncByteStream):
+        def __iter__(self):
+            # Synthetic partial bytes replay the observed transport failure;
+            # the live response body was lost before the old capture point.
+            yield b'{"id":"mock-partial","output":[' + b" " * 11964
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body "
+                "(received 11995 bytes, expected 1315453)"
+            )
+
     def respond(request):
         if request.url.path.endswith("/responses/input_tokens"):
             return httpx.Response(200, json={"input_tokens": 10000})
@@ -67,6 +78,10 @@ def test_long_flow_stops_at_each_failed_stage(
         calls.append(operation)
         operation_counts[operation] = operation_counts.get(operation, 0) + 1
         if operation == target and operation_counts[operation] == occurrence:
+            if shape == "partial_body":
+                return httpx.Response(
+                    200, stream=DisconnectedBody(), headers={"Content-Length": "1315453"}
+                )
             record = load(shape)
             return httpx.Response(record["status"], json=record["body"])
         payload = json.loads(request.content)
@@ -205,8 +220,33 @@ def test_long_flow_stops_at_each_failed_stage(
                     for c in ledger.report()["calls"]
                     if c["job_id"] == failed_call["job_id"]
                 )
-                assert status["job"]["status"] == "failed"
+                assert status["job"]["status"] == (
+                    "uncertain" if shape == "partial_body" else "failed"
+                )
                 assert status["job"]["actual_cost"] == pytest.approx(expected)
+                if shape == "partial_body":
+                    assert failed_call["status"] == "uncertain"
+                    assert failed_call["actual_cost_usd"] is None
+                    assert ledger.report()["uncertain_amount_usd"] == 0.01
+                    diagnostic = json.loads(
+                        next((tmp_path / "diagnostics").glob("*.json")).read_text()
+                    )
+                    assert diagnostic["body_complete"] is False
+                    assert diagnostic["received_bytes"] == 11995
+                    assert diagnostic["expected_bytes"] == 1315453
+                    assert diagnostic["first_bytes_length"] == 256
+                    assert "body" not in diagnostic
+                    # Re-deliver the exact AI job through HTTP. Its saved
+                    # uncertain result must not issue a second provider POST.
+                    queued = adapters.queue.get_job("generation", failed_call["job_id"])
+                    replay = httpx.post(
+                        ai_url + "/internal/v1/generate-draft-sketch",
+                        json=queued["payload"]["request"], timeout=10,
+                    )
+                    assert replay.status_code == 502
+                    assert replay.json()["code"] == "OUTCOME_UNKNOWN"
+                    assert operation_counts[target] == 1
+                    assert ledger.report()["uncertain_amount_usd"] == 0.01
         else:
             assert export_reads
             assert not list((tmp_path / "diagnostics").glob("*.json"))
