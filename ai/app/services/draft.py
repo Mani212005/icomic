@@ -28,18 +28,19 @@ class DraftService:
         character_identities: list[CharacterRenderIdentity] | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
         """Generate one rough draft sketch per page for composition review."""
+        from .style_bible import resolve_style_bible
+
+        style_bible = resolve_style_bible(style)
         brief, reference_images = build_page_render_request(
             page_number=page_number,
             panels=panels,
-            style=style,
+            style=style_bible.style_id,
             storage=self.storage_adapter,
             character_identities=character_identities,
             character_reference_image_urls=character_reference_image_urls,
         )
-        stage_prompt = (
-            f"Rough comic book page layout draft sketch, {len(panels)}-panel grid composition, "
-            "portrait-oriented full comic page, taller than wide, composed to fit the canvas without cropping. "
-            f"rough pencil layout for page {page_number}. Style: {style}. "
+        stage_prompt = style_bible.format_for_draft(
+            page_number=page_number, panel_count=len(panels)
         )
         prompt = f"{stage_prompt}\n{brief}"
 
@@ -47,7 +48,7 @@ class DraftService:
             prompt=prompt,
             reference_images=reference_images,
             hashed_user_id=hashed_user_id,
-            style=style,
+            style=style_bible.style_id,
         )
 
         url = store_page_image(

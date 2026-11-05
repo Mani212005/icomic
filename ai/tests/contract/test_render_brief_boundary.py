@@ -155,6 +155,7 @@ def test_ordered_panels_identity_and_reference_bytes_reach_image_wire(stage):
         assert ref["source_url"] == identity["reference_image_url"]
     if stage == "line-art":
         assert "approved composition" in refs[0]["role"]
-        assert "no shading" in prompt
+        assert "final inking and line art" in prompt
+        assert "Style bible: classic-comic" in prompt
     assert "Only the exact dialogue field" in brief["dialogue_policy"]
     assert "Narration is story context" in brief["dialogue_policy"]

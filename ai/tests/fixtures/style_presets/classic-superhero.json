@@ -1,0 +1,42 @@
+{
+  "bible_hash": "e6778b1bb68b5bbc1f1b9d13c5920a75f59c6b2b317701600a14a2204d1ed7b5",
+  "depth": "Exaggerated wide-angle perspective, dynamic foreground foreshortening, deep receding metropolitan avenues.",
+  "environment": "Towering metropolitan skyscrapers, dramatic gargoyles, bridge towers, cosmic skies and urban crisis landscapes.",
+  "label": "Classic Superhero",
+  "lighting": "Dramatic overhead key illumination, heroic upward fill, striking rim lighting separating figures from explosive background skies.",
+  "line_treatment": "Muscular dynamic ink contours, athletic anatomical weighting, clean cross-feathering for musculature and power silhouettes.",
+  "materials": "Tactical armor sheen, spandex weave, brushed steel, polished brass, crackling energy particles and stone masonry.",
+  "mood": "Epic cinematic stakes, heroic determination, kinetic power and moral clarity.",
+  "negative_constraints": [
+    "no stick-figure or schematic proportions",
+    "no dull desaturated monochrome haze",
+    "no muddy flat vector fills",
+    "no muted slice-of-life intimacy",
+    "no unshaded digital flat shapes"
+  ],
+  "palette": {
+    "accent_tones": [
+      "crimson red",
+      "brilliant gold",
+      "electric azure"
+    ],
+    "dominant_tones": [
+      "cobalt blue",
+      "deep ink charcoal",
+      "pure paper white"
+    ],
+    "suggested_regions": {
+      "accent_lighting": "#FFD600",
+      "architecture_shadows": "#263238",
+      "background_sky": "#1565C0",
+      "cape_or_emblem": "#C62828",
+      "character_clothing": "#0D47A1",
+      "character_skin": "#F5CBA7"
+    },
+    "temperature": "vibrant bold dynamic",
+    "theme": "Heroic Primary Bold"
+  },
+  "style_id": "classic-superhero",
+  "values": "Dynamic three-dimensional form modeling, deep ink contour shadows, brilliant specular highlights sculpting anatomy.",
+  "version": "style-bible-v1"
+}

@@ -139,13 +139,20 @@ class MetaVisionAdapter(VisionPort):
         if isinstance(call_reserve, bool) or not isinstance(call_reserve, int) or call_reserve < 0:
             raise MetaConfigurationError("reasoning_reserve_tokens must be a non-negative integer")
 
+        style_bible = kwargs.pop("style_bible", None)
+        effective_context = (
+            style_bible.format_for_palette_vision(panel_context)
+            if style_bible is not None and hasattr(style_bible, "format_for_palette_vision")
+            else panel_context
+        )
+
         instruction = (
             "Analyze this comic panel line art and context. Suggest a cohesive, harmonious "
             "color palette for the key visual regions. Respond strictly in valid JSON with this format:\n"
             '{\n  "theme": "Descriptive Theme Name",\n  "palette": [\n'
             '    {"region_name": "character_clothing", "hex_color": "#RRGGBB", "label": "Region Label"}\n'
             "  ]\n}\n"
-            f"Panel context: {panel_context}"
+            f"Panel context: {effective_context}"
         )
 
         content_parts = [

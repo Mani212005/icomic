@@ -13,13 +13,20 @@ class ColourService:
         self.model_id = model_id
 
     def suggest_palette(
-        self, line_art_image_bytes: bytes, panel_context: str
+        self,
+        line_art_image_bytes: bytes,
+        panel_context: str,
+        style: str | None = None,
     ) -> tuple[str, list[ColourRegionSuggestion]]:
-        """Suggest region-based colour palette based on line art and contextual cues."""
+        """Suggest region-based colour palette based on line art, context, and style bible."""
+        from .style_bible import resolve_style_bible
+
+        style_bible = resolve_style_bible(style)
         suggestion = self.vision_adapter.suggest_palette(
             model=self.model_id,
             image_bytes=line_art_image_bytes,
             panel_context=panel_context,
+            style_bible=style_bible,
             **GENERATION_POLICIES["palette"].options(),
         )
 

@@ -28,9 +28,10 @@ Only exact panel dialogue may be drawn in that panel's speech bubbles. Empty
 dialogue means no bubble. Narration is retained as story context and remains
 excluded from image captions by the existing image-only rules. This does not
 select a deterministic lettering implementation or change approvals. Final line
-art still uses the current B/W constraints; finished paint and style-preset
-resolution are separate follow-ups. The style ID is carried unchanged for a
-future shared style-bible resolver.
+art inking derives its line and tonal treatment from the shared style bible without
+contradictory flat-white/no-shading exclusions. The style ID is resolved into the
+versioned style bible (`style-bible-v1`) embedded directly in the render brief and
+shared across reference, draft, line art, and palette suggestion.
 
 Default character-reference generation now includes name, description and the
 stored visual attributes (including age, appearance, hair and clothing when

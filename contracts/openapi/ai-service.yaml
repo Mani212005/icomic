@@ -885,6 +885,10 @@ components:
           type: string
         panel_context:
           type: string
+        style:
+          type: string
+          description: Style identifier to resolve palette and color guidance from the shared style bible
+          example: classic-comic
 
     SuggestColourPaletteResponse:
       type: object
