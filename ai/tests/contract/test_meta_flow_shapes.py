@@ -298,12 +298,14 @@ def test_schema_echo_stops_chunked_analysis_and_retains_failed_job_cost(tmp_path
         "script": "story " * 1001,
     }
     response = client.post("/internal/v1/analyze-script", json=payload)
-    assert response.status_code == 400
-    assert "schema_echo" in response.text
+    assert response.status_code == 502
+    assert response.json()["code"] == "INVALID_PROVIDER_OUTPUT"
+    assert "schema_echo" not in response.text
     status = client.get(f"/internal/v1/job/{payload['job_id']}/status").json()
     assert status["status"] == "failed"
+    assert status["error_code"] == "INVALID_PROVIDER_OUTPUT"
     assert status["actual_cost"] == ledger.report()["actual_spend_usd"] == 2 * 0.0003375
     assert ledger.report()["unpriced_calls"] == 0
     # Neither a later source chunk nor a redelivery repeats generation.
-    assert client.post("/internal/v1/analyze-script", json=payload).status_code == 400
+    assert client.post("/internal/v1/analyze-script", json=payload).status_code == 502
     assert len(generated) == 2

@@ -113,6 +113,33 @@ func TestCreateProject(t *testing.T) {
 	}
 }
 
+func TestGenerationResponsePreservesStructuredAIError(t *testing.T) {
+	s, handler, repo := setupTestServer(true, "test-user")
+	project := &domain.Project{ID: "f3149d43-28d9-5d7f-a24f-961e9de91774", UserID: "test-user", Title: "Test", OriginalScript: "A short story", ChapterCount: 1}
+	if err := repo.CreateProject(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	retryAfter := 11.0
+	s.AIClient.(*gen.FakeAIServiceClient).AnalyzeScriptFunc = func(context.Context, gen.AnalyzeScriptRequest) (*gen.AnalyzeScriptResponse, error) {
+		return nil, &gen.AIServiceError{Code: "RATE_LIMITED", Message: "Generation is temporarily rate limited.", StatusCode: http.StatusTooManyRequests, Retryable: true, RetryAfterSeconds: &retryAfter}
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/analyze", nil))
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("HTTP %d, want 429: %s", recorder.Code, recorder.Body.String())
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["code"] != "RATE_LIMITED" || response["message"] != "Generation is temporarily rate limited." || response["retryable"] != true || response["retry_after_seconds"] != 11.0 {
+		t.Fatalf("structured AI error was not preserved: %v", response)
+	}
+	if got := recorder.Header().Get("Retry-After"); got != "11" {
+		t.Fatalf("Retry-After header = %q, want 11", got)
+	}
+}
+
 func TestEstimateCost(t *testing.T) {
 	server, handler, repo := setupTestServer(true, "test-user")
 	server.Pricing = credits.PricingConfig{

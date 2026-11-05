@@ -25,6 +25,8 @@ class ErrorResponse(BaseModel):
     code: str = Field(..., examples=["INVALID_ARGUMENT"])
     message: str = Field(..., examples=["Script input cannot be empty"])
     details: dict[str, Any] | None = None
+    retryable: bool = False
+    retry_after_seconds: float | None = Field(None, ge=0.0)
 
 
 class CharacterProfile(BaseModel):
@@ -306,3 +308,6 @@ class JobStatusResponse(BaseModel):
     status: Literal["pending", "running", "done", "failed", "uncertain", "cancelled"]
     actual_cost: float | None = None
     error_message: str | None = None
+    error_code: str | None = None
+    retryable: bool = False
+    retry_after_seconds: float | None = Field(None, ge=0.0)

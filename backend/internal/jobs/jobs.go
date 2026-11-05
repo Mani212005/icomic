@@ -32,17 +32,18 @@ var (
 )
 
 type CreateJobRequest struct {
-	EntityID         string
-	DebitAmount      float64
-	KillSwitchActive bool
-	ProjectID        string
-	UserID           string
-	JobType          string
-	Stage            string
-	ModelID          string
-	IdempotencyKey   string
-	EstimatedCost    float64
-	HashedUserID     string
+	EntityID             string
+	DebitAmount          float64
+	KillSwitchActive     bool
+	AllowDirectFromBrief bool
+	ProjectID            string
+	UserID               string
+	JobType              string
+	Stage                string
+	ModelID              string
+	IdempotencyKey       string
+	EstimatedCost        float64
+	HashedUserID         string
 }
 
 // JobService defines generation job lifecycle management (SPEC 8.3, 8.5, ARCHITECTURE 5).

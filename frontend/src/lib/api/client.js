@@ -81,9 +81,13 @@ export class ApiClient {
 		if (!res.ok) {
 			let errorMessage = `API error ${res.status}`;
 			let errorCode;
+			let retryable = false;
+			let retryAfterSeconds;
 			try {
 				const errorJson = await res.json();
 				errorCode = errorJson?.code;
+				retryable = errorJson?.retryable === true;
+				retryAfterSeconds = errorJson?.retry_after_seconds;
 				if (errorJson && (errorJson.message || errorJson.error)) {
 					errorMessage = errorJson.message || errorJson.error;
 				}
@@ -93,6 +97,8 @@ export class ApiClient {
 			const error = new Error(errorMessage);
 			error.status = res.status;
 			error.code = errorCode;
+			error.retryable = retryable;
+			error.retry_after_seconds = retryAfterSeconds;
 			throw error;
 		}
 
@@ -313,7 +319,8 @@ export class ApiClient {
 	}
 
 	async getJob(jobId) {
-		return this.request(`/api/v1/generation-jobs/${jobId}`);
+		const response = await this.request(`/api/v1/generation-jobs/${jobId}`);
+		return response?.job || response;
 	}
 
 	async cancelJob(jobId) {

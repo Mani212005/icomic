@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import math
 import mimetypes
 import posixpath
 import uuid
@@ -49,6 +50,7 @@ from .provider_diagnostics import last_response
 from .services.character import CharacterService
 from .services.colour import ColourService
 from .services.draft import DraftService
+from .services.errors import JobExecutionError, classify_error
 from .services.line_art import LineArtService
 from .services.moderation import ModerationService
 from .services.painted_page import PaintedPageService
@@ -180,13 +182,19 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
-        code = "NOT_FOUND" if exc.status_code == 404 else "ERROR"
+        structured = exc.error if isinstance(exc, JobExecutionError) else classify_error(exc)
+        headers = {}
+        if structured.retry_after_seconds is not None:
+            headers["Retry-After"] = str(max(1, math.ceil(structured.retry_after_seconds)))
         return JSONResponse(
-            status_code=exc.status_code,
+            status_code=structured.status,
             content=ErrorResponse(
-                code=code,
-                message=str(exc.detail),
+                code=structured.code,
+                message=structured.message,
+                retryable=structured.retryable,
+                retry_after_seconds=structured.retry_after_seconds,
             ).model_dump(),
+            headers=headers,
         )
 
     # =========================================================================
@@ -437,6 +445,9 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             status=data.get("status", "pending"),
             actual_cost=data.get("actual_cost"),
             error_message=data.get("error_message"),
+            error_code=data.get("error_code"),
+            retryable=data.get("retryable", False),
+            retry_after_seconds=data.get("retry_after_seconds"),
         )
 
     @app.api_route(

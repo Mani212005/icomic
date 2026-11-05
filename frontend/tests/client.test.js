@@ -63,6 +63,31 @@ test('ApiClient checkHealth handles HTTP error with parsed message', async () =>
 	}
 });
 
+test('ApiClient retains structured retry metadata from the shared error envelope', async () => {
+	const originalFetch = globalThis.fetch;
+	try {
+		globalThis.fetch = async () => ({
+			ok: false,
+			status: 429,
+			json: async () => ({
+				code: 'RATE_LIMITED',
+				message: 'Try again later.',
+				retryable: true,
+				retry_after_seconds: 8
+			})
+		});
+		const client = new ApiClient();
+		await assert.rejects(client.checkHealth(), (error) => {
+			assert.equal(error.code, 'RATE_LIMITED');
+			assert.equal(error.retryable, true);
+			assert.equal(error.retry_after_seconds, 8);
+			return true;
+		});
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
 test('ApiClient uploads the coloured page as raw PNG bytes', async () => {
 	const originalFetch = globalThis.fetch;
 	const blob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });

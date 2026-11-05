@@ -1,7 +1,7 @@
 <script>
 	import Icon from '$lib/design/Icon.svelte';
 	import { pollJob } from '$lib/api/jobPolling.js';
-	import { EXPORT_FORMATS, PAGE_SIZES } from '$lib/api/types.js';
+	import { EXPORT_FORMATS, PAGE_SIZES, formatApiError } from '$lib/api/types.js';
 
 	export let projectId = '';
 	export let apiClient;
@@ -11,7 +11,7 @@
 	let format = EXPORT_FORMATS.PDF;
 	let pageSize = PAGE_SIZES.A4;
 	let isExporting = false;
-	let exportError = '';
+	let exportError = null;
 	let currentExport = null;
 	let downloadUrl = '';
 
@@ -41,7 +41,7 @@
 				onComplete();
 			}
 		} catch (err) {
-			exportError = err.message || 'Export failed';
+			exportError = formatApiError(err);
 		} finally {
 			isExporting = false;
 		}
@@ -101,7 +101,12 @@
 
 	{#if exportError}
 		<div class="error-banner" role="alert">
-			<Icon name="warning" size={18} /> {exportError}
+			<Icon name="warning" size={18} />
+			<div>
+				<strong>{exportError.title}</strong>
+				<p>{exportError.message}</p>
+				{#if exportError.action}<p class="error-action">Next: {exportError.action}</p>{/if}
+			</div>
 		</div>
 	{/if}
 
