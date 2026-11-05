@@ -16,6 +16,10 @@ import (
 )
 
 func main() {
+	pricing, err := credits.PricingFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
 	imageLimits, err := domain.E2EImageQuota(os.Getenv)
 	if err != nil {
 		log.Fatal(err)
@@ -81,6 +85,7 @@ func main() {
 		imageHosting,
 		maxPanelsPerPage,
 	)
+	server.Pricing = pricing
 	if imageLimits != nil {
 		server.DefaultUserQuota = float64(imageLimits.Daily)
 		server.MonthlyUserQuota = float64(imageLimits.Monthly)

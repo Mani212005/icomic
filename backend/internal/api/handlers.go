@@ -540,15 +540,15 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 	idempKey := generationKey(r)
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         ch.ID,
-		DebitAmount:      credits.ImageUnitPrice,
+		DebitAmount:      s.Pricing.ImagePriceUSD,
 		KillSwitchActive: s.IsKillSwitchActive(),
 		ProjectID:        proj.ID,
 		UserID:           userID,
 		JobType:          "character_reference",
 		Stage:            "reference",
-		ModelID:          "muse-image-1.0",
+		ModelID:          s.Pricing.ImageModelID,
 		IdempotencyKey:   idempKey,
-		EstimatedCost:    credits.ImageUnitPrice,
+		EstimatedCost:    s.Pricing.ImagePriceUSD,
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
@@ -565,7 +565,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 			UserID:          userID,
 			ProjectID:       proj.ID,
 			GenerationJobID: job.ID,
-			Amount:          credits.ImageUnitPrice,
+			Amount:          s.Pricing.ImagePriceUSD,
 		})
 		writeError(w, http.StatusServiceUnavailable, "AI service not available")
 		return
@@ -585,7 +585,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		})
 	})
 	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, credits.ImageUnitPrice); failErr != nil {
+		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
@@ -650,7 +650,7 @@ func (s *Server) ApproveCharacter(w http.ResponseWriter, r *http.Request) {
 		EntityID:                 ch.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
-		CreditEstimateAtApproval: credits.ImageUnitPrice,
+		CreditEstimateAtApproval: s.Pricing.ImagePriceUSD,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save approval")
 		return
@@ -1477,15 +1477,15 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	idempKey := generationKey(r)
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
-		DebitAmount:      credits.ImageUnitPrice,
+		DebitAmount:      s.Pricing.ImagePriceUSD,
 		KillSwitchActive: s.IsKillSwitchActive(),
 		ProjectID:        proj.ID,
 		UserID:           userID,
 		JobType:          "draft_sketch",
 		Stage:            "draft",
-		ModelID:          "muse-image-1.0",
+		ModelID:          s.Pricing.ImageModelID,
 		IdempotencyKey:   idempKey,
-		EstimatedCost:    credits.ImageUnitPrice,
+		EstimatedCost:    s.Pricing.ImagePriceUSD,
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
@@ -1516,7 +1516,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, credits.ImageUnitPrice); failErr != nil {
+		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
@@ -1586,7 +1586,7 @@ func (s *Server) ApproveDraft(w http.ResponseWriter, r *http.Request) {
 		EntityID:                 pg.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
-		CreditEstimateAtApproval: credits.ImageUnitPrice,
+		CreditEstimateAtApproval: s.Pricing.ImagePriceUSD,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save approval")
 		return
@@ -1685,15 +1685,15 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
-		DebitAmount:      credits.ImageUnitPrice,
+		DebitAmount:      s.Pricing.ImagePriceUSD,
 		KillSwitchActive: s.IsKillSwitchActive(),
 		ProjectID:        proj.ID,
 		UserID:           userID,
 		JobType:          "final_line_art",
 		Stage:            "line_art",
-		ModelID:          "muse-image-1.0",
+		ModelID:          s.Pricing.ImageModelID,
 		IdempotencyKey:   idempKey,
-		EstimatedCost:    credits.ImageUnitPrice,
+		EstimatedCost:    s.Pricing.ImagePriceUSD,
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
@@ -1725,7 +1725,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, credits.ImageUnitPrice); failErr != nil {
+		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
@@ -1796,7 +1796,7 @@ func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
 		EntityID:                 pg.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
-		CreditEstimateAtApproval: credits.ImageUnitPrice,
+		CreditEstimateAtApproval: s.Pricing.ImagePriceUSD,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save approval")
 		return
@@ -1922,15 +1922,15 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
-		DebitAmount:      credits.ImageUnitPrice,
+		DebitAmount:      s.Pricing.ImagePriceUSD,
 		KillSwitchActive: s.IsKillSwitchActive(),
 		ProjectID:        proj.ID,
 		UserID:           userID,
 		JobType:          "final_line_art",
 		Stage:            "line_art",
-		ModelID:          "muse-image-1.0",
+		ModelID:          s.Pricing.ImageModelID,
 		IdempotencyKey:   idempKey,
-		EstimatedCost:    credits.ImageUnitPrice,
+		EstimatedCost:    s.Pricing.ImagePriceUSD,
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
@@ -1969,7 +1969,7 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, credits.ImageUnitPrice); failErr != nil {
+		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
@@ -2038,7 +2038,7 @@ func (s *Server) ApprovePaintedPage(w http.ResponseWriter, r *http.Request) {
 		EntityID:                 pg.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
-		CreditEstimateAtApproval: credits.ImageUnitPrice,
+		CreditEstimateAtApproval: s.Pricing.ImagePriceUSD,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save approval")
 		return
@@ -2123,15 +2123,15 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
-		DebitAmount:      credits.ColourSuggestionUnitPrice,
+		DebitAmount:      s.Pricing.ColourEstimateUSD,
 		KillSwitchActive: s.IsKillSwitchActive(),
 		ProjectID:        proj.ID,
 		UserID:           userID,
 		JobType:          "colour_suggestion",
 		Stage:            "colour",
-		ModelID:          "meta-vision-colour",
+		ModelID:          s.Pricing.VisionModelID,
 		IdempotencyKey:   idempKey,
-		EstimatedCost:    credits.ColourSuggestionUnitPrice,
+		EstimatedCost:    s.Pricing.ColourEstimateUSD,
 		HashedUserID:     hashedUID,
 	})
 	if err != nil {
@@ -2160,7 +2160,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, credits.ColourSuggestionUnitPrice); failErr != nil {
+		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ColourEstimateUSD); failErr != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
@@ -2373,7 +2373,7 @@ func (s *Server) EstimateCost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	est := credits.EstimateCost(body.Stage, body.ImageCount)
+	est := s.Pricing.Estimate(body.Stage, body.ImageCount)
 	writeJSON(w, http.StatusOK, est)
 }
 

@@ -28,6 +28,7 @@ type Server struct {
 	MonthlyUserQuota  float64
 	AllowedOrigin     string
 	Limits            RequestLimits
+	Pricing           credits.PricingConfig
 	admission         requestAdmission
 }
 
@@ -74,6 +75,7 @@ func NewServer(
 		DefaultUserQuota:  80.0,
 		AllowedOrigin:     allowedOrigin,
 		Limits:            DefaultRequestLimits(),
+		Pricing:           credits.DefaultPricing(),
 	}
 }
 

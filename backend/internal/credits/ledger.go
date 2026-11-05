@@ -208,54 +208,5 @@ func (s *InMemoryCreditService) EstimateCost(stage string, count int) domain.Cos
 
 // EstimateCost calculates stage-specific credit costs based on verified pricing (SPEC 5.2).
 func EstimateCost(stage string, count int) domain.CostEstimate {
-	if count < 1 {
-		count = 1
-	}
-
-	switch stage {
-	case "draft", "draft_sketch":
-		return domain.CostEstimate{
-			StageName:       "draft_sketch",
-			ImageCount:      count,
-			EstimatedCost:   float64(count) * ImageUnitPrice,
-			Assumptions:     []string{"$0.01 per page image draft attempt using Meta muse-image-1.0"},
-			IsEstimatePrice: false,
-		}
-
-	case "line_art", "final_line_art":
-		return domain.CostEstimate{
-			StageName:       "final_line_art",
-			ImageCount:      count,
-			EstimatedCost:   float64(count) * ImageUnitPrice,
-			Assumptions:     []string{"$0.01 per page final line art image attempt using Meta muse-image-1.0"},
-			IsEstimatePrice: false,
-		}
-
-	case "character_reference", "reference":
-		return domain.CostEstimate{
-			StageName:       "character_reference",
-			ImageCount:      count,
-			EstimatedCost:   float64(count) * ImageUnitPrice,
-			Assumptions:     []string{"$0.01 per character reference image attempt using Meta muse-image-1.0"},
-			IsEstimatePrice: false,
-		}
-
-	case "colour_suggestion", "colour":
-		return domain.CostEstimate{
-			StageName:       "colour_suggestion",
-			ImageCount:      0,
-			EstimatedCost:   float64(count) * ColourSuggestionUnitPrice,
-			Assumptions:     []string{"Token cost estimate for language/vision palette suggestion model call"},
-			IsEstimatePrice: true,
-		}
-
-	default:
-		return domain.CostEstimate{
-			StageName:       stage,
-			ImageCount:      count,
-			EstimatedCost:   float64(count) * ImageUnitPrice,
-			Assumptions:     []string{"Standard flat per-image cost basis"},
-			IsEstimatePrice: true,
-		}
-	}
+	return DefaultPricing().Estimate(stage, count)
 }

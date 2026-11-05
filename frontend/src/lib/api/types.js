@@ -47,7 +47,7 @@ export const STAGE_ESTIMATED_COSTS = {
 	character_reference: 0.01,
 	draft_sketch: 0.01,
 	final_line_art: 0.01,
-	colour_suggestion: 0.002,
+	colour_suggestion: 0.005,
 	pdf_assembly: 0.001
 };
 
@@ -59,6 +59,20 @@ function timestampMicros(value) {
 	if (!Number.isFinite(milliseconds)) return null;
 	const fractionalMicros = Number((match[2] || '').slice(0, 6).padEnd(6, '0'));
 	return milliseconds * 1000 + fractionalMicros;
+}
+
+export function formatCostQuote(quote) {
+	if (!quote || typeof quote.estimated_cost !== 'number' || !Number.isFinite(quote.estimated_cost)) {
+		return 'Estimate unavailable';
+	}
+	const currency = quote.currency || 'USD';
+	const amount = new Intl.NumberFormat('en-US', {
+		style: 'currency',
+		currency,
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 6
+	}).format(quote.estimated_cost);
+	return `${quote.price_verified ? 'Estimate' : 'Unverified estimate'}: ${amount}`;
 }
 
 export function isApprovalStale(approvedAt, updatedAt) {
