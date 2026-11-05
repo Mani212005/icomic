@@ -13,8 +13,9 @@ import (
 )
 
 type GenerationOptions struct {
-	EntityID         string
-	KillSwitchActive bool
+	EntityID             string
+	KillSwitchActive     bool
+	AllowDirectFromBrief bool
 }
 
 const jobColumns = `id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at`
@@ -108,7 +109,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 			return nil, false, err
 		}
 	}
-	if err := checkGenerationApproval(ctx, tx, job, opts.EntityID); err != nil {
+	if err := checkGenerationApproval(ctx, tx, job, opts.EntityID, opts.AllowDirectFromBrief); err != nil {
 		return nil, false, err
 	}
 	if opts.EntityID != "" {
@@ -166,7 +167,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 	return job, false, nil
 }
 
-func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.GenerationJob, entityID string) error {
+func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.GenerationJob, entityID string, allowDirectFromBrief bool) error {
 	var script string
 	if err := tx.QueryRowContext(ctx, `SELECT original_script FROM projects WHERE id=$1::uuid AND user_id=$2::uuid FOR UPDATE`, job.ProjectID, job.UserID).Scan(&script); err != nil {
 		return err
@@ -205,7 +206,7 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
 		pageUpdated = panelUpdated.Time
 	}
 
-	if job.JobType == "draft_sketch" {
+	if job.JobType == "draft_sketch" || allowDirectFromBrief {
 		// Hold the prerequisite rows against edits through commit. Approvals are append-only.
 		if _, err := tx.ExecContext(ctx, `SELECT id FROM characters WHERE project_id=$1::uuid FOR SHARE`, job.ProjectID); err != nil {
 			return err
@@ -268,6 +269,9 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
 		}
 		prereqs.DraftSketchApproved = approved
 		prereqs.LineArtApproved = approved
+	}
+	if allowDirectFromBrief {
+		return domain.CheckApprovalGate("draft_sketch", prereqs)
 	}
 	return domain.CheckApprovalGate(job.JobType, prereqs)
 }

@@ -43,7 +43,7 @@ func (s *PersistentJobService) CreateJob(ctx context.Context, req CreateJobReque
 		kind = "pdf_assembly"
 	}
 	job := &domain.GenerationJob{ID: uuid.NewString(), ProjectID: req.ProjectID, UserID: req.UserID, JobType: kind, Stage: stage, ModelID: req.ModelID, Status: StatusPending, IdempotencyKey: req.IdempotencyKey, EstimatedCost: req.EstimatedCost, HashedUserID: req.HashedUserID}
-	created, existed, err := s.store.CreateGeneration(ctx, job, db.GenerationOptions{EntityID: req.EntityID, KillSwitchActive: req.KillSwitchActive}, req.DebitAmount)
+	created, existed, err := s.store.CreateGeneration(ctx, job, db.GenerationOptions{EntityID: req.EntityID, KillSwitchActive: req.KillSwitchActive, AllowDirectFromBrief: req.AllowDirectFromBrief}, req.DebitAmount)
 	return publicJob(created), existed, err
 }
 func (s *PersistentJobService) GetJob(ctx context.Context, id string) (*domain.GenerationJob, error) {

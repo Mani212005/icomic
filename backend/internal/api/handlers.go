@@ -2103,17 +2103,18 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 	hashedUID := domain.HashUserID(userID)
 
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		EntityID:         pg.ID,
-		DebitAmount:      s.Pricing.ImagePriceUSD,
-		KillSwitchActive: s.IsKillSwitchActive(),
-		ProjectID:        proj.ID,
-		UserID:           userID,
-		JobType:          "final_line_art",
-		Stage:            "line_art",
-		ModelID:          s.Pricing.ImageModelID,
-		IdempotencyKey:   idempKey,
-		EstimatedCost:    s.Pricing.ImagePriceUSD,
-		HashedUserID:     hashedUID,
+		EntityID:             pg.ID,
+		AllowDirectFromBrief: chosenVariant == "direct-from-brief",
+		DebitAmount:          s.Pricing.ImagePriceUSD,
+		KillSwitchActive:     s.IsKillSwitchActive(),
+		ProjectID:            proj.ID,
+		UserID:               userID,
+		JobType:              "final_line_art",
+		Stage:                "line_art",
+		ModelID:              s.Pricing.ImageModelID,
+		IdempotencyKey:       idempKey,
+		EstimatedCost:        s.Pricing.ImagePriceUSD,
+		HashedUserID:         hashedUID,
 	})
 	if err != nil {
 		writeGenerationError(w, err)

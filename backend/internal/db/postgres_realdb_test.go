@@ -435,6 +435,40 @@ func TestRealDBGenerationTransactionsAndRepositories(t *testing.T) {
 	}
 }
 
+func TestRealDBDirectFromBriefRequiresCharacterAndOutlineApprovalsOnly(t *testing.T) {
+	_, repo, ctx := realDatabase(t)
+	user := &domain.User{Email: uuid.NewString() + "@realdb.test", PasswordHash: "fake-hash"}
+	must(t, repo.CreateUser(ctx, user))
+	project := &domain.Project{UserID: user.ID, Title: "Direct page", OriginalScript: "A hero saves the town.", ChapterCount: 1, Status: "draft"}
+	must(t, repo.CreateProject(ctx, project))
+	chapter := &domain.Chapter{ProjectID: project.ID, ChapterNumber: 1, Title: "First", Status: "approved"}
+	must(t, repo.CreateChapter(ctx, chapter))
+	character := &domain.Character{ProjectID: project.ID, Name: "Hero", ReferenceImageURL: "fake://reference"}
+	must(t, repo.CreateCharacter(ctx, character))
+	panel := &domain.Panel{ChapterID: chapter.ID, PanelNumber: 1, SceneDescription: "Town square", Status: "ready"}
+	must(t, repo.CreatePanel(ctx, panel))
+	page := &domain.Page{ChapterID: chapter.ID, PageNumber: 1, PanelIDs: []string{panel.ID}}
+	must(t, repo.CreatePage(ctx, page))
+
+	character, err := repo.GetCharacter(ctx, character.ID)
+	must(t, err)
+	character.UpdatedAt = time.Now().UTC()
+	must(t, repo.UpdateCharacter(ctx, character))
+	characterApprovalAt := time.Now().UTC()
+	must(t, repo.RecordApproval(ctx, &domain.StageApproval{ProjectID: project.ID, EntityType: "character_reference", EntityID: character.ID, ApprovedByUserID: user.ID, ApprovedAt: characterApprovalAt}))
+	chapter, err = repo.GetChapter(ctx, chapter.ID)
+	must(t, err)
+	chapter.Status = "approved"
+	must(t, repo.UpdateChapter(ctx, chapter))
+	chapterApprovalAt := time.Now().UTC()
+	must(t, repo.RecordApproval(ctx, &domain.StageApproval{ProjectID: project.ID, EntityType: "chapter_outline", EntityID: chapter.ID, ApprovedByUserID: user.ID, ApprovedAt: chapterApprovalAt}))
+
+	job := &domain.GenerationJob{ID: uuid.NewString(), ProjectID: project.ID, UserID: user.ID, JobType: "final_line_art", Stage: "line_art", ModelID: "fake", IdempotencyKey: uuid.NewString(), EstimatedCost: .01, HashedUserID: domain.HashUserID(user.ID)}
+	if _, _, err := repo.CreateGeneration(ctx, job, db.GenerationOptions{EntityID: page.ID, AllowDirectFromBrief: true}, .01); err != nil {
+		t.Fatalf("direct-from-brief generation should pass character and outline gates without draft approval: %v", err)
+	}
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
