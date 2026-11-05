@@ -40,6 +40,7 @@ class LineArtService:
         )
         stage_prompt = (
             f"Comic book page {page_number} final black and white line art, {len(panels)}-panel grid. "
+            "portrait-oriented full comic page, taller than wide, composed to fit the canvas without cropping. "
             "Bold clean closed-contour comic book lines, thick outlines, flat white fills, "
             "no shading, high contrast graphic novel inking. Follow the approved draft composition. "
         )

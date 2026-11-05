@@ -168,6 +168,19 @@ def parse_pdf_structure(pdf_bytes: bytes) -> dict[str, Any]:
             text_pieces.append(decomp.decode("latin1", "replace"))
         except zlib.error:
             text_pieces.append(raw_stream.decode("latin1", "replace"))
+    # Embedded image bytes can contain a false `stream` marker, which makes
+    # the simple marker scan above skip a later compressed page-content stream.
+    # Recover any such Flate streams directly from their zlib headers as well.
+    for offset in range(len(pdf_bytes) - 1):
+        if pdf_bytes[offset] != 0x78 or pdf_bytes[offset + 1] not in (0x01, 0x5E, 0x9C, 0xDA):
+            continue
+        decoder = zlib.decompressobj()
+        try:
+            decoded = decoder.decompress(pdf_bytes[offset:])
+        except zlib.error:
+            continue
+        if decoder.eof and decoded and decoded.decode("latin1", "replace") not in text_pieces:
+            text_pieces.append(decoded.decode("latin1", "replace"))
     info["text_content"] = "\n".join(text_pieces)
     return info
 
@@ -201,6 +214,7 @@ def test_draft_service_without_character_references():
     assert "c2pa" in prov
     assert len(img.recorded_calls) == 1
     assert len(img.recorded_calls[0]["reference_images"]) == 0
+    assert "portrait-oriented full comic page, taller than wide" in img.recorded_calls[0]["prompt"]
 
 
 def test_draft_service_character_consistency_anchoring():
@@ -240,6 +254,7 @@ def test_draft_service_character_consistency_anchoring():
     assert len(img.recorded_calls) == 1
     call = img.recorded_calls[0]
     assert_image_prompt_excludes_editorial_text(call["prompt"])
+    assert "portrait-oriented full comic page, taller than wide" in call["prompt"]
 
     # Verify approved character reference image bytes passed as reference inputs
     assert len(call["reference_images"]) == 2
@@ -288,6 +303,7 @@ def test_line_art_service_without_character_references():
     assert "c2pa" in prov
     assert len(img.recorded_calls) == 1
     assert img.recorded_calls[0]["reference_images"] == [draft_bytes]
+    assert "portrait-oriented full comic page, taller than wide" in img.recorded_calls[0]["prompt"]
 
 
 def test_line_art_service_character_consistency_anchoring():
