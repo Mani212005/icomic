@@ -40,6 +40,111 @@ func bookCharacter(t *testing.T, repo *db.PostgresRepository, ctx context.Contex
 	return c
 }
 
+func TestRealDBPanelPatchPersistsEditableFields(t *testing.T) {
+	_, repo, ctx := realDatabase(t)
+	user, project := realUserProject(t, repo, ctx)
+	chapter := &domain.Chapter{ProjectID: project.ID, ChapterNumber: 1, Title: "Panel edits", Status: "pending"}
+	must(t, repo.CreateChapter(ctx, chapter))
+	panel := &domain.Panel{
+		ChapterID: chapter.ID, PanelNumber: 1, SceneDescription: "Old scene", CharacterActions: "Old action",
+		CameraAngle: "Old angle", Background: "Old background", Dialogue: "Old dialogue", Narration: "Old narration",
+		ImagePrompt: "Old prompt",
+	}
+	must(t, repo.CreatePanel(ctx, panel))
+	approvedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	page := &domain.Page{ChapterID: chapter.ID, PageNumber: 1, PanelIDs: []string{panel.ID}, DraftApprovedAt: &approvedAt}
+	must(t, repo.CreatePage(ctx, page))
+
+	server := api.NewServer(
+		repo,
+		credits.NewInMemoryCreditService(map[string]float64{user.ID: 50}),
+		jobs.NewInMemoryJobService(),
+		gen.NewFakeAIServiceClient(),
+		auth.NewDevAuthenticator(true, user.ID),
+		auth.NewDefaultImageHosting("/media"),
+		5,
+	)
+	handler := server.NewRouter()
+	request := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/panels/"+panel.ID, strings.NewReader(body))
+		req.Header.Set("X-User-ID", user.ID)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if malformed := request(`{"dialogue":`); malformed.Code != http.StatusBadRequest {
+		t.Fatalf("malformed PATCH expected 400, got %d: %s", malformed.Code, malformed.Body.String())
+	}
+	unchanged, err := repo.GetPanel(ctx, panel.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := repo.ListPages(ctx, chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Dialogue != "Old dialogue" || len(pages) != 1 || pages[0].DraftApprovedAt == nil || !pages[0].DraftApprovedAt.Equal(approvedAt) {
+		t.Fatalf("malformed PATCH changed saved panel or approval: panel=%+v pages=%+v", unchanged, pages)
+	}
+
+	want := map[string]string{
+		"scene_description": "New scene", "character_actions": "New action", "camera_angle": "New angle",
+		"background": "New background", "dialogue": "New dialogue", "narration": "New narration", "image_prompt": "New prompt",
+	}
+	body, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := request(string(body))
+	if updated.Code != http.StatusOK {
+		t.Fatalf("valid PATCH expected 200, got %d: %s", updated.Code, updated.Body.String())
+	}
+	var response struct {
+		Panel domain.Panel `json:"panel"`
+	}
+	if err := json.Unmarshal(updated.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	assertRealDBPanelFields(t, &response.Panel, want)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/chapters/"+chapter.ID+"/panels", nil)
+	getReq.Header.Set("X-User-ID", user.ID)
+	getResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getResponse, getReq)
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("GET panels expected 200, got %d: %s", getResponse.Code, getResponse.Body.String())
+	}
+	var listResponse struct {
+		Panels []domain.Panel `json:"panels"`
+	}
+	if err := json.Unmarshal(getResponse.Body.Bytes(), &listResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(listResponse.Panels) != 1 {
+		t.Fatalf("GET returned %d panels, want 1", len(listResponse.Panels))
+	}
+	assertRealDBPanelFields(t, &listResponse.Panels[0], want)
+	pages, err = repo.ListPages(ctx, chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 || pages[0].DraftApprovedAt != nil {
+		t.Fatalf("successful edit did not stale draft approval: %+v", pages)
+	}
+}
+
+func assertRealDBPanelFields(t *testing.T, panel *domain.Panel, want map[string]string) {
+	t.Helper()
+	got := map[string]string{
+		"scene_description": panel.SceneDescription, "character_actions": panel.CharacterActions, "camera_angle": panel.CameraAngle,
+		"background": panel.Background, "dialogue": panel.Dialogue, "narration": panel.Narration, "image_prompt": panel.ImagePrompt,
+	}
+	for field, value := range want {
+		if got[field] != value {
+			t.Errorf("%s = %q, want %q", field, got[field], value)
+		}
+	}
+}
+
 func TestRealDBBookAndDailyBudgets(t *testing.T) {
 	pool, repo, ctx := realDatabase(t)
 	user, first := realUserProject(t, repo, ctx)
