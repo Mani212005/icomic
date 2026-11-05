@@ -247,20 +247,21 @@ Stale approvals after regeneration or edit: an approval only counts if its `appr
 
 The draft stage costs one image call per attempt per page. Credit cost for the draft is displayed before generation.
 
-### 3.7 Final Line Art Stage
+### 3.7 Finish Stage (Finished Painted Page Default and Ink Option)
 
-After draft approval, the system must generate final black-and-white line art per page.
+After draft approval, the system generates the finished page finish. By default (Captain decision C1), the system produces and approves a finished painted page per page (replacing the separate B/W line-art and flat-colouring steps in the default flow). The ink route (producing black-and-white line art followed by palette suggestion and flat colouring) remains available as an explicit option (`variant=ink`).
 
-The line art must use prompts that request bold, clean, closed-contour comic book lines (thick black outlines, flat white fills, no shading).
+For finished painted pages:
+- Conditioning variant is controlled by the single configuration setting `PAINTED_PAGE_DEFAULT_VARIANT` (default: `draft-conditioned`, configurable to `direct-from-brief`).
+- Regenerating a painted page stales its approval and costs one image attempt.
+- Approving the painted page qualifies the page for export.
 
-Because the image model cannot guarantee perfectly closed outlines, the colouring tool must tolerate gaps (see section 3.8).
-
-The user must be able to:
-
-- Approve the line art (proceeds to colouring).
-- Regenerate the line art (costs one additional image call).
-
-The system must not start colouring before the user approves the line art.
+For the ink option (`variant=ink`):
+- After draft approval, the system generates final black-and-white line art per page.
+- The line art must use prompts that request bold, clean, closed-contour comic book lines (thick black outlines, flat white fills, no shading).
+- Because the image model cannot guarantee perfectly closed outlines, the colouring tool must tolerate gaps (see section 3.8).
+- The user must be able to approve the line art (proceeds to colouring) or regenerate the line art.
+- The system must not start colouring before the user approves the line art.
 
 Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 

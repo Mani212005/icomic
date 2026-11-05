@@ -40,6 +40,7 @@ from app.provider_diagnostics import ProviderDiagnostics
         ("generate_chapter_outline", "schema_echo", 2),
         ("generate_panel_text", "truncated_json", 2),
         ("generate_draft_sketch", "http_400", 1),
+        ("generate_painted_page", "invalid_image", 1),
         ("generate_line_art", "invalid_image", 1),
         ("suggest_colour_palette", "palette_list", 1),
         ("assemble_pdf", "corrupt_stored_image", 1),
@@ -165,8 +166,9 @@ def test_long_flow_stops_at_each_failed_stage(
         )
         guard = runner.CostGuard(float("inf"), False)
         guard.script_file = repo_root / "tests/fixtures/the_tide_clock.txt"
+        finish_route = "ink" if target in ("generate_line_art", "suggest_colour_palette") else "painted"
         if target.startswith("complete_with_"):
-            pages, _ = runner.run_flow(guard, tmp_path)
+            pages, _ = runner.run_flow(guard, tmp_path, finish_route=finish_route)
             assert (guard.panel_count, pages, guard.pdf_page_count) == (51, 12, 13)
             if target == "complete_with_extras":
                 characters = runner.json_request(f"/api/v1/projects/{guard.project_id}/characters")[
@@ -186,7 +188,7 @@ def test_long_flow_stops_at_each_failed_stage(
                 assert moderation and all(c["usage"]["reasoning_tokens"] == 873 for c in moderation)
             return
         with pytest.raises(runner.E2EError):
-            runner.run_flow(guard, tmp_path)
+            runner.run_flow(guard, tmp_path, finish_route=finish_route)
         assert not (tmp_path / "latest.pdf").exists()
         assert not any(key.startswith("exports/") for key in adapters.storage._blobs)
         if target != "assemble_pdf":

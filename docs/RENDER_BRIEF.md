@@ -1,7 +1,7 @@
 # Page render brief
 
-`ai/app/services/render_brief.py` assembles `page-render-brief-v1` for both draft
-and final line-art generation. Stage constraints precede the same story contract.
+`ai/app/services/render_brief.py` assembles `page-render-brief-v1` for draft,
+finished painted-page (the default finish stage), and line-art generation. Stage constraints precede the same story contract.
 The brief includes every `PanelTextItem` field without truncation. Array order is
 the page's allocation/reading order; panel numbers remain source identifiers and
 do not trigger sorting. Camera, background, actions and image-prompt details are
@@ -11,8 +11,8 @@ explicit drawing inputs.
 complete visual-attribute map with its reference URL. Go sorts these identities by
 character ID so repository iteration order cannot change the mapping. The shared
 builder loads the images and writes their 1-based input indices, roles and SHA-256
-hashes into the prompt together. Final line art attaches the approved draft first
-for composition, then identity references. Character references guide identity,
+hashes into the prompt together. Finished painted page (draft-conditioned variant) and
+line art attach the approved draft first for composition, then identity references. Character references guide identity,
 not presence: a reference is not an instruction to insert that character into
 every panel. All project references remain available because panels currently
 have free-text actions rather than explicit cast IDs; substring matching would

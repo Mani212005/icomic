@@ -373,8 +373,15 @@ VALUES (:'e2e_credit_id'::uuid, :'e2e_user_id'::uuid, NULL, NULL, 'adjustment', 
     return user_id
 
 
-def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, str]:
+def run_flow(
+    guard: CostGuard,
+    artifact_dir: Path = ARTIFACT_DIR,
+    finish_route: str | None = None,
+) -> tuple[int, str]:
     from colouring import colour_enclosed_regions
+
+    if finish_route is None:
+        finish_route = getattr(guard, "finish_route", "painted")
 
     global RUN_USER_ID
     guard.current_stage = "provision_user"
@@ -490,33 +497,69 @@ def run_flow(guard: CostGuard, artifact_dir: Path = ARTIFACT_DIR) -> tuple[int, 
     guard.panel_count = len(panels)
     print(f"PASS comic pages generated: {len(panels)} panels across {len(pages)} pages")
 
-    for page in pages:
+    for index, page in enumerate(pages):
         page_id = page["id"]
         checked_call(guard, "image", 1, "POST", f"/api/v1/pages/{page_id}/draft")
         json_request(f"/api/v1/pages/{page_id}/draft/approve", "POST")
-        checked_call(guard, "image", 1, "POST", f"/api/v1/pages/{page_id}/line-art")
-        json_request(f"/api/v1/pages/{page_id}/line-art/approve", "POST")
-        palette_result = checked_call(
-            guard,
-            "palette",
-            1,
-            "POST",
-            f"/api/v1/pages/{page_id}/colour-palette/suggest",
-        )
-        page_chapter_id = page_chapter_ids[page_id]
-        current_pages = json_request(f"/api/v1/chapters/{page_chapter_id}/pages").get("pages", [])
-        current_page = next((item for item in current_pages if item.get("id") == page_id), None)
-        line_art_url = require(
-            current_page or {}, "line_art_image_url", "approved line art URL missing"
-        )
-        line_art_bytes = fetch_line_art_image(line_art_url)
-        coloured_page = colour_enclosed_regions(
-            line_art_bytes,
-            require(palette_result, "palette", "palette missing"),
-        )
-        binary_request(f"/api/v1/pages/{page_id}/colour-image", "PUT", coloured_page, "image/png")
-        json_request(f"/api/v1/pages/{page_id}/colour/approve", "POST")
-    print(f"PASS pages inked and coloured: {len(pages)}")
+
+        page_route = finish_route
+        if finish_route == "both":
+            page_route = "painted" if index % 2 == 0 else "ink"
+
+        if page_route == "painted":
+            checked_call(guard, "image", 1, "POST", f"/api/v1/pages/{page_id}/line-art")
+            json_request(f"/api/v1/pages/{page_id}/line-art/approve", "POST")
+            page_chapter_id = page_chapter_ids[page_id]
+            current_pages = json_request(f"/api/v1/chapters/{page_chapter_id}/pages").get(
+                "pages", []
+            )
+            current_page = next((item for item in current_pages if item.get("id") == page_id), None)
+            require(
+                current_page or {},
+                "painted_page_image_url",
+                "approved painted page URL missing",
+            )
+        else:
+            checked_call(
+                guard,
+                "image",
+                1,
+                "POST",
+                f"/api/v1/pages/{page_id}/line-art",
+                payload={"variant": "ink"},
+            )
+            json_request(f"/api/v1/pages/{page_id}/line-art/approve?variant=ink", "POST")
+            palette_result = checked_call(
+                guard,
+                "palette",
+                1,
+                "POST",
+                f"/api/v1/pages/{page_id}/colour-palette/suggest",
+            )
+            page_chapter_id = page_chapter_ids[page_id]
+            current_pages = json_request(f"/api/v1/chapters/{page_chapter_id}/pages").get(
+                "pages", []
+            )
+            current_page = next((item for item in current_pages if item.get("id") == page_id), None)
+            line_art_url = require(
+                current_page or {}, "line_art_image_url", "approved line art URL missing"
+            )
+            line_art_bytes = fetch_line_art_image(line_art_url)
+            coloured_page = colour_enclosed_regions(
+                line_art_bytes,
+                require(palette_result, "palette", "palette missing"),
+            )
+            binary_request(
+                f"/api/v1/pages/{page_id}/colour-image", "PUT", coloured_page, "image/png"
+            )
+            json_request(f"/api/v1/pages/{page_id}/colour/approve", "POST")
+
+    if finish_route == "painted":
+        print(f"PASS pages painted and approved: {len(pages)}")
+    elif finish_route == "ink":
+        print(f"PASS pages inked and coloured: {len(pages)}")
+    else:
+        print(f"PASS pages finished with both painted and ink routes: {len(pages)}")
 
     guard.current_stage = "export"
     exported = json_request(f"/api/v1/projects/{project_id}/export", "POST")
@@ -580,6 +623,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=ARTIFACT_DIR,
         help="directory for the verified PDF and cost report",
+    )
+    parser.add_argument(
+        "--finish-route",
+        choices=["painted", "ink", "both"],
+        default="painted",
+        help="finish stage route: painted (default), ink (line art + palette + colours), or both",
     )
     return parser.parse_args(argv)
 
@@ -725,6 +774,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
     guard.script_file = args.script_file
+    guard.finish_route = args.finish_route
     project_id = None
     page_count = 0
     failure = None

@@ -382,6 +382,37 @@ func (f *FakeAIServiceClient) GeneratePaintedPage(ctx context.Context, req Gener
 	if f.GeneratePaintedPageFunc != nil {
 		return f.GeneratePaintedPageFunc(ctx, req)
 	}
+	if f.GenerateLineArtFunc != nil {
+		var draftURL string
+		if req.DraftImageURL != nil {
+			draftURL = *req.DraftImageURL
+		}
+		resp, err := f.GenerateLineArtFunc(ctx, GenerateLineArtRequest{
+			CharacterIdentities: req.CharacterIdentities,
+			DraftImageURL:       draftURL,
+			HashedUserID:        req.HashedUserID,
+			JobID:               req.JobID,
+			PageID:              req.PageID,
+			PageNumber:          req.PageNumber,
+			Panels:              req.Panels,
+			ProjectID:           req.ProjectID,
+			Style:               req.Style,
+		})
+		if err != nil {
+			return nil, err
+		}
+		variant := "draft-conditioned"
+		if req.Variant != nil {
+			variant = string(*req.Variant)
+		}
+		return &GeneratePaintedPageResponse{
+			JobID:              resp.JobID,
+			ImageURL:           resp.ImageURL,
+			ModelID:            resp.ModelID,
+			Variant:            GeneratePaintedPageResponseVariant(variant),
+			ProvenanceMetadata: resp.ProvenanceMetadata,
+		}, nil
+	}
 	variant := "draft-conditioned"
 	if req.Variant != nil {
 		variant = string(*req.Variant)

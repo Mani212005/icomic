@@ -1558,6 +1558,8 @@ func (s *Server) ApproveDraft(w http.ResponseWriter, r *http.Request) {
 }
 
 // GenerateLineArt handles POST /api/v1/pages/{id}/line-art
+// By default, it generates a finished painted page (Captain C1).
+// Explicitly setting variant=ink or route=ink routes to B/W final line art.
 func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 	var reqBody struct {
 		Variant string `json:"variant,omitempty"`
@@ -1568,7 +1570,11 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		_ = json.Unmarshal(bodyBytes, &reqBody)
 	}
-	if r.URL.Query().Get("variant") == "painted" || reqBody.Variant == "painted" || reqBody.Route == "painted" {
+	isInk := r.URL.Query().Get("variant") == "ink" ||
+		r.URL.Query().Get("route") == "ink" ||
+		reqBody.Variant == "ink" ||
+		reqBody.Route == "ink"
+	if !isInk {
 		s.GeneratePaintedPage(w, r)
 		return
 	}
@@ -1723,6 +1729,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 }
 
 // ApproveLineArt handles POST /api/v1/pages/{id}/line-art/approve
+// Approves the finished painted page by default, or line art when variant=ink (Captain C1).
 func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
 	userID := s.getUserID(r)
 	pageID := r.PathValue("id")
@@ -1745,7 +1752,43 @@ func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var reqBody struct {
+		Variant string `json:"variant,omitempty"`
+		Route   string `json:"route,omitempty"`
+	}
+	if r.Body != nil {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		_ = json.Unmarshal(bodyBytes, &reqBody)
+	}
+
+	isInk := r.URL.Query().Get("variant") == "ink" ||
+		r.URL.Query().Get("route") == "ink" ||
+		reqBody.Variant == "ink" ||
+		reqBody.Route == "ink"
+
 	now := time.Now().UTC()
+	if !isInk && pg.PaintedPageImageURL != "" {
+		pg.PaintedPageApprovedAt = &now
+		if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to save page")
+			return
+		}
+		if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
+			ProjectID:                proj.ID,
+			EntityType:               "painted_page",
+			EntityID:                 pg.ID,
+			ApprovedByUserID:         userID,
+			ApprovedAt:               now,
+			CreditEstimateAtApproval: credits.ImageUnitPrice,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to save approval")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "page": pg})
+		return
+	}
+
 	pg.LineArtApprovedAt = &now
 	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save page")
@@ -1805,7 +1848,14 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 
 	chosenVariant := reqBody.Variant
 	if chosenVariant == "" || chosenVariant == "painted" {
-		chosenVariant = "draft-conditioned"
+		if qv := r.URL.Query().Get("variant"); qv != "" && qv != "painted" {
+			chosenVariant = qv
+		} else {
+			chosenVariant = s.PaintedPageDefaultVariant
+		}
+		if chosenVariant == "" {
+			chosenVariant = "draft-conditioned"
+		}
 	}
 	if chosenVariant != "draft-conditioned" && chosenVariant != "direct-from-brief" {
 		chosenVariant = "draft-conditioned"
@@ -1945,13 +1995,30 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 	pg.PaintedPageImageURL = imgURL
 	pg.PaintedPageImageJobID = &job.ID
 	pg.PaintedPageVariant = chosenVariant
+	pg.ColourImageURL = ""
+	pg.ColourImageUploadedAt = nil
 	domain.StaleOnPaintedPageRegeneration(pg, now)
 	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save page")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	actualCost := s.aiActualCost(r.Context(), job.ID)
+	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	job, err = s.JobService.GetJob(r.Context(), job.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	status := http.StatusOK
+	if strings.HasSuffix(r.URL.Path, "/line-art") {
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, map[string]interface{}{
 		"job":       job,
 		"image_url": imgURL,
 		"variant":   chosenVariant,
@@ -2061,14 +2128,18 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Line art approval gate (SPEC 5.3, ARCHITECTURE 5.3)
-	lineArtApproved := pg.LineArtApprovedAt != nil && !domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt)
-	if !lineArtApproved {
-		writeError(w, http.StatusBadRequest, "Final line art must be approved before colour palette suggestion")
+	// Line art or painted page approval gate (SPEC 5.3, ARCHITECTURE 5.3)
+	finishApproved := (pg.PaintedPageApprovedAt != nil && !domain.IsApprovalStale(pg.PaintedPageApprovedAt, pg.UpdatedAt)) ||
+		(pg.LineArtApprovedAt != nil && !domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt))
+	if !finishApproved {
+		writeError(w, http.StatusBadRequest, "Final line art or painted page must be approved before colour palette suggestion")
 		return
 	}
 
 	lineArtURL := pg.LineArtImageURL
+	if lineArtURL == "" && pg.PaintedPageImageURL != "" {
+		lineArtURL = pg.PaintedPageImageURL
+	}
 	parsedURL, parseErr := url.Parse(lineArtURL)
 	if parseErr != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 		writeError(w, http.StatusConflict, "Page has no valid stored line art image URL; generate and approve line art before suggesting a palette")
@@ -2212,7 +2283,9 @@ func (s *Server) UploadColourImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	if pg.LineArtImageURL == "" || pg.LineArtApprovedAt == nil || domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt) {
+	hasApprovedFinish := (pg.LineArtImageURL != "" && pg.LineArtApprovedAt != nil && !domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt)) ||
+		(pg.PaintedPageImageURL != "" && pg.PaintedPageApprovedAt != nil && !domain.IsApprovalStale(pg.PaintedPageApprovedAt, pg.UpdatedAt))
+	if !hasApprovedFinish {
 		writeError(w, http.StatusBadRequest, "Approved line art is required before uploading page colours")
 		return
 	}
@@ -2293,7 +2366,9 @@ func (s *Server) ApproveColour(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Upload the coloured page image before approving colour")
 		return
 	}
-	if pg.LineArtApprovedAt == nil || domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt) {
+	hasApprovedFinish := (pg.LineArtApprovedAt != nil && !domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt)) ||
+		(pg.PaintedPageApprovedAt != nil && !domain.IsApprovalStale(pg.PaintedPageApprovedAt, pg.UpdatedAt))
+	if !hasApprovedFinish {
 		writeError(w, http.StatusBadRequest, "Current approved line art is required before approving colour")
 		return
 	}

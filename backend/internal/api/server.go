@@ -15,20 +15,21 @@ import (
 
 // Server encapsulates HTTP handler state and dependencies (SPEC 8.3, ARCHITECTURE 2).
 type Server struct {
-	Repo              db.Repository
-	CreditService     credits.CreditService
-	JobService        jobs.JobService
-	AIClient          gen.AIService
-	Authenticator     auth.Authenticator
-	ImageHosting      auth.ImageHostingSeam
-	KillSwitchEnabled bool
-	KillSwitch        domain.KillSwitchProvider
-	MaxPanelsPerPage  int
-	DefaultUserQuota  float64
-	MonthlyUserQuota  float64
-	AllowedOrigin     string
-	Limits            RequestLimits
-	admission         requestAdmission
+	Repo                      db.Repository
+	CreditService             credits.CreditService
+	JobService                jobs.JobService
+	AIClient                  gen.AIService
+	Authenticator             auth.Authenticator
+	ImageHosting              auth.ImageHostingSeam
+	KillSwitchEnabled         bool
+	KillSwitch                domain.KillSwitchProvider
+	MaxPanelsPerPage          int
+	DefaultUserQuota          float64
+	MonthlyUserQuota          float64
+	AllowedOrigin             string
+	PaintedPageDefaultVariant string
+	Limits                    RequestLimits
+	admission                 requestAdmission
 }
 
 func NewServer(
@@ -58,22 +59,28 @@ func NewServer(
 		allowedOrigin = "http://localhost:5173"
 	}
 
+	paintedVariant := os.Getenv("PAINTED_PAGE_DEFAULT_VARIANT")
+	if paintedVariant == "" {
+		paintedVariant = "draft-conditioned"
+	}
+
 	if memoryJobs, ok := jobService.(*jobs.InMemoryJobService); ok {
 		memoryJobs.SetCreditService(creditService)
 	}
 	return &Server{
-		Repo:              repo,
-		CreditService:     creditService,
-		JobService:        jobService,
-		AIClient:          aiClient,
-		Authenticator:     authenticator,
-		ImageHosting:      imageHosting,
-		KillSwitchEnabled: false,
-		KillSwitch:        domain.NewInMemoryKillSwitchProvider(false, 0),
-		MaxPanelsPerPage:  maxPanelsPerPage,
-		DefaultUserQuota:  80.0,
-		AllowedOrigin:     allowedOrigin,
-		Limits:            DefaultRequestLimits(),
+		Repo:                      repo,
+		CreditService:             creditService,
+		JobService:                jobService,
+		AIClient:                  aiClient,
+		Authenticator:             authenticator,
+		ImageHosting:              imageHosting,
+		KillSwitchEnabled:         false,
+		KillSwitch:                domain.NewInMemoryKillSwitchProvider(false, 0),
+		MaxPanelsPerPage:          maxPanelsPerPage,
+		DefaultUserQuota:          80.0,
+		AllowedOrigin:             allowedOrigin,
+		PaintedPageDefaultVariant: paintedVariant,
+		Limits:                    DefaultRequestLimits(),
 	}
 }
 

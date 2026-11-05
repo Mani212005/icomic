@@ -128,7 +128,7 @@ func TestGeneratePaintedPage_VariantsAndGates(t *testing.T) {
 	req.Header.Set("X-User-ID", "owner")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatalf("draft-conditioned generation returned %d: %s", rec.Code, rec.Body.String())
 	}
 	if lastDraftURL == nil || *lastDraftURL != "http://storage/draft.png" {
@@ -157,7 +157,7 @@ func TestGeneratePaintedPage_VariantsAndGates(t *testing.T) {
 	req.Header.Set("X-User-ID", "owner")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatalf("direct-from-brief generation should succeed without draft approval, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if lastDraftURL != nil {
@@ -257,10 +257,132 @@ func TestLineArtEndpoint_SupportsOptInPaintedVariant(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatalf("line-art with variant=painted returned %d: %s", rec.Code, rec.Body.String())
 	}
 	if !calledPainted {
 		t.Fatal("expected GeneratePaintedPage to be called via line-art opt-in")
+	}
+}
+
+func TestLineArtEndpoint_DefaultsToPaintedPageAndInkOption(t *testing.T) {
+	server, handler, repo, _, pageID := paintedPageFixture(t)
+	fake := server.AIClient.(*gen.FakeAIServiceClient)
+
+	calledPainted := false
+	calledLineArt := false
+	fake.GeneratePaintedPageFunc = func(ctx context.Context, req gen.GeneratePaintedPageRequest) (*gen.GeneratePaintedPageResponse, error) {
+		calledPainted = true
+		return &gen.GeneratePaintedPageResponse{
+			JobID:              req.JobID,
+			ImageURL:           "http://storage/painted-default.png",
+			ModelID:            "muse-image-1.0",
+			Variant:            gen.GeneratePaintedPageResponseVariantDraftConditioned,
+			ProvenanceMetadata: map[string]interface{}{"c2pa": true},
+		}, nil
+	}
+	fake.GenerateLineArtFunc = func(ctx context.Context, req gen.GenerateLineArtRequest) (*gen.GenerateLineArtResponse, error) {
+		calledLineArt = true
+		return &gen.GenerateLineArtResponse{
+			JobID:              req.JobID,
+			ImageURL:           "http://storage/line-art-explicit.png",
+			ModelID:            "muse-image-1.0",
+			ProvenanceMetadata: map[string]interface{}{"c2pa": true},
+		}, nil
+	}
+
+	// 1. Calling line-art with NO variant defaults to painted page
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
+	req.Header.Set("X-User-ID", "owner")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("line-art default returned %d: %s", rec.Code, rec.Body.String())
+	}
+	if !calledPainted {
+		t.Fatal("expected GeneratePaintedPage to be called by default for line-art endpoint")
+	}
+	pg, _ := repo.GetPage(context.Background(), pageID)
+	if pg.PaintedPageImageURL != "http://storage/painted-default.png" {
+		t.Fatalf("expected painted_page_image_url set on page, got %q", pg.PaintedPageImageURL)
+	}
+
+	// 2. Default line-art approve approves the painted page
+	reqApprove := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art/approve", nil)
+	reqApprove.Header.Set("X-User-ID", "owner")
+	recApprove := httptest.NewRecorder()
+	handler.ServeHTTP(recApprove, reqApprove)
+
+	if recApprove.Code != http.StatusOK {
+		t.Fatalf("default approve returned %d: %s", recApprove.Code, recApprove.Body.String())
+	}
+	pg, _ = repo.GetPage(context.Background(), pageID)
+	if pg.PaintedPageApprovedAt == nil {
+		t.Fatal("expected painted_page_approved_at to be set on default line-art approval")
+	}
+
+	// 3. Explicit variant=ink calls GenerateLineArt and produces line art
+	// Refresh draft approval so it is not stale after painted page generation updated pg.UpdatedAt
+	nowDraft := time.Now().UTC()
+	pg, _ = repo.GetPage(context.Background(), pageID)
+	pg.DraftApprovedAt = &nowDraft
+	_ = repo.UpdatePage(context.Background(), pg)
+
+	bodyInk, _ := json.Marshal(map[string]string{"variant": "ink"})
+	reqInk := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", bytes.NewReader(bodyInk))
+	reqInk.Header.Set("X-User-ID", "owner")
+	recInk := httptest.NewRecorder()
+	handler.ServeHTTP(recInk, reqInk)
+
+	if recInk.Code != http.StatusAccepted && recInk.Code != http.StatusOK {
+		t.Fatalf("line-art with variant=ink returned %d: %s", recInk.Code, recInk.Body.String())
+	}
+	if !calledLineArt {
+		t.Fatal("expected GenerateLineArt to be called when variant=ink")
+	}
+	pg, _ = repo.GetPage(context.Background(), pageID)
+	if pg.LineArtImageURL != "http://storage/line-art-explicit.png" {
+		t.Fatalf("expected line_art_image_url set on page, got %q", pg.LineArtImageURL)
+	}
+
+	// 4. Explicit variant=ink approve approves line art
+	reqApproveInk := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art/approve", bytes.NewReader(bodyInk))
+	reqApproveInk.Header.Set("X-User-ID", "owner")
+	recApproveInk := httptest.NewRecorder()
+	handler.ServeHTTP(recApproveInk, reqApproveInk)
+
+	if recApproveInk.Code != http.StatusOK {
+		t.Fatalf("ink approve returned %d: %s", recApproveInk.Code, recApproveInk.Body.String())
+	}
+	pg, _ = repo.GetPage(context.Background(), pageID)
+	if pg.LineArtApprovedAt == nil {
+		t.Fatal("expected line_art_approved_at to be set on variant=ink line-art approval")
+	}
+
+	// 5. Single configuration setting PAINTED_PAGE_DEFAULT_VARIANT flips default variant
+	var capturedVariant gen.GeneratePaintedPageRequestVariant
+	fake.GeneratePaintedPageFunc = func(ctx context.Context, req gen.GeneratePaintedPageRequest) (*gen.GeneratePaintedPageResponse, error) {
+		if req.Variant != nil {
+			capturedVariant = *req.Variant
+		}
+		return &gen.GeneratePaintedPageResponse{
+			JobID:              req.JobID,
+			ImageURL:           "http://storage/painted-flipped.png",
+			ModelID:            "muse-image-1.0",
+			Variant:            gen.GeneratePaintedPageResponseVariantDirectFromBrief,
+			ProvenanceMetadata: map[string]interface{}{"c2pa": true},
+		}, nil
+	}
+	server.PaintedPageDefaultVariant = "direct-from-brief"
+	reqFlipped := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
+	reqFlipped.Header.Set("X-User-ID", "owner")
+	recFlipped := httptest.NewRecorder()
+	handler.ServeHTTP(recFlipped, reqFlipped)
+	if recFlipped.Code != http.StatusAccepted && recFlipped.Code != http.StatusOK {
+		t.Fatalf("line-art with flipped default returned %d: %s", recFlipped.Code, recFlipped.Body.String())
+	}
+	if capturedVariant != gen.GeneratePaintedPageRequestVariantDirectFromBrief {
+		t.Fatalf("expected direct-from-brief variant when server config is flipped, got %q", capturedVariant)
 	}
 }

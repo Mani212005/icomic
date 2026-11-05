@@ -63,6 +63,14 @@ func TestCheckApprovalGate(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// Painted page requires draft sketch approved
+	if err := domain.CheckApprovalGate("painted_page", domain.ApprovedPrereqs{DraftSketchApproved: false}); err == nil {
+		t.Fatal("expected error when draft not approved for painted page")
+	}
+	if err := domain.CheckApprovalGate("painted_page", domain.ApprovedPrereqs{DraftSketchApproved: true}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
 	// Colour suggestion requires line art approved
 	if err := domain.CheckApprovalGate("colour_suggestion", domain.ApprovedPrereqs{LineArtApproved: false}); err == nil {
 		t.Fatal("expected error when line art not approved")

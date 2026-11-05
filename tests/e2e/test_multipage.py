@@ -4,11 +4,14 @@ import importlib.util
 import os
 import subprocess
 
+import pytest
+
 from conftest import find_free_port, terminate_process, wait_for_health
 
 
+@pytest.mark.parametrize("finish_route", ["painted", "ink"])
 def test_long_comic_has_all_panels_pages_and_pdf_pages(
-    compiled_go_server, ai_service, tmp_path, repo_root, monkeypatch
+    compiled_go_server, ai_service, tmp_path, repo_root, monkeypatch, finish_route
 ):
     port = find_free_port()
     env = {
@@ -38,7 +41,7 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
             )
             guard = runner.CostGuard(float("inf"), False)
             guard.script_file = repo_root / "tests/fixtures/the_tide_clock.txt"
-            pages, _ = runner.run_flow(guard, tmp_path)
+            pages, _ = runner.run_flow(guard, tmp_path, finish_route=finish_route)
             assert guard.panel_count == 51
             assert pages == 12
             assert guard.pdf_page_count == 13

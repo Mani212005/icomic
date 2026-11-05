@@ -155,7 +155,7 @@ paths:
 
   /internal/v1/generate-painted-page:
     post:
-      summary: Generate finished painted page per page (opt-in prototype route)
+      summary: Generate finished painted page per page after draft approval (default finish route)
       operationId: generatePaintedPage
       requestBody:
         required: true
