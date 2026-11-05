@@ -382,10 +382,7 @@ func (f *FakeAIServiceClient) GeneratePaintedPage(ctx context.Context, req Gener
 	if f.GeneratePaintedPageFunc != nil {
 		return f.GeneratePaintedPageFunc(ctx, req)
 	}
-	variant := "draft-conditioned"
-	if req.Variant != nil {
-		variant = string(*req.Variant)
-	}
+	variant := string(req.Variant)
 	return &GeneratePaintedPageResponse{
 		JobID:    req.JobID,
 		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/painted/page_%s_%s.png", req.PageID, variant),

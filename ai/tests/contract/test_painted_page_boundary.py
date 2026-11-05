@@ -20,8 +20,8 @@ from tests.image_fixtures import image_bytes
 def test_painted_page_endpoint_accepts_variants_and_preserves_story(variant):
     app = create_app()
     storage = app.state.storage_adapter
-    draft_url = storage.put("draft.png", image_bytes("draft-composition-bytes"), "image/png")
-    char_url = storage.put("nia.png", image_bytes("nia-identity-bytes"), "image/png")
+    draft_url = storage.put("draft.png", image_bytes("draft-composition"), "image/png")
+    char_url = storage.put("nia.png", image_bytes("nia-identity"), "image/png")
 
     panel = {
         "panel_number": 1,
@@ -86,8 +86,8 @@ def test_painted_page_stage_constraints_roles_and_wire_conditioning(variant):
     app = create_app(replace(fakes, image=adapter))
     storage = app.state.storage_adapter
 
-    draft_content = image_bytes("89504e470d0a1a0a64726166742d736b657463682d636f6d706f736974696f6e")
-    char_content = image_bytes("89504e470d0a1a0a4e69612d6368617261637465722d6964656e74697479")
+    draft_content = image_bytes("draft-sketch-composition")
+    char_content = image_bytes("Nia-character-identity")
     draft_url = storage.put("draft.png", draft_content, "image/png")
     char_url = storage.put("char.png", char_content, "image/png")
 
@@ -148,6 +148,10 @@ def test_painted_page_stage_constraints_roles_and_wire_conditioning(variant):
     assert "no shading" not in prompt.lower()
     assert "flat white fills" not in prompt.lower()
     assert "black and white line art" not in prompt.lower()
+    assert "upright portrait page with a 2:3 aspect ratio" in prompt.lower()
+    assert "never write a speaker's name or a speaker label inside a bubble" in prompt.lower()
+    assert "nia: hold steady!" not in prompt.lower()
+    assert '"dialogue": "hold steady!"' in prompt.lower()
 
     # Verify structured brief and source reference roles.
     brief = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])[0]
@@ -171,7 +175,7 @@ def test_painted_page_immutable_derivative_storage():
     """Verify that multiple generations for the same page produce distinct immutable paths."""
     app = create_app()
     storage = app.state.storage_adapter
-    char_url = storage.put("char.png", image_bytes("Nia"), "image/png")
+    char_url = storage.put("char.png", image_bytes("nia"), "image/png")
 
     page_id = str(uuid4())
     payload = {

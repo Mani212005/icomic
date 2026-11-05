@@ -20,8 +20,8 @@ The user can:
 - Select an art style.
 - Define and approve character profiles and reference images.
 - Review a cheap draft sketch of each page and approve composition.
-- Review and approve final line art.
-- Colour the comic (AI-suggested palette with automatic apply, fully editable, paint-bucket fill tool).
+- Review and approve the finished page (painted by default; ink is an explicit option).
+- Colour ink pages (AI-suggested palette with automatic apply, fully editable, paint-bucket fill tool).
 - Download the finished comic book.
 - Publish the comic book.
 
@@ -90,13 +90,13 @@ The main pipeline is:
 8. For each chapter, the system generates panel text (scene descriptions, dialogue, narration). The user edits panel text freely. No approval gate - panel text feeds the draft step.
 9. System automatically partitions panels into pages (using a configurable maximum panels per page). The user can move panels between pages before draft generation.
 10. System generates one rough, stick-style draft image per page. User reviews draft composition and approves or regenerates. (Approval gate - no final image is generated before draft approval.)
-11. System generates final black-and-white line art per page. User reviews and approves line art. (Approval gate.)
-12. System suggests a colour palette (AI-generated). User reviews, edits, or overrides palette colours. User applies colours with the paint-bucket fill tool. Client-side canvas undo operates on page canvas stroke/fill history. User approves colouring. (Approval gate.)
+11. System generates a finished painted page per page by default, with ink available as an explicit option. User reviews and approves the selected finish.
+12. Ink pages use the optional colour stage: the system suggests a palette, the user edits or overrides it, applies paint-bucket fills, and approves the result. Painted pages are already finished and skip this stage.
 13. System assembles the comic book.
 14. User reviews the final comic and downloads or publishes.
 
 The system must not generate draft sketches before character reference images and chapter outline are approved.
-The system must not generate final line art before the user approves the draft.
+The ink option requires an approved draft. The direct-from-brief painted default does not.
 
 ---
 
@@ -234,37 +234,30 @@ The system must generate one rough draft image per page (not one per panel).
 
 One draft image is one call to the image adapter; it shows all panels for that page in a rough, stick-style composition.
 
-The draft image is used to let the user approve layout and composition before committing to the higher-cost final line art.
+The draft image lets the user review layout and composition before the next stage. The default direct-from-brief painted finish does not condition on that draft.
 
 The user must be able to:
 
-- Approve the draft (proceeds to final line art).
+- Approve the draft (enables ink or draft-conditioned painting).
 - Regenerate the draft (costs one additional image call).
 
-The system must not generate final line art before the user approves the draft.
+Ink generation and draft-conditioned painting require an approved draft.
 
 Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 
 The draft stage costs one image call per attempt per page. Credit cost for the draft is displayed before generation.
 
-### 3.7 Final Line Art Stage
+### 3.7 Finished Page Stage
 
-After draft approval, the system must generate final black-and-white line art per page.
+After the draft stage, the system generates and approves one finished painted page per page by default. The default variant is direct-from-brief. Draft-conditioned painting remains available, and `variant=ink` explicitly selects the existing black-and-white ink route. The default finish replaces the former line-art generation call and approval, so each page still uses one finish image call.
 
-The line art must use prompts that request bold, clean, closed-contour comic book lines (thick black outlines, flat white fills, no shading).
+The user can choose Painted or Ink before generation, review the result, approve it, or regenerate it for one additional image call. Ink generation requires an approved draft; direct-from-brief painting requires approved character references and chapter outline but does not require a draft approval.
 
-Because the image model cannot guarantee perfectly closed outlines, the colouring tool must tolerate gaps (see section 3.8).
+An approval only counts when it is newer than the latest page edit or generation. Regenerating or editing makes the approval stale and requires re-approval.
 
-The user must be able to:
+Exports use the latest valid approved painted page and fall back to the valid approved ink page for pages finished with ink. Existing line-art images and approvals remain available without migration.
 
-- Approve the line art (proceeds to colouring).
-- Regenerate the line art (costs one additional image call).
-
-The system must not start colouring before the user approves the line art.
-
-Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
-
-The final line art forms the fixed line layer in the colour editor. It is never re-rendered during colouring.
+The colour editor is available for approved ink pages. Painted pages are already finished and skip the ink colour-fill step.
 
 ### 3.8 Colouring
 
@@ -412,7 +405,7 @@ The model layer must support the following tasks:
 | Dialogue generation    | Meta language model        |
 | Character descriptions | Meta language model        |
 | Colour palette suggestion | Meta language or vision model |
-| Image generation (draft, line art, reference) | Meta image model (`muse-image-1.0`) |
+| Image generation (draft, painted finish or explicit ink, reference) | Meta image model (`muse-image-1.0`) |
 | Image review           | Meta multimodal model      |
 | Video generation       | Meta video model (deferred) |
 
@@ -489,7 +482,7 @@ Before each image generation stage, the system must display an estimate for that
 | Stage | Cost basis |
 | ----- | ---------- |
 | Draft sketch | $0.01 per page image attempt |
-| Final line art | $0.01 per page image attempt |
+| Finished painted page or explicit ink | $0.01 per page image attempt |
 | Character reference image | $0.01 per image attempt |
 | Colour palette suggestion | Token cost of one language/vision model call (estimated from configured token price) |
 | Paint-bucket fill | $0.00 (no API call) |
@@ -604,14 +597,14 @@ The system must require approval before generating drafts.
 
 ### 6.3 Pre-Line-Art Verification
 
-Before final line art generation, the user must be able to review:
+Before finished page generation, the user must be able to review:
 
 - Approved draft images
 - Revised panel text (if edited after draft approval)
-- Number of final line art images to generate
-- Estimated final line art cost
+- Number of page finish images to generate
+- Estimated finish cost
 
-The system must require approval before generating final line art.
+The system must require approval before generating page finish images.
 
 Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 
@@ -1162,7 +1155,7 @@ The first release must include:
 - Character profiles and approved reference images
 - Panel text generation and editing
 - Draft sketch generation and approval (one image per page)
-- Final line art generation and approval
+- Finished page generation and approval (painted by default, ink by explicit choice)
 - Colouring with AI palette suggestion, manual editing, and paint-bucket fill
 - Credit estimation per stage
 - User approval gates before each image generation stage
@@ -1204,10 +1197,10 @@ The project is complete when:
 12. The user can approve or regenerate draft sketches.
 13. The system displays an estimated cost before each image generation stage.
 14. The user can approve or decline the cost estimate.
-15. The system generates final line art per page after draft approval.
-16. The user can approve or regenerate final line art.
-17. The system suggests a colour palette via AI.
-18. The user can edit the palette and apply colours with the paint-bucket tool.
+15. The system generates one finished painted page per page by default; ink remains an explicit option.
+16. The user can approve or regenerate the selected finish.
+17. For ink pages, the system suggests a colour palette via AI.
+18. For ink pages, the user can edit the palette and apply colours with the paint-bucket tool.
 19. The user can undo fill actions on the page canvas.
 20. The system records credit usage for every image generation job.
 21. The system enforces per-user quotas and the global kill switch.
@@ -1263,18 +1256,18 @@ Build:
 
 Success:
 
-The user can review and approve draft page compositions before committing to final line art.
+The user can review draft page compositions before selecting a finished-page style.
 
-### Phase 4: Final Line Art Pipeline
+### Phase 4: Finished Page Pipeline
 
 Build:
 
-- Final line art generation
-- Line art approval
+- Finished page generation (painted default or explicit ink)
+- Selected finish approval
 
 Success:
 
-The user can generate and approve final black-and-white line art per page.
+The user can generate and approve a finished painted page per page by default, with ink available as an explicit option.
 
 ### Phase 5: Colouring Pipeline
 
@@ -1342,7 +1335,7 @@ The user can edit the complete comic book and download a PDF.
 
 The first version is complete when a user can:
 
-Provide a script -> Approve character references -> Select chapters -> Approve outline -> Edit panel text -> Approve draft sketches -> Approve final line art -> Colour pages -> Export a PDF -> Download the comic book.
+Provide a script -> Approve character references -> Select chapters -> Approve outline -> Edit panel text -> Approve draft sketches -> Approve painted pages (or explicit ink) -> Colour ink pages when selected -> Export a PDF -> Download the comic book.
 
 The system must provide a reliable, cost-controlled, and approval-gated workflow from script to comic book.
 

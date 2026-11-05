@@ -106,13 +106,8 @@ func TestGeneratePaintedPage_VariantsAndGates(t *testing.T) {
 	var lastVariant gen.GeneratePaintedPageRequestVariant
 	fake.GeneratePaintedPageFunc = func(ctx context.Context, req gen.GeneratePaintedPageRequest) (*gen.GeneratePaintedPageResponse, error) {
 		lastDraftURL = req.DraftImageURL
-		if req.Variant != nil {
-			lastVariant = *req.Variant
-		}
-		variantStr := "draft-conditioned"
-		if req.Variant != nil {
-			variantStr = string(*req.Variant)
-		}
+		lastVariant = req.Variant
+		variantStr := string(req.Variant)
 		return &gen.GeneratePaintedPageResponse{
 			JobID:              req.JobID,
 			ImageURL:           "http://storage/pages/painted-" + variantStr + ".png",
@@ -235,32 +230,69 @@ func TestApprovePaintedPage_AndExportChoosesApprovedFinish(t *testing.T) {
 	}
 }
 
-func TestLineArtEndpoint_SupportsOptInPaintedVariant(t *testing.T) {
+func TestLineArtEndpoint_DefaultsToDirectFromBriefPaintedFinish(t *testing.T) {
 	server, handler, _, _, pageID := paintedPageFixture(t)
 	fake := server.AIClient.(*gen.FakeAIServiceClient)
 
 	calledPainted := false
+	var requestedVariant gen.GeneratePaintedPageRequestVariant
 	fake.GeneratePaintedPageFunc = func(ctx context.Context, req gen.GeneratePaintedPageRequest) (*gen.GeneratePaintedPageResponse, error) {
 		calledPainted = true
+		requestedVariant = req.Variant
 		return &gen.GeneratePaintedPageResponse{
 			JobID:              req.JobID,
 			ImageURL:           "http://storage/painted.png",
 			ModelID:            "muse-image-1.0",
-			Variant:            gen.GeneratePaintedPageResponseVariantDraftConditioned,
+			Variant:            gen.GeneratePaintedPageResponseVariantDirectFromBrief,
 			ProvenanceMetadata: map[string]interface{}{"c2pa": true},
 		}, nil
 	}
 
-	// Calling line-art with query param variant=painted delegates to painted page
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=painted", nil)
+	// The ordinary finish endpoint creates the default painted page.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
 	req.Header.Set("X-User-ID", "owner")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("line-art with variant=painted returned %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("default line-art route returned %d: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Job struct {
+			Status string `json:"status"`
+		} `json:"job"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Job.Status != "done" {
+		t.Fatalf("painted default returned job status %q, want done", response.Job.Status)
 	}
 	if !calledPainted {
-		t.Fatal("expected GeneratePaintedPage to be called via line-art opt-in")
+		t.Fatal("expected GeneratePaintedPage to be called by the default finish route")
+	}
+	if requestedVariant != gen.GeneratePaintedPageRequestVariantDirectFromBrief {
+		t.Fatalf("default finish variant = %q, want direct-from-brief", requestedVariant)
+	}
+}
+
+func TestLineArtEndpointKeepsInkExplicit(t *testing.T) {
+	server, handler, repo, _, pageID := paintedPageFixture(t)
+	fake := server.AIClient.(*gen.FakeAIServiceClient)
+	calledInk := false
+	fake.GenerateLineArtFunc = func(ctx context.Context, req gen.GenerateLineArtRequest) (*gen.GenerateLineArtResponse, error) {
+		calledInk = true
+		return &gen.GenerateLineArtResponse{JobID: req.JobID, ImageURL: "http://storage/ink.png", ModelID: "muse-image-1.0"}, nil
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
+	req.Header.Set("X-User-ID", "owner")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || !calledInk {
+		t.Fatalf("explicit ink route returned %d (called=%v): %s", rec.Code, calledInk, rec.Body.String())
+	}
+	page, err := repo.GetPage(context.Background(), pageID)
+	if err != nil || page.LineArtImageURL != "http://storage/ink.png" || page.PaintedPageImageURL != "" {
+		t.Fatalf("ink result was not saved independently: page=%+v err=%v", page, err)
 	}
 }

@@ -309,11 +309,11 @@ type GeneratePaintedPageRequest struct {
 	Style                  string          `json:"style"`
 	StyleReferenceImageURL *string         `json:"style_reference_image_url,omitempty"`
 
-	// Variant Finished painted page variant (composition-conditioned vs direct-from-brief)
-	Variant *GeneratePaintedPageRequestVariant `json:"variant,omitempty"`
+	// Variant Finished painted page variant (composition-conditioned or direct-from-brief)
+	Variant GeneratePaintedPageRequestVariant `json:"variant"`
 }
 
-// GeneratePaintedPageRequestVariant Finished painted page variant (composition-conditioned vs direct-from-brief)
+// GeneratePaintedPageRequestVariant Finished painted page variant (composition-conditioned or direct-from-brief)
 type GeneratePaintedPageRequestVariant string
 
 // GeneratePaintedPageResponse defines model for GeneratePaintedPageResponse.

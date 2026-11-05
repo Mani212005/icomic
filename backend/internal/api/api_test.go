@@ -486,7 +486,7 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 	}
 
 	// 10. Attempt line art before draft approval -> must fail
-	reqLinePremature := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
+	reqLinePremature := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
 	recLinePremature := httptest.NewRecorder()
 	handler.ServeHTTP(recLinePremature, reqLinePremature)
 	if recLinePremature.Code != http.StatusBadRequest {
@@ -502,7 +502,7 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 	}
 
 	// 12. Generate line art
-	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
+	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
 	recLine := httptest.NewRecorder()
 	handler.ServeHTTP(recLine, reqLine)
 	if recLine.Code != http.StatusAccepted {
@@ -510,7 +510,7 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 	}
 
 	// 13. Approve line art
-	reqAppLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art/approve", nil)
+	reqAppLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art/approve?variant=ink", nil)
 	recAppLine := httptest.NewRecorder()
 	handler.ServeHTTP(recAppLine, reqAppLine)
 	if recAppLine.Code != http.StatusOK {

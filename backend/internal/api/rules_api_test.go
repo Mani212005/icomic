@@ -64,7 +64,7 @@ func TestKillSwitchEnforcementAcrossAllStages(t *testing.T) {
 	}
 
 	// 3. Line art
-	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art", nil)
+	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art?variant=ink", nil)
 	recLine := httptest.NewRecorder()
 	handler.ServeHTTP(recLine, reqLine)
 	if recLine.Code != http.StatusTooManyRequests {
@@ -301,7 +301,7 @@ func TestCascadePanelEditStalesDraftApproval(t *testing.T) {
 	}
 
 	// 1. Line art generation succeeds with approved draft
-	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art", nil)
+	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art?variant=ink", nil)
 	recLine := httptest.NewRecorder()
 	handler.ServeHTTP(recLine, reqLine)
 	if recLine.Code != http.StatusAccepted {
@@ -391,11 +391,11 @@ func TestCascadeDraftRegenerationStalesLineArtApproval(t *testing.T) {
 	handler.ServeHTTP(recAppDraft, reqAppDraft)
 
 	// Generate line art & approve
-	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art", nil)
+	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art?variant=ink", nil)
 	recLine := httptest.NewRecorder()
 	handler.ServeHTTP(recLine, reqLine)
 
-	reqAppLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art/approve", nil)
+	reqAppLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art/approve?variant=ink", nil)
 	recAppLine := httptest.NewRecorder()
 	handler.ServeHTTP(recAppLine, reqAppLine)
 

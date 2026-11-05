@@ -124,10 +124,10 @@ def test_complete_comic_lifecycle_e2e(api_client: httpx.Client) -> None:
     assert app_draft_res.status_code == 200, f"Approve draft sketch failed: {app_draft_res.text}"
 
     # -------------------------------------------------------------------------
-    # 9. Line Art
+    # 9. Explicit ink finish keeps the existing colour workflow available.
     # -------------------------------------------------------------------------
-    line_res = api_client.post(f"/api/v1/pages/{target_page_id}/line-art")
-    assert line_res.status_code == 202, f"Generate line art failed: {line_res.text}"
+    line_res = api_client.post(f"/api/v1/pages/{target_page_id}/line-art?variant=ink")
+    assert line_res.status_code == 202, f"Generate ink failed: {line_res.text}"
 
     # -------------------------------------------------------------------------
     # 10. Approve Line Art

@@ -58,6 +58,8 @@ def test_saved_attempt_url_keeps_original_bytes(operation, queue_kind):
         )
     else:
         payload.update(page_id=str(uuid4()), page_number=1, panels=[], style="comic")
+        if operation == "painted-page":
+            payload["variant"] = "direct-from-brief"
         if operation in ("line-art", "painted-page"):
             payload["draft_image_url"] = source
     endpoint = f"/internal/v1/{'assemble-pdf' if operation == 'pdf' else 'generate-' + operation}"

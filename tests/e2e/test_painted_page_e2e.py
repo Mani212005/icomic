@@ -1,4 +1,4 @@
-"""End-to-end integration test for the opt-in finished painted-page route prototype."""
+"""End-to-end integration tests for the painted default and explicit ink finish."""
 
 from __future__ import annotations
 
@@ -52,18 +52,16 @@ def test_painted_page_route_e2e(api_client: httpx.Client) -> None:
     app_draft_res = api_client.post(f"/api/v1/pages/{page_id}/draft/approve")
     assert app_draft_res.status_code == 200, app_draft_res.text
 
-    # 6. Opt-in finished painted page route: draft-conditioned variant
-    painted_res = api_client.post(
-        f"/api/v1/pages/{page_id}/painted-page",
-        json={"variant": "draft-conditioned"},
-    )
+    # 6. Default finish route creates one direct-from-brief painted page.
+    painted_res = api_client.post(f"/api/v1/pages/{page_id}/line-art")
     assert painted_res.status_code == 200, painted_res.text
     painted_data = painted_res.json()
-    assert painted_data["variant"] == "draft-conditioned"
+    assert painted_data["variant"] == "direct-from-brief"
     assert painted_data["image_url"].startswith("http")
+    assert painted_data["job"]["status"] == "done"
 
     # 7. Approve finished painted page
-    app_painted_res = api_client.post(f"/api/v1/pages/{page_id}/painted-page/approve")
+    app_painted_res = api_client.post(f"/api/v1/pages/{page_id}/line-art/approve")
     assert app_painted_res.status_code == 200, app_painted_res.text
     assert app_painted_res.json()["status"] == "approved"
 
@@ -149,3 +147,29 @@ def test_painted_page_direct_from_brief_e2e(api_client: httpx.Client) -> None:
     download_res = api_client.get(f"/api/v1/exports/{export_id}/download", timeout=30.0)
     assert download_res.status_code == 200, download_res.text
     assert len(download_res.content) > 0
+
+
+def test_explicit_ink_finish_e2e(api_client: httpx.Client) -> None:
+    """Verify ink stays available by explicit variant and exports without a painted page."""
+    project = api_client.post(
+        "/api/v1/projects",
+        json={"title": "Ink finish", "original_script": "Nia watches the harbor.", "art_style": "classic-comic", "chapter_count": 1},
+    ).json()["project"]
+    project_id = project["id"]
+    api_client.post(f"/api/v1/projects/{project_id}/analyze")
+    for character in api_client.get(f"/api/v1/projects/{project_id}/characters").json()["characters"]:
+        api_client.post(f"/api/v1/characters/{character['id']}/reference-image")
+        api_client.post(f"/api/v1/characters/{character['id']}/approve")
+    chapter_id = api_client.post(f"/api/v1/projects/{project_id}/chapters").json()["chapters"][0]["id"]
+    api_client.post(f"/api/v1/chapters/{chapter_id}/approve")
+    page_id = api_client.post(f"/api/v1/chapters/{chapter_id}/panels").json()["pages"][0]["id"]
+    api_client.post(f"/api/v1/pages/{page_id}/draft")
+    api_client.post(f"/api/v1/pages/{page_id}/draft/approve")
+
+    ink = api_client.post(f"/api/v1/pages/{page_id}/line-art?variant=ink")
+    assert ink.status_code == 202, ink.text
+    assert ink.json()["image_url"].startswith("http")
+    approved = api_client.post(f"/api/v1/pages/{page_id}/line-art/approve?variant=ink")
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["page"]["line_art_approved_at"]
+    assert not approved.json()["page"].get("painted_page_image_url")

@@ -85,7 +85,7 @@ test('MockApiClient regeneration preserves representative sample outputs', async
 	const { page: regDraft } = await client.generateDraft(page.id);
 	assert.equal(regDraft.draft_image_url, '/mock/sample-draft.webp');
 
-	const { page: regLine } = await client.generateLineArt(page.id);
+	const { page: regLine } = await client.generateLineArt(page.id, 'ink');
 	assert.equal(regLine.line_art_url, '/mock/sample-line-art.webp');
 
 	const { character: regChar } = await client.generateCharacterReference(char.id);

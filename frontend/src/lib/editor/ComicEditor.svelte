@@ -5,6 +5,7 @@
 	import ExportView from '$lib/export/ExportView.svelte';
 	import { pollJob } from '$lib/api/jobPolling.js';
 	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote } from '$lib/api/types.js';
+	const INK_VARIANT = 'ink';
 
 	export let project = {
 		id: 'proj-demo-1',
@@ -39,6 +40,7 @@
 	let panels = [];
 	let pages = [];
 	let palette = [];
+	let finishVariant = 'painted';
 	let palettesByPage = {};
 	let failedImages = new Set();
 	function markImageFailed(event) {
@@ -87,8 +89,8 @@
 		{ id: STAGES.CHAPTERS, label: '3. Outline' },
 		{ id: STAGES.PANELS, label: '4. Panels' },
 		{ id: STAGES.DRAFT, label: '5. Drafts' },
-		{ id: STAGES.LINE_ART, label: '6. Lines' },
-		{ id: STAGES.COLOUR, label: '7. Colour' },
+		{ id: STAGES.LINE_ART, label: '6. Finish' },
+		{ id: STAGES.COLOUR, label: '7. Ink' },
 		{ id: STAGES.EXPORT, label: '8. Export' }
 	];
 
@@ -118,8 +120,16 @@
 	$: anyDraftStale = pages.some((p) => isApprovalStale(p.draft_approved_at, p.updated_at));
 	$: allDraftsApproved = pages.length > 0 && pages.every((p) => hasValidApproval(p.draft_approved_at, p.updated_at));
 
-	$: anyLineArtStale = pages.some((p) => isApprovalStale(p.line_art_approved_at, p.updated_at));
-	$: allLineArtApproved = pages.length > 0 && pages.every((p) => hasValidApproval(p.line_art_approved_at, p.updated_at));
+	$: anyLineArtStale = pages.some((p) => isApprovalStale(finishApprovalAt(p), p.updated_at));
+	$: allLineArtApproved = pages.length > 0 && pages.every((p) => hasValidApproval(finishApprovalAt(p), p.updated_at));
+	function finishApprovalAt(page) {
+		if (finishVariant === INK_VARIANT) return page.line_art_approved_at;
+		return page.painted_page_image_url ? page.painted_page_approved_at : page.line_art_approved_at;
+	}
+	function finishImageUrl(page) {
+		if (finishVariant === INK_VARIANT) return page.line_art_image_url || page.line_art_url;
+		return page.painted_page_image_url || page.line_art_image_url || page.line_art_url;
+	}
 
 	$: allColoursApproved = pages.length > 0 && pages.every((p) => hasValidApproval(p.colour_approved_at, p.updated_at));
 
@@ -408,11 +418,11 @@
 	async function generateLineArt(pageId) {
 		jobError = null;
 		isJobActive = true;
-		activeJobType = 'Lines';
+		activeJobType = finishVariant === INK_VARIANT ? 'Ink' : 'Paint';
 		currentJobStatus = 'Generating…';
 
 		try {
-			const res = await apiClient.generateLineArt(pageId);
+			const res = await apiClient.generateLineArt(pageId, finishVariant);
 			if (res && res.job) {
 				await pollJob(apiClient, res.job.id, { intervalMs: 500 });
 			}
@@ -427,7 +437,7 @@
 	async function approveLineArt(pageId) {
 		jobError = null;
 		try {
-			await apiClient.approveLineArt(pageId);
+			await apiClient.approveLineArt(pageId, finishVariant);
 			await reloadProjectData();
 		} catch (err) {
 			jobError = formatApiError(err);
@@ -869,7 +879,12 @@
 	{:else if activeStage === STAGES.LINE_ART}
 		<section class="stage-section">
 			<header class="section-header">
-				<h2>Line art</h2>
+				<label class="finish-variant">
+					<select bind:value={finishVariant} aria-label="Finish">
+						<option value="painted">Painted</option>
+						<option value="ink">Ink</option>
+					</select>
+				</label>
 				<div class="header-tags">
 					{#if anyLineArtStale}
 						<span class="approval-tag stale"><Icon name="warning" size={18} /> Stale</span>
@@ -890,7 +905,7 @@
 			{#if pages.length === 0}<div class="stage-empty"><Icon name="draft" size={48} /></div>{/if}
 			<div class="page-grid">
 				{#each pages as page}
-					<div class="page-preview-card" class:card-stale={isApprovalStale(page.line_art_approved_at, page.updated_at)}>
+					<div class="page-preview-card" class:card-stale={isApprovalStale(finishApprovalAt(page), page.updated_at)}>
 						<div class="card-title-row">
 							<h3>Chapter {page.chapter_number}, Page {page.page_number}</h3>
 							{#if page.is_sample || page.sample_label}
@@ -898,25 +913,25 @@
 							{/if}
 						</div>
 						<div class="img-container">
-							{#if (page.line_art_image_url || page.line_art_url) && !failedImages.has(page.line_art_image_url || page.line_art_url)}
-								<img src={page.line_art_image_url || page.line_art_url} alt="Page {page.page_number}" on:error={markImageFailed} />
+							{#if finishImageUrl(page) && !failedImages.has(finishImageUrl(page))}
+								<img src={finishImageUrl(page)} alt="Page {page.page_number}" on:error={markImageFailed} />
 							{:else}
 								<div class="empty-img"><Icon name="line_art" size={48} />Pending</div>
 							{/if}
 						</div>
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => generateLineArt(page.id)}>
+							<button class="secondary-btn" on:click={() => generateLineArt(page.id)} aria-label="Regenerate">
 								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('final_line_art')})
 							</button>
 
-							{#if isApprovalStale(page.line_art_approved_at, page.updated_at)}
+							{#if isApprovalStale(finishApprovalAt(page), page.updated_at)}
 								<div class="stale-action-box">
 									<span class="stale-warning-text"><Icon name="warning" size={18} /> Edited</span>
 									<button class="reapprove-btn" on:click={() => approveLineArt(page.id)}>
 										Re-approve
 									</button>
 								</div>
-							{:else if page.line_art_approved_at}
+							{:else if hasValidApproval(finishApprovalAt(page), page.updated_at)}
 								<span class="status-approved"><Icon name="check" size={18} /> Approved</span>
 							{:else}
 								<button class="approve-btn" on:click={() => approveLineArt(page.id)}>
@@ -931,10 +946,10 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
-					on:click={() => (activeStage = STAGES.COLOUR)}
+					on:click={() => (activeStage = finishVariant === INK_VARIANT ? STAGES.COLOUR : STAGES.EXPORT)}
 					disabled={!allLineArtApproved}
 				>
-					Continue <Icon name="arrow" size={18} />
+					{finishVariant === INK_VARIANT ? 'Colour' : 'Export'} <Icon name="arrow" size={18} />
 				</button>
 			</div>
 		</section>

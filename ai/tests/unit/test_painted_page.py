@@ -26,7 +26,7 @@ def sample_panels():
             character_actions="Holds up the glowing brass bird",
             camera_angle="Low-angle heroic framing",
             background="Crashing waves against basalt rock",
-            dialogue="Hold fast!",
+            dialogue="Nia: Hold fast!",
             narration="The storm rises.",
             image_prompt="Warm lantern glow casting directional light on rain-slicked yellow coat",
         )
@@ -35,8 +35,10 @@ def sample_panels():
 
 def test_painted_page_stage_constraints_exclude_no_shading():
     service, storage, image = make_service()
-    draft_url = storage.put("draft.png", image_bytes("draft-pixels"), "image/png")
-    char_url = storage.put("nia.png", image_bytes("nia-pixels"), "image/png")
+    draft_pixels = image_bytes("draft-pixels")
+    character_pixels = image_bytes("nia-pixels")
+    draft_url = storage.put("draft.png", draft_pixels, "image/png")
+    char_url = storage.put("nia.png", character_pixels, "image/png")
 
     url, model_id, provenance, variant = service.generate_painted_page(
         page_id="test-page-1",
@@ -73,14 +75,19 @@ def test_painted_page_stage_constraints_exclude_no_shading():
     assert "no shading" not in prompt
     assert "flat white fills" not in prompt
     assert "black and white" not in prompt
+    assert "2:3 aspect ratio" in prompt
+    assert "never write a speaker's name" in prompt
+    assert "Nia: Hold fast!" not in prompt
+    assert '"dialogue": "hold fast!"' in prompt
 
     # Composition reference attached first, character second
-    assert call["reference_images"] == [image_bytes("draft-pixels"), image_bytes("nia-pixels")]
+    assert call["reference_images"] == [draft_pixels, character_pixels]
 
 
 def test_painted_page_direct_from_brief_variant_omits_draft():
     service, storage, image = make_service()
-    char_url = storage.put("nia.png", image_bytes("nia-pixels"), "image/png")
+    character_pixels = image_bytes("nia-pixels")
+    char_url = storage.put("nia.png", character_pixels, "image/png")
 
     url, model_id, provenance, variant = service.generate_painted_page(
         page_id="test-page-2",
@@ -111,15 +118,21 @@ def test_painted_page_direct_from_brief_variant_omits_draft():
     assert "directly from brief" in prompt
     assert "no shading" not in prompt
     assert "flat white fills" not in prompt
+    assert "2:3 aspect ratio" in prompt
+    assert "never write a speaker's name" in prompt
+    assert "Nia: Hold fast!" not in prompt
+    assert '"dialogue": "hold fast!"' in prompt
 
     # Direct-from-brief attaches only character references, NO draft image
-    assert call["reference_images"] == [image_bytes("nia-pixels")]
+    assert call["reference_images"] == [character_pixels]
 
 
 def test_painted_page_supports_style_reference():
     service, storage, image = make_service()
-    style_url = storage.put("style.png", image_bytes("style-sample-pixels"), "image/png")
-    char_url = storage.put("nia.png", image_bytes("nia-pixels"), "image/png")
+    style_pixels = image_bytes("style-sample-pixels")
+    character_pixels = image_bytes("nia-pixels")
+    style_url = storage.put("style.png", style_pixels, "image/png")
+    char_url = storage.put("nia.png", character_pixels, "image/png")
 
     service.generate_painted_page(
         page_id="test-page-3",
@@ -141,8 +154,5 @@ def test_painted_page_supports_style_reference():
     )
 
     call = image.recorded_calls[0]
-    assert call["reference_images"] == [
-        image_bytes("nia-pixels"),
-        image_bytes("style-sample-pixels"),
-    ]
+    assert call["reference_images"] == [character_pixels, style_pixels]
     assert "approved style reference" in call["prompt"]
