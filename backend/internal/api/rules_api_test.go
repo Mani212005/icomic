@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -307,7 +308,7 @@ func TestCascadePanelEditStalesDraftApproval(t *testing.T) {
 
 	// 2. User edits panel -> triggers panel cascade staling parent page draft approval
 	time.Sleep(10 * time.Millisecond)
-	reqEditPan := httptest.NewRequest(http.MethodPatch, "/api/v1/panels/"+pan.ID, nil)
+	reqEditPan := httptest.NewRequest(http.MethodPatch, "/api/v1/panels/"+pan.ID, strings.NewReader(`{"dialogue":"Edited panel"}`))
 	recEditPan := httptest.NewRecorder()
 	handler.ServeHTTP(recEditPan, reqEditPan)
 	if recEditPan.Code != http.StatusOK {

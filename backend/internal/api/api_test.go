@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"icomic/backend/gen"
 	"icomic/backend/internal/api"
@@ -137,6 +138,115 @@ func TestEstimateCost(t *testing.T) {
 	_ = json.NewDecoder(rec.Body).Decode(&resp)
 	if resp["estimated_cost"] != 0.05 {
 		t.Fatalf("expected 0.05 estimated cost, got %v", resp["estimated_cost"])
+	}
+}
+
+func TestPanelPatchPersistsEditableFieldsAndRejectsMalformedBody(t *testing.T) {
+	_, handler, repo := setupTestServer(true, "test-user")
+	ctx := context.Background()
+	project := &domain.Project{UserID: "test-user", Title: "Panel edits", OriginalScript: "A story", ChapterCount: 1}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	chapter := &domain.Chapter{ProjectID: project.ID, ChapterNumber: 1, Title: "Chapter"}
+	if err := repo.CreateChapter(ctx, chapter); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	panel := &domain.Panel{
+		ChapterID: chapter.ID, PanelNumber: 1, SceneDescription: "Old scene", CharacterActions: "Old action",
+		CameraAngle: "Old angle", Background: "Old background", Dialogue: "Old dialogue", Narration: "Old narration",
+		ImagePrompt: "Old prompt", UpdatedAt: before,
+	}
+	if err := repo.CreatePanel(ctx, panel); err != nil {
+		t.Fatal(err)
+	}
+	page := &domain.Page{ChapterID: chapter.ID, PageNumber: 1, PanelIDs: []string{panel.ID}, DraftApprovedAt: &before, UpdatedAt: before}
+	if err := repo.CreatePage(ctx, page); err != nil {
+		t.Fatal(err)
+	}
+
+	request := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/panels/"+panel.ID, strings.NewReader(body))
+		req.Header.Set("X-User-ID", "test-user")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	malformed := request(`{"dialogue":`)
+	if malformed.Code != http.StatusBadRequest {
+		t.Fatalf("malformed PATCH expected 400, got %d: %s", malformed.Code, malformed.Body.String())
+	}
+	unchanged, err := repo.GetPanel(ctx, panel.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := repo.ListPages(ctx, chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unchanged.UpdatedAt.Equal(before) || len(pages) != 1 || pages[0].DraftApprovedAt == nil {
+		t.Fatalf("malformed PATCH changed panel timestamp or approval: panel=%+v pages=%+v", unchanged, pages)
+	}
+
+	want := map[string]string{
+		"scene_description": "New scene", "character_actions": "New action", "camera_angle": "New angle",
+		"background": "New background", "dialogue": "New dialogue", "narration": "New narration", "image_prompt": "New prompt",
+	}
+	encoded, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := request(string(encoded))
+	if updated.Code != http.StatusOK {
+		t.Fatalf("valid PATCH expected 200, got %d: %s", updated.Code, updated.Body.String())
+	}
+	var response struct {
+		Panel domain.Panel `json:"panel"`
+	}
+	if err := json.Unmarshal(updated.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	assertPanelFields(t, &response.Panel, want)
+	listed := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/chapters/"+chapter.ID+"/panels", nil)
+	listReq.Header.Set("X-User-ID", "test-user")
+	handler.ServeHTTP(listed, listReq)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("GET panels expected 200, got %d: %s", listed.Code, listed.Body.String())
+	}
+	var listResponse struct {
+		Panels []domain.Panel `json:"panels"`
+	}
+	if err := json.Unmarshal(listed.Body.Bytes(), &listResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(listResponse.Panels) != 1 {
+		t.Fatalf("GET returned %d panels, want 1", len(listResponse.Panels))
+	}
+	assertPanelFields(t, &listResponse.Panels[0], want)
+	if response.Panel.UpdatedAt.Equal(before) {
+		t.Fatal("successful PATCH did not update panel timestamp")
+	}
+	pages, err = repo.ListPages(ctx, chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 || pages[0].DraftApprovedAt != nil {
+		t.Fatalf("successful edit did not stale draft approval: %+v", pages)
+	}
+}
+
+func assertPanelFields(t *testing.T, panel *domain.Panel, want map[string]string) {
+	t.Helper()
+	got := map[string]string{
+		"scene_description": panel.SceneDescription, "character_actions": panel.CharacterActions, "camera_angle": panel.CameraAngle,
+		"background": panel.Background, "dialogue": panel.Dialogue, "narration": panel.Narration, "image_prompt": panel.ImagePrompt,
+	}
+	for field, value := range want {
+		if got[field] != value {
+			t.Errorf("%s = %q, want %q", field, got[field], value)
+		}
 	}
 }
 

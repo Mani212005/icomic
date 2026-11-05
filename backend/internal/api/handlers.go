@@ -1217,6 +1217,24 @@ func (s *Server) ListPanels(w http.ResponseWriter, r *http.Request) {
 func (s *Server) UpdatePanel(w http.ResponseWriter, r *http.Request) {
 	userID := s.getUserID(r)
 	panID := r.PathValue("id")
+	var updates struct {
+		SceneDescription *string `json:"scene_description"`
+		CharacterActions *string `json:"character_actions"`
+		CameraAngle      *string `json:"camera_angle"`
+		Background       *string `json:"background"`
+		Dialogue         *string `json:"dialogue"`
+		Narration        *string `json:"narration"`
+		ImagePrompt      *string `json:"image_prompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid panel update")
+		return
+	}
+	if updates.SceneDescription == nil && updates.CharacterActions == nil && updates.CameraAngle == nil &&
+		updates.Background == nil && updates.Dialogue == nil && updates.Narration == nil && updates.ImagePrompt == nil {
+		writeError(w, http.StatusBadRequest, "Panel update must include at least one editable field")
+		return
+	}
 
 	p, err := s.Repo.GetPanel(r.Context(), panID)
 	if err != nil {
@@ -1234,6 +1252,28 @@ func (s *Server) UpdatePanel(w http.ResponseWriter, r *http.Request) {
 	if err != nil || proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
+	}
+
+	if updates.SceneDescription != nil {
+		p.SceneDescription = *updates.SceneDescription
+	}
+	if updates.CharacterActions != nil {
+		p.CharacterActions = *updates.CharacterActions
+	}
+	if updates.CameraAngle != nil {
+		p.CameraAngle = *updates.CameraAngle
+	}
+	if updates.Background != nil {
+		p.Background = *updates.Background
+	}
+	if updates.Dialogue != nil {
+		p.Dialogue = *updates.Dialogue
+	}
+	if updates.Narration != nil {
+		p.Narration = *updates.Narration
+	}
+	if updates.ImagePrompt != nil {
+		p.ImagePrompt = *updates.ImagePrompt
 	}
 
 	now := time.Now().UTC()

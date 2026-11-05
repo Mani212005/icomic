@@ -166,7 +166,11 @@ func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 			failing := &failingWriteRepository{Repository: repo, operation: tc.operation}
 			s.Repo = failing
 			rec := httptest.NewRecorder()
-			s.NewRouter().ServeHTTP(rec, httptest.NewRequest(tc.method, "/api/v1"+tc.path, strings.NewReader(`{}`)))
+			body := `{}`
+			if tc.name == "panel edit" || tc.name == "panel approval invalidation" {
+				body = `{"dialogue":"Updated dialogue"}`
+			}
+			s.NewRouter().ServeHTTP(rec, httptest.NewRequest(tc.method, "/api/v1"+tc.path, strings.NewReader(body)))
 			if rec.Code != http.StatusInternalServerError || failing.calls != 1 {
 				t.Fatalf("expected one failed %s and HTTP 500, calls=%d HTTP %d: %s", tc.operation, failing.calls, rec.Code, rec.Body.String())
 			}
