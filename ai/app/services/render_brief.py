@@ -13,7 +13,7 @@ from ..adapters.storage.port import StoragePort
 from ..gen.models import CharacterRenderIdentity, PanelTextItem
 from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
 
-RENDER_BRIEF_VERSION = "page-render-brief-v3"
+RENDER_BRIEF_VERSION = "page-render-brief-v4"
 
 
 def build_page_render_request(
@@ -104,6 +104,8 @@ def build_page_render_request(
         "reading_order": "Follow panels in array order, left to right then top to bottom. Do not reorder or omit panels.",
         "identity_policy": "Match named characters to their indexed reference images. Preserve identity anchors across panels; expressions and poses may change with the story. Do not add every reference character to every panel.",
         "dialogue_policy": "Dialogue values contain only the spoken words and may appear only inside speech bubbles in their own panels. Show who speaks using bubble tails and placement. Never write a speaker's name or a speaker label inside a bubble. Empty dialogue means no speech bubble. Narration is context, not a caption. Do not invent, paraphrase or duplicate text.",
+        "lettering_policy": "Use large, bold, high-contrast speech lettering that remains clearly readable on an A4 printed page. Letter height must be at least 4 percent of its panel's height (about 24 pixels in a 600-pixel-tall panel). Use short lines with generous spacing and enlarge the bubble to fit; never shrink lettering to tiny text or clip words. Keep every bubble and its tail inside its own panel.",
+        "annotation_policy": "No panel numbers, no page numbers, no captions outside bubbles, no headings, no notes and no speaker labels. Panel numbers in the structured data are reading-order metadata only; never draw them into the art.",
         "panels": panel_records,
         "references": references,
     }

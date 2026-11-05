@@ -65,7 +65,9 @@ def test_image_upload_has_independent_timeout_budgets_and_payload_telemetry():
     assert call["actual_cost_usd"] == 0.01
 
 
-@pytest.mark.parametrize("phase", ["WriteTimeout", "ReadTimeout"])
+@pytest.mark.parametrize(
+    "phase", ["WriteTimeout", "ReadTimeout", "RemoteProtocolError", "DecodingError"]
+)
 def test_image_timeout_keeps_reservation_without_retry(phase):
     requests = []
 

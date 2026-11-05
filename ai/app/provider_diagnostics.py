@@ -1,9 +1,10 @@
-"""Opt-in failed-response evidence. Never store requests or HTTP headers."""
+"""Opt-in failed-response evidence. Never store requests or credential headers."""
 
 import json
 import os
 import re
 import uuid
+from collections.abc import Mapping
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -43,6 +44,42 @@ class ProviderDiagnostics:
                 "phase": phase,
                 "body": redacted[:MAX_BODY_BYTES].decode("utf-8", errors="ignore"),
                 "body_truncated": len(redacted) > MAX_BODY_BYTES,
+                "saved": False,
+            }
+        )
+
+    def capture_partial(
+        self,
+        *,
+        status: int,
+        received_bytes: int,
+        expected_bytes: int | None,
+        elapsed_seconds: float,
+        headers: Mapping[str, str],
+        first_bytes_length: int,
+        secret: str = "",
+    ) -> None:
+        """Retain interruption metadata, not partial image/JSON content.
+
+        Only response framing and correlation headers are permitted. Cookies,
+        authorization, arbitrary headers and raw prefix bytes are excluded.
+        """
+        safe_headers = {}
+        for name in ("content-type", "content-length", "content-encoding", "date", "x-request-id"):
+            value = headers.get(name)
+            if value is not None:
+                safe_headers[name] = redact_body(value.encode(), secret)[:1024]
+        last_response.set(
+            {
+                "http_status": status,
+                "phase": "generation",
+                "body_complete": False,
+                "body_saved": False,
+                "received_bytes": received_bytes,
+                "expected_bytes": expected_bytes,
+                "elapsed_seconds": round(elapsed_seconds, 6),
+                "response_headers": safe_headers,
+                "first_bytes_length": min(first_bytes_length, 256),
                 "saved": False,
             }
         )
