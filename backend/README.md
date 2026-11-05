@@ -106,3 +106,56 @@ errors from leaving jobs pending.
 For an isolated fake Compose stack on a different localhost port, set
 `ICOMIC_E2E_API_URL` when running `make e2e-comic` with `--skip-services` and
 `--artifact-dir` pointing to the task's evidence directory.
+
+## Public request limits
+
+All authenticated API routes validate their JSON before repository writes, jobs,
+credit debits or AI calls. Requests must be a single UTF-8 JSON object with known
+fields and valid field types. Duplicate fields, trailing JSON, null values,
+invalid resource UUIDs, unsupported enums and negative counts return HTTP 400.
+Existing compact (32 hexadecimal character) in-memory job IDs remain accepted.
+Chapter count zero on project creation keeps automatic planning; explicit updates
+and chapter-generation inputs require a positive count. Art styles remain free
+text. No fixed ceiling on planned panels is introduced.
+
+Resource safeguards are configured separately from image quotas and spending:
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `MAX_JSON_BYTES` | 1048576 | Maximum request JSON bytes, including chunked bodies |
+| `MAX_SCRIPT_BYTES` | 524288 | Maximum decoded script UTF-8 bytes |
+| `MAX_SCRIPT_WORDS` | 100000 | Maximum script words (whitespace separated) |
+| `MAX_CHAPTERS` | 1000 | Maximum explicit/saved project chapter count |
+| `MAX_TEXT_FIELD_BYTES` | 16384 | Maximum bytes per other text field or nested attribute string |
+| `MAX_COLOUR_IMAGE_BYTES` | 10485760 | Maximum PNG/WebP upload bytes |
+| `MAX_COLOUR_IMAGE_PIXELS` | 40000000 | Maximum width times height, checked before image storage |
+| `REQUESTS_PER_IP_PER_MINUTE` | 600 | Public API requests per socket peer IP |
+| `REQUESTS_PER_USER_PER_MINUTE` | 300 | Authenticated requests per user across IPs |
+| `REQUEST_ADMISSION_KEYS` | 10000 | Maximum combined IP/user admission entries |
+| `HTTP_READ_HEADER_TIMEOUT` | 5s | Deadline for receiving request headers |
+| `HTTP_READ_TIMEOUT` | 30s | Deadline for receiving the complete request |
+| `HTTP_WRITE_TIMEOUT` | 20m | Response deadline, accommodating the current synchronous AI path |
+| `HTTP_IDLE_TIMEOUT` | 60s | Idle keep-alive connection deadline |
+| `HTTP_MAX_HEADER_BYTES` | 32768 | Maximum request header bytes (Go may allow its additional read buffer) |
+
+All settings must be positive; invalid settings stop server startup. These defaults
+are engineering resource bounds, not approved launch capacity. Operators should
+set launch values from capacity and product requirements. Saved scripts and
+chapter counts are rechecked before text generation if limits are lowered.
+Oversized bodies/images return HTTP 413. Other validation failures return 400
+(or 415 for unsupported upload formats). PNG/WebP dimensions are decoded without
+allocating full pixel buffers; the AI storage endpoint still verifies image bytes.
+
+Admission uses bounded in-process one-minute windows and returns HTTP 429 with
+`Retry-After: 60` when either count or identity capacity is exhausted. Expired
+entries are reclaimed on admission; there is no background worker. Unauthenticated
+API traffic counts toward the IP limit. Forwarding headers are not trusted: behind
+a reverse proxy, the IP limit applies to the proxy connection peer. Multiple Go
+replicas each have their own limit; use deployment-level admission for a shared
+public limit. Health checks and media delivery are outside API admission.
+
+`CORS_ALLOWED_ORIGIN` accepts an exact origin or a comma-separated origin list
+(default `http://localhost:5173`). Matched origins receive credentials permission
+and `Vary: Origin`; denied/absent origins receive no allow-origin header. `*`
+explicitly allows any origin without credentials. CORS controls browser access;
+authentication and request validation also run for non-browser clients.

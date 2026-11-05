@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -91,10 +90,19 @@ func main() {
 		server.KillSwitchEnabled = true
 	}
 
+	limits, err := api.RequestLimitsFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	server.Limits = limits
 	handler := server.NewRouter()
+	httpServer, err := publicHTTPServer(":"+port, handler, os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	log.Printf("Starting Icomic Go API server on port %s...", port)
-	if err := http.ListenAndServe(":"+port, handler); err != nil {
+	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

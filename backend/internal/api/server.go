@@ -27,6 +27,8 @@ type Server struct {
 	DefaultUserQuota  float64
 	MonthlyUserQuota  float64
 	AllowedOrigin     string
+	Limits            RequestLimits
+	admission         requestAdmission
 }
 
 func NewServer(
@@ -71,6 +73,7 @@ func NewServer(
 		MaxPanelsPerPage:  maxPanelsPerPage,
 		DefaultUserQuota:  80.0,
 		AllowedOrigin:     allowedOrigin,
+		Limits:            DefaultRequestLimits(),
 	}
 }
 

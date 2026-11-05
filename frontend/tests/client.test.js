@@ -277,3 +277,15 @@ test('ApiClient normalizes wrapped Go backend responses for projects and entitie
 		globalThis.fetch = originalFetch;
 	}
 });
+
+test('ApiClient normalizes script aliases without sending unknown fields', async () => {
+	const client = new ApiClient('http://test-server');
+	const requests = [];
+	client.request = async (path, options) => { requests.push(JSON.parse(options.body)); return {}; };
+	await client.createProject({ title: 'Story', script: 'The original script' });
+	await client.updateProject('project', { script: 'The edited script' });
+	assert.deepEqual(requests, [
+	 { title: 'Story', original_script: 'The original script' },
+	 { original_script: 'The edited script' }
+	]);
+});

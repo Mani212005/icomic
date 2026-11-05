@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -68,14 +69,14 @@ func TestDownloadExport_EphemeralStorageProxyKeyDerivation(t *testing.T) {
 	_ = repo.CreateUser(ctx, &domain.User{ID: "user-ephem", Email: "ephem@example.com"})
 	_ = repo.CreateProject(ctx, &domain.Project{ID: "proj-ephem-1", UserID: "user-ephem", Title: "Ephem Comic"})
 	_ = repo.CreateExport(ctx, &domain.Export{
-		ID:                          "exp-ephem-1",
+		ID:                          "5859e062-706d-53bb-aee9-6d12b0aa61af",
 		ProjectID:                   "proj-ephem-1",
 		FileURL:                     "http://localhost:8000/storage/fake/exports/proj-ephem-1/comic.pdf",
 		Status:                      "completed",
 		ProvenanceMetadataPreserved: true,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/exp-ephem-1/download", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/5859e062-706d-53bb-aee9-6d12b0aa61af/download", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -118,13 +119,13 @@ func TestDownloadExport_UpstreamStorageUnavailable502(t *testing.T) {
 	_ = repo.CreateUser(ctx, &domain.User{ID: "user-unavail", Email: "unavail@example.com"})
 	_ = repo.CreateProject(ctx, &domain.Project{ID: "proj-unavail-1", UserID: "user-unavail", Title: "Unavail Comic"})
 	_ = repo.CreateExport(ctx, &domain.Export{
-		ID:        "exp-unavail-1",
+		ID:        "4716b3c6-8d83-5c70-bed0-c8bee38c1b13",
 		ProjectID: "proj-unavail-1",
 		FileURL:   "http://localhost:8000/storage/fake/exports/proj-unavail-1/comic.pdf",
 		Status:    "completed",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/exp-unavail-1/download", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/4716b3c6-8d83-5c70-bed0-c8bee38c1b13/download", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -169,13 +170,13 @@ func TestDownloadExport_UpstreamStorageNotFound404(t *testing.T) {
 	_ = repo.CreateUser(ctx, &domain.User{ID: "user-404", Email: "user404@example.com"})
 	_ = repo.CreateProject(ctx, &domain.Project{ID: "proj-404-1", UserID: "user-404", Title: "404 Comic"})
 	_ = repo.CreateExport(ctx, &domain.Export{
-		ID:        "exp-404-1",
+		ID:        "208046c2-e6d8-5190-a520-e694b06c922a",
 		ProjectID: "proj-404-1",
 		FileURL:   "http://localhost:8000/storage/fake/exports/proj-404-1/missing.pdf",
 		Status:    "completed",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/exp-404-1/download", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/208046c2-e6d8-5190-a520-e694b06c922a/download", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -226,7 +227,7 @@ func TestDownloadExport_PathTraversalPrevention(t *testing.T) {
 
 	for i, badURL := range maliciousURLs {
 		storageQueried = false
-		expID := "exp-trav-" + string(rune('a'+i))
+		expID := fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1)
 		_ = repo.CreateExport(ctx, &domain.Export{
 			ID:        expID,
 			ProjectID: "proj-trav-1",
@@ -259,13 +260,13 @@ func TestDownloadExport_ForbiddenForDifferentUser(t *testing.T) {
 	_ = repo.CreateUser(ctx, &domain.User{ID: "attacker-user", Email: "attacker@example.com"})
 	_ = repo.CreateProject(ctx, &domain.Project{ID: "proj-victim", UserID: "victim-user", Title: "Victim Comic"})
 	_ = repo.CreateExport(ctx, &domain.Export{
-		ID:        "exp-victim",
+		ID:        "2a421c82-cbe4-5eb6-956e-8df592ee4a4a",
 		ProjectID: "proj-victim",
 		FileURL:   "http://localhost:8000/storage/fake/exports/proj-victim/comic.pdf",
 		Status:    "completed",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/exp-victim/download", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/2a421c82-cbe4-5eb6-956e-8df592ee4a4a/download", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -278,7 +279,7 @@ func TestDownloadExport_ForbiddenForDifferentUser(t *testing.T) {
 func TestDownloadExport_ExportNotFound(t *testing.T) {
 	_, handler, _ := createServerWithAI(nil, "some-user")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/non-existent-export/download", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/exports/c320467d-9873-51cb-a719-c91de23c01a4/download", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 

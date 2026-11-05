@@ -110,12 +110,12 @@ func seedWriteFailureFlow(t *testing.T, repo db.Repository) {
 	t.Helper()
 	now := time.Now().UTC().Add(-time.Minute)
 	for _, err := range []error{
-		repo.CreateProject(nil, &domain.Project{ID: "project", UserID: "test-user", OriginalScript: "A hero finds a bird", ChapterCount: 1}),
-		repo.CreateCharacter(nil, &domain.Character{ID: "character", ProjectID: "project", Name: "Hero", ReferenceImageURL: "https://storage.example/reference.png", ApprovedAt: &now, UpdatedAt: now}),
-		repo.CreateChapter(nil, &domain.Chapter{ID: "chapter", ProjectID: "project", ChapterNumber: 1, Title: "The bird", UpdatedAt: now}),
-		repo.CreatePanel(nil, &domain.Panel{ID: "panel", ChapterID: "chapter", PanelNumber: 1, SceneDescription: "A bird", UpdatedAt: now}),
-		repo.CreatePage(nil, &domain.Page{ID: "page", ChapterID: "chapter", PageNumber: 1, PanelIDs: []string{"panel"}, DraftImageURL: "https://storage.example/draft.png", LineArtImageURL: "https://storage.example/lineart.png", DraftApprovedAt: &now, LineArtApprovedAt: &now, ColourImageURL: "https://storage.example/coloured.png", ColourImageUploadedAt: &now, UpdatedAt: now}),
-		repo.RecordApproval(nil, &domain.StageApproval{ProjectID: "project", EntityType: "chapter_outline", EntityID: "chapter", ApprovedAt: time.Now().UTC()}),
+		repo.CreateProject(nil, &domain.Project{ID: "a400e5d7-0409-5a81-9050-3991208ceec1", UserID: "test-user", OriginalScript: "A hero finds a bird", ChapterCount: 1}),
+		repo.CreateCharacter(nil, &domain.Character{ID: "1bda3da7-79e9-55f5-b45e-67393fc73c26", ProjectID: "a400e5d7-0409-5a81-9050-3991208ceec1", Name: "Hero", ReferenceImageURL: "https://storage.example/reference.png", ApprovedAt: &now, UpdatedAt: now}),
+		repo.CreateChapter(nil, &domain.Chapter{ID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", ProjectID: "a400e5d7-0409-5a81-9050-3991208ceec1", ChapterNumber: 1, Title: "The bird", UpdatedAt: now}),
+		repo.CreatePanel(nil, &domain.Panel{ID: "a8a24397-3780-5a99-acea-8ab882a2ef5b", ChapterID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", PanelNumber: 1, SceneDescription: "A bird", UpdatedAt: now}),
+		repo.CreatePage(nil, &domain.Page{ID: "a5669606-8764-5c90-b282-bad323a49baa", ChapterID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", PageNumber: 1, PanelIDs: []string{"a8a24397-3780-5a99-acea-8ab882a2ef5b"}, DraftImageURL: "https://storage.example/draft.png", LineArtImageURL: "https://storage.example/lineart.png", DraftApprovedAt: &now, LineArtApprovedAt: &now, ColourImageURL: "https://storage.example/coloured.png", ColourImageUploadedAt: &now, UpdatedAt: now}),
+		repo.RecordApproval(nil, &domain.StageApproval{ProjectID: "a400e5d7-0409-5a81-9050-3991208ceec1", EntityType: "chapter_outline", EntityID: "9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", ApprovedAt: time.Now().UTC()}),
 	} {
 		if err != nil {
 			t.Fatal(err)
@@ -125,36 +125,36 @@ func seedWriteFailureFlow(t *testing.T, repo db.Repository) {
 
 func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 	cases := []struct{ name, method, path, operation string }{
-		{"analysis character", "POST", "/projects/project/analyze", "CreateCharacter"},
-		{"analysis project", "POST", "/projects/project/analyze", "UpdateProject"},
-		{"reference image", "POST", "/characters/character/reference-image", "UpdateCharacter"},
-		{"character approval update", "POST", "/characters/character/approve", "UpdateCharacter"},
-		{"character approval record", "POST", "/characters/character/approve", "RecordApproval"},
-		{"chapter generation", "POST", "/projects/project/chapters", "CreateChapter"},
-		{"chapter edit", "PATCH", "/chapters/chapter", "UpdateChapter"},
-		{"chapter approval update", "POST", "/chapters/chapter/approve", "UpdateChapter"},
-		{"chapter approval record", "POST", "/chapters/chapter/approve", "RecordApproval"},
-		{"panel generation", "POST", "/chapters/chapter/panels", "CreatePanel"},
-		{"page partition", "POST", "/chapters/chapter/panels", "CreatePage"},
-		{"panel edit", "PATCH", "/panels/panel", "UpdatePanel"},
-		{"panel approval invalidation", "PATCH", "/panels/panel", "UpdatePage"},
-		{"page edit", "PATCH", "/pages/page", "UpdatePage"},
-		{"draft generation", "POST", "/pages/page/draft", "UpdatePage"},
-		{"draft approval update", "POST", "/pages/page/draft/approve", "UpdatePage"},
-		{"draft approval record", "POST", "/pages/page/draft/approve", "RecordApproval"},
-		{"line art generation", "POST", "/pages/page/line-art", "UpdatePage"},
-		{"line art approval update", "POST", "/pages/page/line-art/approve", "UpdatePage"},
-		{"line art approval record", "POST", "/pages/page/line-art/approve", "RecordApproval"},
-		{"palette suggestion", "POST", "/pages/page/colour-palette/suggest", "SaveColourPalette"},
-		{"palette edit", "PATCH", "/pages/page/colour-palette", "SaveColourPalette"},
-		{"colour approval", "POST", "/pages/page/colour/approve", "RecordApproval"},
+		{"analysis character", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/analyze", "CreateCharacter"},
+		{"analysis project", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/analyze", "UpdateProject"},
+		{"reference image", "POST", "/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/reference-image", "UpdateCharacter"},
+		{"character approval update", "POST", "/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/approve", "UpdateCharacter"},
+		{"character approval record", "POST", "/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/approve", "RecordApproval"},
+		{"chapter generation", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/chapters", "CreateChapter"},
+		{"chapter edit", "PATCH", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", "UpdateChapter"},
+		{"chapter approval update", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/approve", "UpdateChapter"},
+		{"chapter approval record", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/approve", "RecordApproval"},
+		{"panel generation", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels", "CreatePanel"},
+		{"page partition", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels", "CreatePage"},
+		{"panel edit", "PATCH", "/panels/a8a24397-3780-5a99-acea-8ab882a2ef5b", "UpdatePanel"},
+		{"panel approval invalidation", "PATCH", "/panels/a8a24397-3780-5a99-acea-8ab882a2ef5b", "UpdatePage"},
+		{"page edit", "PATCH", "/pages/a5669606-8764-5c90-b282-bad323a49baa", "UpdatePage"},
+		{"draft generation", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft", "UpdatePage"},
+		{"draft approval update", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft/approve", "UpdatePage"},
+		{"draft approval record", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft/approve", "RecordApproval"},
+		{"line art generation", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art", "UpdatePage"},
+		{"line art approval update", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art/approve", "UpdatePage"},
+		{"line art approval record", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art/approve", "RecordApproval"},
+		{"palette suggestion", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette/suggest", "SaveColourPalette"},
+		{"palette edit", "PATCH", "/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette", "SaveColourPalette"},
+		{"colour approval", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/colour/approve", "RecordApproval"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, repo := setupTestServer(true, "test-user")
 			seedWriteFailureFlow(t, repo)
 			if tc.operation == "UpdateProject" {
-				project, err := repo.GetProject(nil, "project")
+				project, err := repo.GetProject(nil, "a400e5d7-0409-5a81-9050-3991208ceec1")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -182,7 +182,7 @@ func TestPaletteRequiresStoredLineArtBeforeCharging(t *testing.T) {
 		t.Run(imageURL, func(t *testing.T) {
 			s, _, repo := setupTestServer(true, "test-user")
 			seedWriteFailureFlow(t, repo)
-			page, err := repo.GetPage(nil, "page")
+			page, err := repo.GetPage(nil, "a5669606-8764-5c90-b282-bad323a49baa")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -203,7 +203,7 @@ func TestPaletteRequiresStoredLineArtBeforeCharging(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec := httptest.NewRecorder()
-			s.NewRouter().ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/pages/page/colour-palette/suggest", nil))
+			s.NewRouter().ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette/suggest", nil))
 			if strings.HasPrefix(imageURL, "https://") {
 				if rec.Code != http.StatusAccepted || calls != 1 {
 					t.Fatalf("HTTP %d calls=%d: %s", rec.Code, calls, rec.Body.String())
@@ -225,15 +225,15 @@ func TestColourApprovalIncludesProject(t *testing.T) {
 	_, handler, repo := setupTestServer(true, "test-user")
 	seedWriteFailureFlow(t, repo)
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/pages/page/colour/approve", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/colour/approve", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
 	}
-	approval, err := repo.GetLatestApproval(nil, "colour_page", "page")
+	approval, err := repo.GetLatestApproval(nil, "colour_page", "a5669606-8764-5c90-b282-bad323a49baa")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if approval.ProjectID != "project" {
+	if approval.ProjectID != "a400e5d7-0409-5a81-9050-3991208ceec1" {
 		t.Fatalf("missing project foreign key: %+v", approval)
 	}
 }
