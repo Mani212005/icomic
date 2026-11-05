@@ -219,12 +219,18 @@ func TestIsolatedE2EQuotaAllows100AttemptsAndRefuses101st(t *testing.T) {
 	for i := 1; i <= 100; i++ {
 		job := *template
 		job.ID, job.IdempotencyKey = fmt.Sprintf("job-%d", i), fmt.Sprintf("key-%d", i)
+		// Spread this user-level quota test across books. The production 40-image
+		// book budget still applies when an isolated E2E daily limit is configured.
+		job.ProjectID = fmt.Sprintf("project-%d", (i-1)/40)
+		if (i-1)%40 == 0 {
+			state.book = 0 // fixture row for the next book; daily/monthly stay shared
+		}
 		if _, _, err := repo.CreateGeneration(context.Background(), &job, GenerationOptions{EntityID: "character"}, 0.01); err != nil {
 			t.Fatalf("image %d refused: %v", i, err)
 		}
 	}
 	job := *template
-	job.ID, job.IdempotencyKey = "job-101", "key-101"
+	job.ID, job.IdempotencyKey, job.ProjectID = "job-101", "key-101", "project-2"
 	if _, _, err := repo.CreateGeneration(context.Background(), &job, GenerationOptions{EntityID: "character"}, 0.01); !errors.Is(err, domain.ErrQuotaExceeded) {
 		t.Fatalf("101st image was not refused: %v", err)
 	}

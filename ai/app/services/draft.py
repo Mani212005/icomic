@@ -5,9 +5,9 @@ from uuid import uuid4
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
-from ..gen.models import PanelTextItem
-from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
+from ..gen.models import CharacterRenderIdentity, PanelTextItem
 from .images import store_page_image
+from .render_brief import build_page_render_request
 
 
 class DraftService:
@@ -25,22 +25,22 @@ class DraftService:
         style: str,
         hashed_user_id: str,
         character_reference_image_urls: list[str] | None = None,
+        character_identities: list[CharacterRenderIdentity] | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
         """Generate one rough draft sketch per page for composition review."""
-        panel_count = len(panels)
-        prompt = (
-            f"Rough comic book page layout draft sketch, {panel_count}-panel grid composition, "
-            f"loose stick-figure and rough pencil layout for page {page_number}. Style: {style}. "
-            f"{IMAGE_ONLY_INSTRUCTIONS}"
+        brief, reference_images = build_page_render_request(
+            page_number=page_number,
+            panels=panels,
+            style=style,
+            storage=self.storage_adapter,
+            character_identities=character_identities,
+            character_reference_image_urls=character_reference_image_urls,
         )
-        if character_reference_image_urls:
-            refs = ", ".join(character_reference_image_urls)
-            prompt += f". Character references: {refs}"
-
-        reference_images: list[bytes] = []
-        if character_reference_image_urls:
-            for ref_url in character_reference_image_urls:
-                reference_images.append(self.storage_adapter.get(ref_url))
+        stage_prompt = (
+            f"Rough comic book page layout draft sketch, {len(panels)}-panel grid composition, "
+            f"rough pencil layout for page {page_number}. Style: {style}. "
+        )
+        prompt = f"{stage_prompt}\n{brief}"
 
         result = self.image_adapter.generate(
             prompt=prompt,
