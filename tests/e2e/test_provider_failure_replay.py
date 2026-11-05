@@ -12,7 +12,6 @@ from pathlib import Path
 import httpx
 import pytest
 import uvicorn
-
 from conftest import terminate_process, wait_for_health
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ai"))
@@ -24,8 +23,8 @@ from app.adapters.language.meta import MetaLanguageAdapter
 from app.adapters.language.port import Message
 from app.adapters.vision.fake import FakeVisionAdapter
 from app.adapters.vision.meta import MetaVisionAdapter
-from app.main import create_app
 from app.costs import GENERATION_POLICIES
+from app.main import create_app
 from app.provider_costs import ProviderCostLedger, provider_operation
 from app.provider_diagnostics import ProviderDiagnostics
 
@@ -41,6 +40,7 @@ from app.provider_diagnostics import ProviderDiagnostics
         ("generate_panel_text", "truncated_json", 2),
         ("generate_draft_sketch", "http_400", 1),
         ("generate_draft_sketch", "partial_body", 1),
+        ("generate_draft_sketch", "legacy_partial_body", 1),
         ("generate_line_art", "invalid_image", 1),
         ("suggest_colour_palette", "palette_list", 1),
         ("assemble_pdf", "corrupt_stored_image", 1),
@@ -78,7 +78,7 @@ def test_long_flow_stops_at_each_failed_stage(
         calls.append(operation)
         operation_counts[operation] = operation_counts.get(operation, 0) + 1
         if operation == target and operation_counts[operation] == occurrence:
-            if shape == "partial_body":
+            if shape in {"partial_body", "legacy_partial_body"}:
                 return httpx.Response(
                     200, stream=DisconnectedBody(), headers={"Content-Length": "1315453"}
                 )
@@ -111,13 +111,13 @@ def test_long_flow_stops_at_each_failed_stage(
             },
         )
 
-    kwargs = dict(
-        api_key="hermetic-replay",
-        base_url="http://mock.meta.internal/v1",
-        transport=httpx.MockTransport(respond),
-        cost_ledger=ledger,
-        diagnostics=diagnostics,
-    )
+    kwargs = {
+        "api_key": "hermetic-replay",
+        "base_url": "http://mock.meta.internal/v1",
+        "transport": httpx.MockTransport(respond),
+        "cost_ledger": ledger,
+        "diagnostics": diagnostics,
+    }
     adapters = build_adapters_from_env()
     adapters.language = FakeLanguageAdapter(replay_adapter=MetaLanguageAdapter(**kwargs))
     adapters.image = FakeImageAdapter(replay_adapter=MetaImageAdapter(**kwargs, cost_stage="image"))
@@ -142,7 +142,20 @@ def test_long_flow_stops_at_each_failed_stage(
     ai_url = f"http://127.0.0.1:{ai_port}"
     adapters.storage.base_url = ai_url + "/storage/fake"
     adapters.media_fetch = get_media_fetch_adapter(adapters.storage)
-    server = uvicorn.Server(uvicorn.Config(create_app(adapters), log_level="critical"))
+    app = create_app(adapters)
+    if shape == "legacy_partial_body":
+        from fastapi.responses import JSONResponse
+
+        @app.middleware("http")
+        async def legacy_unknown_response(request, call_next):
+            response = await call_next(request)
+            if request.url.path.endswith("generate-draft-sketch") and response.status_code == 502:
+                return JSONResponse(
+                    {"code": "ERROR", "message": "legacy interrupted body"}, status_code=500
+                )
+            return response
+
+    server = uvicorn.Server(uvicorn.Config(app, log_level="critical"))
     thread = threading.Thread(target=lambda: server.run(sockets=[sock]), daemon=True)
     thread.start()
     backend = None
@@ -224,7 +237,7 @@ def test_long_flow_stops_at_each_failed_stage(
                     "uncertain" if shape == "partial_body" else "failed"
                 )
                 assert status["job"]["actual_cost"] == pytest.approx(expected)
-                if shape == "partial_body":
+                if shape in {"partial_body", "legacy_partial_body"}:
                     assert failed_call["status"] == "uncertain"
                     assert failed_call["actual_cost_usd"] is None
                     assert ledger.report()["uncertain_amount_usd"] == 0.01
@@ -241,10 +254,13 @@ def test_long_flow_stops_at_each_failed_stage(
                     queued = adapters.queue.get_job("generation", failed_call["job_id"])
                     replay = httpx.post(
                         ai_url + "/internal/v1/generate-draft-sketch",
-                        json=queued["payload"]["request"], timeout=10,
+                        json=queued["payload"]["request"],
+                        timeout=10,
                     )
-                    assert replay.status_code == 502
-                    assert replay.json()["code"] == "OUTCOME_UNKNOWN"
+                    assert replay.status_code == (500 if shape == "legacy_partial_body" else 502)
+                    assert replay.json()["code"] == (
+                        "ERROR" if shape == "legacy_partial_body" else "OUTCOME_UNKNOWN"
+                    )
                     assert operation_counts[target] == 1
                     assert ledger.report()["uncertain_amount_usd"] == 0.01
         else:
@@ -280,6 +296,47 @@ def test_long_flow_stops_at_each_failed_stage(
                     assert not pages[0].get("line_art_image_url")
                 elif target == "suggest_colour_palette":
                     assert not pages[0].get("colour_approved_at")
+        if shape in {"partial_body", "legacy_partial_body"}:
+            # The real handler saves its job before dispatch, but only links
+            # draft_image_job_id on success. Resume must use the durable job's
+            # entity rather than silently issue an ordinary missing-art call.
+            first_page = runner.json_request(f"/api/v1/chapters/{chapters[0]['id']}/pages")[
+                "pages"
+            ][0]
+            assert not first_page.get("draft_image_job_id")
+            assert status["job"]["entity_id"] == first_page["id"]
+            resumed = runner.CostGuard(float("inf"), False)
+            resumed.script_file = guard.script_file
+            resumed.provider_report = ledger.report()
+            count, same_project = runner.run_flow(
+                resumed,
+                tmp_path / "resumed",
+                resume_project_id=project,
+                resume_user_id=guard.user_id,
+                retry_uncertain_job_id=failed_call["job_id"],
+            )
+            assert same_project == project
+            assert (resumed.panel_count, count, resumed.pdf_page_count) == (51, 12, 13)
+            assert ledger.report()["uncertain_amount_usd"] == 0.01
+            assert ledger.report()["calls"][-1]["status"] == "completed"
+            assert (
+                runner.json_request(f"/api/v1/generation-jobs/{failed_call['job_id']}")["job"]
+                == status["job"]
+            )
+            updated = runner.json_request(f"/api/v1/chapters/{chapters[0]['id']}/pages")["pages"][0]
+            assert updated["draft_image_job_id"] != failed_call["job_id"]
+            # Completed projects can export without retry flags or provider work.
+            before_export = ledger.report()
+            exported = runner.CostGuard(float("inf"), False)
+            exported.script_file = guard.script_file
+            runner.run_flow(
+                exported,
+                tmp_path / "export-only",
+                resume_project_id=project,
+                resume_user_id=guard.user_id,
+            )
+            assert exported.pdf_page_count == 13
+            assert ledger.report() == before_export
     finally:
         if backend is not None:
             terminate_process(backend)

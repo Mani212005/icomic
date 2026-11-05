@@ -485,6 +485,7 @@ def run_flow(
     )
 
     retry_was_used = False
+    retry_path = None
 
     def uncertain_job(saved_job: dict, job_id: str) -> bool:
         if saved_job.get("status") == "uncertain":
@@ -500,13 +501,9 @@ def run_flow(
         )
 
     if retry_uncertain_job_id:
-        saved_job = json_request(
-            f"/api/v1/generation-jobs/{retry_uncertain_job_id}"
-        ).get("job", {})
+        saved_job = json_request(f"/api/v1/generation-jobs/{retry_uncertain_job_id}").get("job", {})
         if not uncertain_job(saved_job, retry_uncertain_job_id):
-            raise E2EError(
-                f"retry refused: job {retry_uncertain_job_id} is not uncertain"
-            )
+            raise E2EError(f"retry refused: job {retry_uncertain_job_id} is not uncertain")
         if saved_job.get("project_id") != project_id:
             raise E2EError(
                 f"retry refused: job {retry_uncertain_job_id} does not belong to this project"
@@ -516,12 +513,78 @@ def run_flow(
             "draft_sketch",
             "final_line_art",
         }:
+            raise E2EError(f"retry refused: job {retry_uncertain_job_id} is not an image job")
+        # A failed request persists the job before dispatch, but the image's
+        # job pointer is only saved on success. Resolve the durable entity now,
+        # before approvals, repaints, moderation or any other paid generation.
+        targets = []
+        if saved_job["job_type"] == "character_reference":
+            for item in json_request(f"/api/v1/projects/{project_id}/characters").get(
+                "characters", []
+            ):
+                targets.append(
+                    (
+                        item,
+                        "reference_image_job_id",
+                        "reference_image_url",
+                        f"/api/v1/characters/{item['id']}/reference-image",
+                    )
+                )
+        else:
+            saved_chapters = json_request(f"/api/v1/projects/{project_id}/chapters").get(
+                "chapters", []
+            )
+            number = 0
+            for chapter in saved_chapters:
+                for item in json_request(f"/api/v1/chapters/{chapter['id']}/pages").get(
+                    "pages", []
+                ):
+                    number += 1
+                    if saved_job["job_type"] == "draft_sketch":
+                        targets.append(
+                            (
+                                item,
+                                "draft_image_job_id",
+                                "draft_image_url",
+                                f"/api/v1/pages/{item['id']}/draft",
+                            )
+                        )
+                    else:
+                        ink = number == 1 and number not in repaint_pages
+                        field = "line_art" if ink else "painted_page"
+                        query = "?variant=ink" if ink else ""
+                        targets.append(
+                            (
+                                item,
+                                field + "_image_job_id",
+                                field + "_image_url",
+                                f"/api/v1/pages/{item['id']}/line-art{query}",
+                            )
+                        )
+        entity_id = saved_job.get("entity_id")
+        matches = [
+            target
+            for target in targets
+            if (
+                target[0]["id"] == entity_id
+                if entity_id
+                else target[0].get(target[1]) == retry_uncertain_job_id
+            )
+        ]
+        if len(matches) != 1:
             raise E2EError(
-                f"retry refused: job {retry_uncertain_job_id} is not an image job"
+                f"retry refused: job {retry_uncertain_job_id} has no unique stored image target"
+            )
+        item, job_field, image_field, retry_path = matches[0]
+        if item.get(image_field) or item.get(job_field) not in {None, retry_uncertain_job_id}:
+            raise E2EError(
+                f"retry refused: job {retry_uncertain_job_id} target is already completed or superseded"
             )
 
     def generate_missing_image(path: str, existing_job_id: str | None = None) -> None:
         nonlocal retry_was_used
+        if path == retry_path:
+            existing_job_id = retry_uncertain_job_id
         if existing_job_id:
             saved_job = json_request(f"/api/v1/generation-jobs/{existing_job_id}").get(
                 "job", {}
@@ -712,7 +775,9 @@ def run_flow(
         # Use the explicit ink variant once to keep that path covered; every
         # other page exercises the normal painted default with one finish call.
         repaint = page_index + 1 in repaint_pages
-        ink_variant = page_index == 0 and not repaint
+        ink_variant = (
+            page_index == 0 and not repaint and not page.get("painted_page_image_url")
+        )
         variant_query = "?variant=ink" if ink_variant else ""
         finish_path = f"/api/v1/pages/{page_id}/line-art{variant_query}"
         finish_image_url = (

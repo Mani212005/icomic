@@ -112,6 +112,7 @@ func (s *InMemoryJobService) CreateJob(ctx context.Context, req CreateJobRequest
 	}
 
 	job := &domain.GenerationJob{
+		EntityID:       req.EntityID,
 		ID:             generateJobID(),
 		ProjectID:      req.ProjectID,
 		UserID:         req.UserID,

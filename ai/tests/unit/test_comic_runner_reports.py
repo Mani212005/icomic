@@ -183,6 +183,10 @@ def test_resume_requires_explicit_existing_stack_attachment(tmp_path):
         (True, "matching"),
         (True, "wrong-job"),
         (True, "priced"),
+        (True, "orphan"),
+        (True, "completed"),
+        (True, "superseded"),
+        (True, "wrong-entity"),
     ],
 )
 def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
@@ -197,6 +201,12 @@ def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
         "panel_ids": panel_ids,
         "draft_image_job_id": "uncertain-1",
     }
+    if legacy == "orphan":
+        page.pop("draft_image_job_id")
+    elif legacy == "completed":
+        page["draft_image_url"] = "http://local/storage/fake/draft"
+    elif legacy == "superseded":
+        page["draft_image_job_id"] = "newer-job"
     chapter = {"id": "chapter-1", "status": "approved"}
     calls = []
     fake_colouring = types.ModuleType("colouring")
@@ -243,6 +253,11 @@ def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
                     "status": "failed" if legacy else "uncertain",
                     "project_id": "project-1",
                     "job_type": "draft_sketch",
+                    "entity_id": "another-page"
+                    if legacy == "wrong-entity"
+                    else "page-1"
+                    if legacy in {"completed", "superseded"}
+                    else None,
                 }
             }
         if path == "/api/v1/generation-jobs/job-1":
@@ -285,6 +300,17 @@ def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
                 retry_uncertain_job_id="uncertain-1",
             )
         assert not calls
+        return
+    if legacy in {"orphan", "completed", "superseded", "wrong-entity"}:
+        with pytest.raises(runner.E2EError, match="retry refused"):
+            runner.run_flow(
+                guard,
+                tmp_path,
+                resume_project_id="project-1",
+                resume_user_id="user-1",
+                retry_uncertain_job_id="uncertain-1",
+            )
+        assert not calls  # Refuse before approvals, moderation, repaints or images.
         return
     if explicit_retry:
         count, project_id = runner.run_flow(

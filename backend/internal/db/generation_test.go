@@ -72,7 +72,7 @@ func (t *fixtureTransaction) row(step string, values ...any) Row {
 	return fixtureRow{values: values}
 }
 func jobRow(job *domain.GenerationJob) Row {
-	return fixtureRow{values: []any{job.ID, job.ProjectID, job.UserID, job.JobType, job.Stage, job.ModelID, job.Status, job.IdempotencyKey, job.EstimatedCost, job.ActualCost, job.HashedUserID, job.ErrorMessage, job.CreatedAt, job.CompletedAt}}
+	return fixtureRow{values: []any{job.ID, job.ProjectID, job.UserID, job.JobType, job.Stage, job.ModelID, job.Status, job.IdempotencyKey, job.EstimatedCost, job.ActualCost, job.HashedUserID, job.ErrorMessage, job.CreatedAt, job.CompletedAt, job.EntityID}}
 }
 func (t *fixtureTransaction) QueryRowContext(_ context.Context, q string, args ...any) Row {
 	q = strings.Join(strings.Fields(q), " ")
@@ -114,7 +114,7 @@ func (t *fixtureTransaction) QueryRowContext(_ context.Context, q string, args .
 		if t.state.fail == "insert_job" {
 			return fixtureRow{err: injectedFailure}
 		}
-		t.job = &domain.GenerationJob{ID: args[0].(string), ProjectID: args[1].(string), UserID: args[2].(string), JobType: args[3].(string), Stage: args[4].(string), ModelID: args[5].(string), Status: args[6].(string), IdempotencyKey: args[7].(string), EstimatedCost: args[8].(float64), HashedUserID: args[9].(string), CreatedAt: args[10].(time.Time)}
+		t.job = &domain.GenerationJob{ID: args[0].(string), ProjectID: args[1].(string), UserID: args[2].(string), JobType: args[3].(string), Stage: args[4].(string), ModelID: args[5].(string), Status: args[6].(string), IdempotencyKey: args[7].(string), EstimatedCost: args[8].(float64), HashedUserID: args[9].(string), CreatedAt: args[10].(time.Time), EntityID: args[11].(string)}
 		return t.row("insert_job", t.job.ID)
 	case strings.HasPrefix(q, "SELECT user_id,project_id"):
 		return t.row("refund_job", "user", "project")

@@ -7,7 +7,6 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
-
 from conftest import find_free_port, terminate_process, wait_for_health
 
 
@@ -57,17 +56,15 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
             # Reuse the paid project and approvals. Only the four explicitly
             # selected finishes may generate new image work; drafts stay intact.
             project_id = guard.project_id
-            chapters = runner.json_request(f"/api/v1/projects/{project_id}/chapters")[
-                "chapters"
-            ]
+            chapters = runner.json_request(f"/api/v1/projects/{project_id}/chapters")["chapters"]
 
             def saved_pages():
                 return [
                     page
                     for chapter in chapters
-                    for page in runner.json_request(
-                        f"/api/v1/chapters/{chapter['id']}/pages"
-                    )["pages"]
+                    for page in runner.json_request(f"/api/v1/chapters/{chapter['id']}/pages")[
+                        "pages"
+                    ]
                 ]
 
             original = saved_pages()
@@ -105,16 +102,40 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
                 assert old["draft_image_url"] == new["draft_image_url"]
                 assert old["draft_image_job_id"] == new["draft_image_job_id"]
                 if number in selected:
-                    assert new["painted_page_image_job_id"] != old.get(
-                        "painted_page_image_job_id"
-                    )
+                    assert new["painted_page_image_job_id"] != old.get("painted_page_image_job_id")
                     assert new["painted_page_approved_at"]
                 else:
-                    assert old.get("painted_page_image_url") == new.get(
-                        "painted_page_image_url"
-                    )
+                    assert old.get("painted_page_image_url") == new.get("painted_page_image_url")
             assert original[0]["line_art_image_url"] == updated[0]["line_art_image_url"]
             for url, content in sources.items():
                 assert fetch_source(url) == content
+
+            # A later selective repaint must keep page1's newer painted finish,
+            # rather than reapprove its retained historical ink/colour variant.
+            requests = []
+            original_request = runner.json_request
+
+            def record_request(path, method="GET", *args, **kwargs):
+                if method != "GET":
+                    requests.append(path)
+                return original_request(path, method, *args, **kwargs)
+
+            monkeypatch.setattr(runner, "json_request", record_request)
+            later = runner.CostGuard(float("inf"), False)
+            later.script_file = guard.script_file
+            runner.run_flow(
+                later,
+                tmp_path / "later",
+                resume_project_id=project_id,
+                resume_user_id=guard.user_id,
+                repaint_pages={4, 5, 10},
+            )
+            last_balance = runner.json_request("/api/v1/me/credit-usage")["balance"]
+            assert after - last_balance == pytest.approx(0.03)
+            assert later.pdf_page_count == 13
+            assert not any("variant=ink" in path or "/colour/" in path for path in requests)
+            assert (
+                saved_pages()[0]["painted_page_image_url"] == updated[0]["painted_page_image_url"]
+            )
         finally:
             terminate_process(proc)
