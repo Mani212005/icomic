@@ -42,6 +42,32 @@ class TestContracts(unittest.TestCase):
         for path in required_paths:
             self.assertIn(path, spec["paths"], f"Expected path {path} in OpenAPI spec")
 
+    def test_lettering_schema_matches_openapi_and_validates_fixtures(self):
+        schema = json.loads((CONTRACTS_DIR / "schemas/lettering.schema.json").read_text())
+        jsonschema.Draft202012Validator.check_schema(schema)
+        validator = jsonschema.Draft202012Validator(schema)
+        spec = yaml.safe_load((CONTRACTS_DIR / "openapi/ai-service.yaml").read_text())
+        expected = {
+            name: definition for name, definition in spec["components"]["schemas"].items()
+            if name.startswith("Lettering")
+        }
+        # The standalone schema must not drift from the contract-first definitions.
+        actual = json.loads(json.dumps(schema["$defs"]).replace("#/$defs/", "#/components/schemas/"))
+        self.assertEqual(expected, actual)
+        fixtures = CONTRACTS_DIR.parent / "ai/tests/fixtures/lettering"
+        for path in sorted(fixtures.glob("*.json")):
+            with self.subTest(path=path.name):
+                validator.validate(json.loads(path.read_text()))
+        valid = json.loads((fixtures / "speech-tail.input.json").read_text())
+        for key, value in [("art_mode", "unknown"), ("image_url", "not-an-input")]:
+            invalid = {**valid, key: value}
+            with self.assertRaises(jsonschema.ValidationError):
+                validator.validate(invalid)
+        invalid = json.loads(json.dumps(valid))
+        invalid["panels"][0]["rect"]["x"] = 1.1
+        with self.assertRaises(jsonschema.ValidationError):
+            validator.validate(invalid)
+
     def test_job_schema(self):
         schema_path = CONTRACTS_DIR / "schemas" / "job.schema.json"
         self.assertTrue(schema_path.exists(), f"Missing schema at {schema_path}")

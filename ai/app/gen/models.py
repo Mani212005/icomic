@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class ImageBudgetError(BaseModel):
@@ -311,3 +311,216 @@ class JobStatusResponse(BaseModel):
     error_code: str | None = None
     retryable: bool = False
     retry_after_seconds: float | None = Field(None, ge=0.0)
+
+
+class LetteringPoint(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    x: float
+    y: float
+
+
+class LetteringRect(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    x: float
+    y: float
+    width: float = Field(..., ge=1e-09)
+    height: float = Field(..., ge=1e-09)
+
+
+class LetteringUnitPoint(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    x: float = Field(..., ge=0.0, le=1.0)
+    y: float = Field(..., ge=0.0, le=1.0)
+
+
+class LetteringUnitRect(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    x: float = Field(..., ge=0.0, le=1.0)
+    y: float = Field(..., ge=0.0, le=1.0)
+    width: float = Field(..., ge=1e-09, le=1.0)
+    height: float = Field(..., ge=1e-09, le=1.0)
+
+
+class LetteringOverride(BaseModel):
+    """
+    Panel-local normalized coordinates; rect takes precedence over center. Exact overrides may be outside the panel and are flagged, never clamped. Scale changes font size, never below the configured print minimum.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    center: LetteringPoint | None = None
+    rect: LetteringRect | None = None
+    tail_anchor: LetteringPoint | None = None
+    size_scale: float | None = Field(None, ge=1e-09, le=8.0)
+
+
+class LetteringUtterance(BaseModel):
+    """
+    Speaker is a character ID or display name; omit for anonymous speech or narration. Order is unique within a panel; IDs are unique across the page.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    utterance_id: str = Field(..., min_length=1)
+    order: int = Field(..., ge=0)
+    kind: Literal["speech", "thought", "narration", "caption"]
+    speaker: str | None = None
+    speaker_anchor: LetteringUnitPoint | None = None
+    text: str
+    caption_edge: Literal["top", "bottom"] = "top"
+    placement: LetteringOverride | None = None
+
+
+class LetteringPanel(BaseModel):
+    """
+    Rect is page-normalized from the page layout; zones and anchors are panel-local. No inferred zones: an empty array is flagged for review.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    panel_id: str = Field(..., min_length=1)
+    order: int = Field(..., ge=0)
+    rect: LetteringUnitRect
+    reserved_zones: list[LetteringUnitRect]
+    utterances: list[LetteringUtterance]
+
+
+class LetteringDocument(BaseModel):
+    """
+    Standalone opt-in lettering input. Existing page art is baked_in and must never receive a second lettering layer. No image pixels or image URLs are accepted.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    version: Literal["lettering-v1"]
+    page_id: str = Field(..., min_length=1)
+    art_mode: Literal["text_free", "baked_in"]
+    page_aspect: float = Field(
+        ..., description="Physical page width / height; A4 portrait is 210/297.", ge=1e-09, le=4.0
+    )
+    panels: list[LetteringPanel]
+
+
+class LetteringGlyph(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    glyph_id: int = Field(..., ge=0)
+    cluster: int = Field(..., ge=0)
+    x: float
+    y: float
+    advance_x: float
+    advance_y: float
+
+
+class LetteringTextLine(BaseModel):
+    """
+    Exact shaped glyph origins in page-normalized coordinates, top-left origin and downward Y. Font size is relative to page height; glyph IDs refer to the bundled versioned font. Bounds include ink and advance.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    text: str
+    font_id: str
+    font_size: float
+    baseline: LetteringPoint
+    bounds: LetteringRect
+    glyphs: list[LetteringGlyph]
+
+
+class LetteringShape(BaseModel):
+    """
+    Radius relative to page height; ellipse uses the bounds, ignoring radius.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    kind: Literal["rounded_rect", "ellipse"]
+    bounds: LetteringRect
+    radius: float
+
+
+class LetteringFlag(
+    RootModel[
+        Literal[
+            "empty_text",
+            "unsupported_glyph",
+            "unsupported_direction",
+            "overflow",
+            "below_minimum",
+            "out_of_panel",
+            "outside_reserved_zone",
+            "collision",
+            "tail_crosses_text",
+            "missing_zone",
+            "baked_in_art",
+        ]
+    ]
+):
+    root: Literal[
+        "empty_text",
+        "unsupported_glyph",
+        "unsupported_direction",
+        "overflow",
+        "below_minimum",
+        "out_of_panel",
+        "outside_reserved_zone",
+        "collision",
+        "tail_crosses_text",
+        "missing_zone",
+        "baked_in_art",
+    ]
+
+
+class LetteringBubble(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    panel_id: str = Field(..., min_length=1)
+    utterance_id: str = Field(..., min_length=1)
+    order: int = Field(..., ge=0)
+    kind: Literal["speech", "thought", "narration", "caption"]
+    shape: LetteringShape
+    tail: list[LetteringPoint]
+    thought_tail: list[LetteringShape]
+    lines: list[LetteringTextLine]
+    flags: list[LetteringFlag]
+
+
+class LetteringIssue(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    panel_id: str
+    utterance_id: str
+    flag: LetteringFlag
+
+
+class LetteringLayout(BaseModel):
+    """
+    Serializable draw list, never append it to a previous result. All coordinates and bounds are page-normalized. Review issues are authoritative even when a bubble cannot be emitted. No renderer needs to wrap or place text again.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    version: Literal["lettering-layout-v1"]
+    page_id: str
+    page_aspect: float
+    minimum_font_size: float
+    bubbles: list[LetteringBubble]
+    issues: list[LetteringIssue]

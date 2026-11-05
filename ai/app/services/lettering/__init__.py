@@ -1,0 +1,333 @@
+"""Deterministic, opt-in vector lettering. Never accepts or modifies page pixels."""
+
+import json
+import math
+from dataclasses import dataclass
+
+from ...gen.models import (
+    LetteringBubble,
+    LetteringDocument,
+    LetteringGlyph,
+    LetteringIssue,
+    LetteringLayout,
+    LetteringPanel,
+    LetteringPoint,
+    LetteringRect,
+    LetteringShape,
+    LetteringTextLine,
+    LetteringUtterance,
+)
+from .geometry import Box, ellipse_contains, place, polygon_hits_box
+from .typography import Run, select_font, shape, wrap
+
+
+@dataclass(frozen=True)
+class LayoutConfig:
+    # 12pt / 841.89pt A4 height. Never shrink below a print-readable minimum.
+    minimum_font_size: float = 12 / 841.89
+    font_size: float = 14 / 841.89
+    padding: float = 0.006
+    gap: float = 0.006
+
+    def __post_init__(self):
+        values = (self.minimum_font_size, self.font_size, self.padding, self.gap)
+        if (
+            not all(math.isfinite(v) and v > 0 for v in values)
+            or self.minimum_font_size < 12 / 841.89
+            or self.font_size < self.minimum_font_size
+        ):
+            raise ValueError("Invalid print size, padding or gap")
+
+
+@dataclass
+class Draft:
+    utterance: LetteringUtterance
+    box: Box
+    font_id: str
+    size: float
+    runs: list[tuple[str, Run]]
+    step: float
+    flags: list[str]
+
+
+def _local_rect(rect, panel: Box) -> Box:
+    return Box(
+        panel.x + rect.x * panel.width,
+        panel.y + rect.y * panel.height,
+        rect.width * panel.width,
+        rect.height * panel.height,
+    )
+
+
+def _local_point(point, panel: Box) -> tuple[float, float]:
+    return panel.x + point.x * panel.width, panel.y + point.y * panel.height
+
+
+def _rect(box: Box, aspect: float) -> LetteringRect:
+    return LetteringRect(x=box.x / aspect, y=box.y, width=box.width / aspect, height=box.height)
+
+
+def _point(x: float, y: float, aspect: float) -> LetteringPoint:
+    return LetteringPoint(x=x / aspect, y=y)
+
+
+def _validate(document: LetteringDocument) -> None:
+    # Pydantic's number fields also allow NaN/Infinity; wire documents must not.
+    json.dumps(document.model_dump(mode="json"), allow_nan=False)
+    panel_ids, panel_orders, utterance_ids = set(), set(), set()
+    unit = Box(0, 0, 1, 1)
+    for panel in document.panels:
+        if panel.panel_id in panel_ids or panel.order in panel_orders:
+            raise ValueError("Panel IDs and orders must be unique")
+        panel_ids.add(panel.panel_id)
+        panel_orders.add(panel.order)
+        for rect in [panel.rect, *panel.reserved_zones]:
+            if not unit.contains(Box(rect.x, rect.y, rect.width, rect.height)):
+                raise ValueError(
+                    "Panel rectangle or reserved zone extends beyond its coordinate space"
+                )
+        orders = set()
+        for utterance in panel.utterances:
+            if utterance.utterance_id in utterance_ids or utterance.order in orders:
+                raise ValueError("Utterance IDs must be page-unique and orders panel-unique")
+            utterance_ids.add(utterance.utterance_id)
+            orders.add(utterance.order)
+
+
+def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfig) -> Draft:
+    font_id, flags = select_font(u.text)
+    requested = cfg.font_size * (u.placement.size_scale or 1) if u.placement else cfg.font_size
+    size = max(cfg.minimum_font_size, requested)
+    if requested < cfg.minimum_font_size:
+        flags.append("below_minimum")
+    ellipse = u.kind == "thought"
+    factor = math.sqrt(2) if ellipse else 1
+    widest = max((z.width for z in zones), default=panel.width)
+    width = min(
+        widest,
+        math.sqrt(max(shape(u.text, font_id, size).width, size) * size * 3) * factor
+        + cfg.padding * 2,
+    )
+    if u.kind in {"narration", "caption"}:
+        width = widest
+    if u.placement and u.placement.rect:
+        width = u.placement.rect.width * panel.width
+    available = max(size, width / factor - 2 * cfg.padding)
+    runs = [(line, shape(line, font_id, size)) for line in wrap(u.text, font_id, size, available)]
+    step = max(size * 1.35, max(r.ink.height for _, r in runs) + size * 0.15)
+    top = min(r.ink.y + i * step for i, (_, r) in enumerate(runs))
+    bottom = max(r.ink.bottom + i * step for i, (_, r) in enumerate(runs))
+    height = (bottom - top + 2 * cfg.padding) * factor
+    box = Box(0, 0, width, height)
+    if u.placement:
+        if u.placement.rect:
+            box = _local_rect(u.placement.rect, panel)
+        elif u.placement.center:
+            x, y = _local_point(u.placement.center, panel)
+            box = Box(x - width / 2, y - height / 2, width, height)
+    return Draft(u, box, font_id, size, runs, step, flags)
+
+
+def _lines(d: Draft, aspect: float) -> tuple[list[LetteringTextLine], list[Box]]:
+    top = min(r.ink.y + i * d.step for i, (_, r) in enumerate(d.runs))
+    bottom = max(r.ink.bottom + i * d.step for i, (_, r) in enumerate(d.runs))
+    start = d.box.y + (d.box.height - (bottom - top)) / 2 - top
+    lines, boxes = [], []
+    for i, (text, run) in enumerate(d.runs):
+        x = d.box.x + (d.box.width - run.ink.width) / 2 - run.ink.x
+        y = start + i * d.step
+        ink = Box(x + run.ink.x, y + run.ink.y, run.ink.width, run.ink.height)
+        boxes.append(ink)
+        lines.append(
+            LetteringTextLine(
+                text=text,
+                font_id=d.font_id,
+                font_size=d.size,
+                baseline=_point(x, y, aspect),
+                bounds=_rect(ink, aspect),
+                glyphs=[
+                    LetteringGlyph(
+                        glyph_id=g,
+                        cluster=c,
+                        x=(x + gx) / aspect,
+                        y=y + gy,
+                        advance_x=ax / aspect,
+                        advance_y=ay,
+                    )
+                    for g, c, gx, gy, ax, ay in run.glyphs
+                ],
+            )
+        )
+    return lines, boxes
+
+
+def _tail(d: Draft, panel: Box, texts: list[Box]) -> tuple[list[tuple[float, float]], list[Box]]:
+    u, b = d.utterance, d.box
+    if u.kind in {"narration", "caption"}:
+        return [], []
+    anchor = (
+        u.placement.tail_anchor if u.placement and u.placement.tail_anchor else u.speaker_anchor
+    )
+    cx, cy = b.center
+    edges = [(b.x, cy), (b.right, cy), (cx, b.y), (cx, b.bottom)]
+    if anchor:
+        ax, ay = _local_point(anchor, panel)
+    else:
+        ax, ay = min(
+            [(panel.x, cy), (panel.right, cy), (cx, panel.y), (cx, panel.bottom)],
+            key=lambda p: ((p[0] - cx) ** 2 + (p[1] - cy) ** 2, p[1], p[0]),
+        )
+    for index in sorted(
+        range(4), key=lambda i: ((edges[i][0] - ax) ** 2 + (edges[i][1] - ay) ** 2, i)
+    ):
+        ex, ey = edges[index]
+        half = min(0.004, (b.height if index < 2 else b.width) / 8)
+        triangle = (
+            [(ex, ey - half), (ax, ay), (ex, ey + half)]
+            if index < 2
+            else [(ex - half, ey), (ax, ay), (ex + half, ey)]
+        )
+        if any(polygon_hits_box(triangle, box) for box in texts):
+            continue
+        if u.kind == "thought":
+            circles = []
+            distance = math.hypot(ax - ex, ay - ey)
+            for fraction, radius in [(0.25, 0.003), (0.55, 0.002), (1.0, 0.001)]:
+                x, y = ex + (ax - ex) * fraction, ey + (ay - ey) * fraction
+                if fraction == 1 and distance:
+                    # The final circle is tangent to the exact requested anchor.
+                    x -= (ax - ex) / distance * radius
+                    y -= (ay - ey) / distance * radius
+                circles.append(Box(x - radius, y - radius, radius * 2, radius * 2))
+            if any(c.overlaps(t) for c in circles for t in texts):
+                continue
+            return [], circles
+        return triangle, []
+    d.flags.append("tail_crosses_text")
+    return [], []
+
+
+def _layout_panel(
+    panel: LetteringPanel, aspect: float, cfg: LayoutConfig, result: LetteringLayout
+) -> None:
+    p = Box(panel.rect.x * aspect, panel.rect.y, panel.rect.width * aspect, panel.rect.height)
+    zones = sorted((_local_rect(z, p) for z in panel.reserved_zones), key=lambda z: (z.y, z.x))
+    drafts = []
+    for u in sorted(panel.utterances, key=lambda u: u.order):
+        _, flags = select_font(u.text)
+        if not u.text.strip():
+            flags = ["empty_text"]
+        if not zones:
+            flags.append("missing_zone")
+        if flags:
+            for flag in flags:
+                result.issues.append(
+                    LetteringIssue(panel_id=panel.panel_id, utterance_id=u.utterance_id, flag=flag)
+                )
+            # Unsupported text is refused rather than emitting a misleading tofu bubble.
+            continue
+        drafts.append(_draft(u, p, zones, cfg))
+    pinned = [
+        d.box
+        for d in drafts
+        if d.utterance.placement and (d.utterance.placement.rect or d.utterance.placement.center)
+    ]
+    occupied = pinned[:]
+    floor = (-math.inf, -math.inf)
+    for d in drafts:
+        u = d.utterance
+        if u.placement and (u.placement.rect or u.placement.center):
+            continue
+        edge = u.caption_edge if u.kind in {"caption", "narration"} else None
+        candidate = place(d.box, zones, occupied, cfg.gap, edge, floor)
+        if candidate is None:
+            zone = zones[0]
+            y = zone.bottom - d.box.height if edge == "bottom" else zone.y
+            candidate = Box(zone.x, y, d.box.width, d.box.height)
+            d.flags.append("overflow")
+        d.box = candidate
+        occupied.append(candidate)
+        floor = max(floor, (candidate.y, candidate.x))
+    rendered = [_lines(d, aspect) for d in drafts]
+    all_text = [box for _, boxes in rendered for box in boxes]
+    for i, (d, (lines, texts)) in enumerate(zip(drafts, rendered)):
+        if not p.contains(d.box) or any(not p.contains(t) for t in texts):
+            d.flags.append("out_of_panel")
+        if not any(z.contains(d.box) for z in zones):
+            d.flags.append("outside_reserved_zone")
+        inner = Box(
+            d.box.x + cfg.padding,
+            d.box.y + cfg.padding,
+            max(1e-9, d.box.width - 2 * cfg.padding),
+            max(1e-9, d.box.height - 2 * cfg.padding),
+        )
+        if any(not inner.contains(t) for t in texts) or (
+            d.utterance.kind == "thought" and any(not ellipse_contains(d.box, t) for t in texts)
+        ):
+            d.flags.append("overflow")
+        if any(d.box.overlaps(other.box) for j, other in enumerate(drafts) if i != j):
+            d.flags.append("collision")
+        tail, circles = _tail(d, p, all_text)
+        if any(not p.contains(c) for c in circles) or any(
+            not (p.x <= x <= p.right and p.y <= y <= p.bottom) for x, y in tail
+        ):
+            d.flags.append("out_of_panel")
+        flags = sorted(set(d.flags))
+        bubble = LetteringBubble(
+            panel_id=panel.panel_id,
+            utterance_id=d.utterance.utterance_id,
+            order=d.utterance.order,
+            kind=d.utterance.kind,
+            shape=LetteringShape(
+                kind="ellipse" if d.utterance.kind == "thought" else "rounded_rect",
+                bounds=_rect(d.box, aspect),
+                radius=cfg.padding,
+            ),
+            tail=[_point(x, y, aspect) for x, y in tail],
+            thought_tail=[
+                LetteringShape(kind="ellipse", bounds=_rect(c, aspect), radius=0) for c in circles
+            ],
+            lines=lines,
+            flags=flags,
+        )
+        result.bubbles.append(bubble)
+        result.issues.extend(
+            LetteringIssue(panel_id=panel.panel_id, utterance_id=d.utterance.utterance_id, flag=f)
+            for f in flags
+        )
+
+
+def layout_page(document: LetteringDocument, config: LayoutConfig | None = None) -> LetteringLayout:
+    """Compute a fresh draw list without mutating the input.
+
+    Invalid identity/geometry raises ValueError; unrenderable or crowded lettering
+    returns typed review issues. Automatic tails that cannot avoid text are omitted
+    with an issue. Manual bubble geometry stays exact, including invalid placements.
+    """
+    config = config or LayoutConfig()
+    _validate(document)
+    result = LetteringLayout(
+        version="lettering-layout-v1",
+        page_id=document.page_id,
+        page_aspect=document.page_aspect,
+        minimum_font_size=config.minimum_font_size,
+        bubbles=[],
+        issues=[],
+    )
+    if document.art_mode == "baked_in":
+        result.issues.append(LetteringIssue(panel_id="", utterance_id="", flag="baked_in_art"))
+        return result
+    for panel in sorted(document.panels, key=lambda p: p.order):
+        _layout_panel(panel, document.page_aspect, config, result)
+    return result
+
+
+def layout_bytes(result: LetteringLayout) -> bytes:
+    """Canonical UTF-8 serialization for storage, golden comparisons and renderers."""
+    return json.dumps(
+        result.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
