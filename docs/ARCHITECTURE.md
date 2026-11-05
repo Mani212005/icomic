@@ -280,6 +280,8 @@ The Redis adapter atomically saves the envelope and pending state, claims delive
 
 A consumer that stops during a provider call leaves an uncertain outcome. When its lease expires the delivery becomes failed, rather than automatically repeating a potentially billed operation. A new generation requires a new key. Completed response records do not expire automatically. Shutdown stops accepting worker progress waits; pending envelopes remain available to the next consumer.
 
+Character references, draft pages, line art and PDF exports use a fresh UUID directory for every service execution. A later generation, including one that writes bytes before failing, cannot overwrite an earlier artifact. Page cleanup stores its raw source beside the working image in that same directory. The queue's saved response binds the attempt to the exact asset URL; Go stores the current image URL and job ID on the character/page, and each export record retains its own PDF URL. Internal queue replays return the saved URL. Public request replay semantics are a separate concern: some Go handlers still return the entity's current URL. Existing legacy artifact URLs remain readable, and no storage migration is required. Fake object storage remains volatile across restarts; these keys do not provide durable storage or define retention.
+
 ### 5.3 Approval Gate Invariant
 
 No image generation job is created unless the prerequisite approvals for that stage are recorded in `stage_approvals`.

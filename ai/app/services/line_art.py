@@ -1,6 +1,7 @@
 """Final line art generation service."""
 
 from typing import Any
+from uuid import uuid4
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
@@ -51,6 +52,8 @@ class LineArtService:
         )
 
         url = store_page_image(
-            self.storage_adapter, f"pages/{page_id}/line_art_page_{page_number}", result
+            self.storage_adapter,
+            f"pages/{page_id}/{uuid4().hex}/line_art_page_{page_number}",
+            result,
         )
         return url, result.model_id, result.provenance_metadata

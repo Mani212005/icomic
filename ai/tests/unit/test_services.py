@@ -62,7 +62,7 @@ def test_character_service():
         hashed_user_id="user-hash-1",
         style="comic",
     )
-    assert url.endswith("characters/char-111/reference.png")
+    assert "/characters/char-111/" in url and url.endswith("/reference.png")
     assert model_id == "muse-image-1.0-fake"
     assert prov["c2pa"]["watermark_present"] is True
     prompt = img.recorded_calls[0]["prompt"]
@@ -196,7 +196,7 @@ def test_draft_service_without_character_references():
         style="noir",
         hashed_user_id="hash-1",
     )
-    assert url.endswith("pages/page-101/draft_page_1.png")
+    assert "/pages/page-101/" in url and url.endswith("/draft_page_1.png")
     assert model_id == "muse-image-1.0-fake"
     assert "c2pa" in prov
     assert len(img.recorded_calls) == 1
@@ -234,7 +234,7 @@ def test_draft_service_character_consistency_anchoring():
         hashed_user_id="hash-user-42",
         character_reference_image_urls=[url1, url2],
     )
-    assert url.endswith("pages/page-202/draft_page_2.png")
+    assert "/pages/page-202/" in url and url.endswith("/draft_page_2.png")
     assert model_id == "muse-image-1.0-fake"
     assert "c2pa" in prov
     assert len(img.recorded_calls) == 1
@@ -283,7 +283,7 @@ def test_line_art_service_without_character_references():
         style="noir",
         hashed_user_id="hash-1",
     )
-    assert url.endswith("pages/page-101/line_art_page_1.png")
+    assert "/pages/page-101/" in url and url.endswith("/line_art_page_1.png")
     assert model_id == "muse-image-1.0-fake"
     assert "c2pa" in prov
     assert len(img.recorded_calls) == 1
@@ -323,7 +323,7 @@ def test_line_art_service_character_consistency_anchoring():
         hashed_user_id="hash-user-leo",
         character_reference_image_urls=[char_url],
     )
-    assert url.endswith("pages/page-303/line_art_page_1.png")
+    assert "/pages/page-303/" in url and url.endswith("/line_art_page_1.png")
     assert model_id == "muse-image-1.0-fake"
     assert "c2pa" in prov
     assert len(img.recorded_calls) == 1
@@ -442,12 +442,12 @@ def test_pdf_service_valid_multipage_and_structural_validation():
         include_ai_disclosure=True,
         pages=pages,
     )
-    assert url.endswith("exports/proj-comic-777/comic.pdf")
+    assert "/exports/proj-comic-777/" in url and url.endswith("/comic.pdf")
     assert preserved is True
     # 1 cover page + 2 comic pages = 3 pages
     assert count == 3
 
-    pdf_bytes = storage.get("exports/proj-comic-777/comic.pdf")
+    pdf_bytes = storage.get(url)
     parsed = parse_pdf_structure(pdf_bytes)
 
     # 1. Structural validity
@@ -511,7 +511,7 @@ def test_pdf_service_keeps_original_line_art_attached_for_coloured_page():
     line_art_url = storage.put("pages/page-1/line-art.png", original_line_art, "image/png")
     colour_url = storage.put("pages/page-1/colour.png", coloured_page, "image/png")
 
-    service.assemble_pdf(
+    url, _, _ = service.assemble_pdf(
         project_id="project-colour-export",
         title="Colour Export",
         page_size="A4",
@@ -525,7 +525,7 @@ def test_pdf_service_keeps_original_line_art_attached_for_coloured_page():
             )
         ],
     )
-    pdf_bytes = storage.get("exports/project-colour-export/comic.pdf")
+    pdf_bytes = storage.get(url)
     parsed = parse_pdf_structure(pdf_bytes)
     assert b"page-1-original-line-art.png" in pdf_bytes
     assert original_line_art in pdf_bytes
@@ -551,11 +551,11 @@ def test_pdf_service_page_sizes_and_fallback_image():
         include_ai_disclosure=False,
         pages=pages,
     )
-    assert url.endswith("exports/proj-sizes/comic.pdf")
+    assert "/exports/proj-sizes/" in url and url.endswith("/comic.pdf")
     assert count == 2
     assert preserved is True
 
-    pdf_bytes = storage.get("exports/proj-sizes/comic.pdf")
+    pdf_bytes = storage.get(url)
     parsed = parse_pdf_structure(pdf_bytes)
     assert parsed["page_count"] == 2
     assert len(parsed["images"]) == 1
@@ -926,7 +926,7 @@ def test_pdf_service_native_jpeg_embedding():
         )
     ]
 
-    _url, preserved, count = svc.assemble_pdf(
+    url, preserved, count = svc.assemble_pdf(
         project_id="proj-jpeg",
         title="JPEG Comic",
         page_size="A4",
@@ -934,7 +934,7 @@ def test_pdf_service_native_jpeg_embedding():
         pages=pages,
     )
 
-    pdf_bytes = storage.get("exports/proj-jpeg/comic.pdf")
+    pdf_bytes = storage.get(url)
     assert b"/Filter /DCTDecode" in pdf_bytes
     assert tiny_jpeg in pdf_bytes  # Raw JPEG bytes preserved untouched
     assert count == 2
