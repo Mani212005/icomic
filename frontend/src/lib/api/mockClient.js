@@ -48,6 +48,9 @@ export class MockApiClient {
 			title: 'The Quantum Detective',
 			art_style: 'cyberpunk-noir',
 			chapter_count: 3,
+			is_sample: true,
+			sample_label: 'Approved Real Model Output',
+			sample_source: 'Meta AI Production Run',
 			script: 'In the neon-drenched alleys of Sector 4, Detective Jack Vance pursued the enigmatic cipher...',
 			original_script: 'In the neon-drenched alleys of Sector 4, Detective Jack Vance pursued the enigmatic cipher...',
 			created_at: now,
@@ -65,7 +68,9 @@ export class MockApiClient {
 			clothing: 'Weathered grey trenchcoat, dark turtleneck',
 			personality: 'World-weary, observant, relentlessly determined',
 			reference_image_url:
-				'/mock/character.svg',
+				'/mock/sample-character.webp',
+			is_sample: true,
+			sample_label: 'Approved Model Reference',
 			approved_at: now,
 			created_at: now,
 			updated_at: now
@@ -104,12 +109,15 @@ export class MockApiClient {
 			page_number: 1,
 			panel_ids: [panel1.id],
 			draft_image_url:
-				'/mock/draft.svg',
+				'/mock/sample-draft.webp',
 			draft_approved_at: now,
 			line_art_url:
-				'/mock/line-art.svg',
+				'/mock/sample-line-art.webp',
 			line_art_image_url:
-				'/mock/line-art.svg',
+				'/mock/sample-line-art.webp',
+			is_sample: true,
+			sample_label: 'Approved Real Model Output',
+			sample_source: 'Meta AI Production Run (4-Panel Line Art)',
 			line_art_approved_at: now,
 			colour_approved_at: null,
 			created_at: now,
@@ -233,7 +241,9 @@ export class MockApiClient {
 		const char = this.characters.get(id);
 		if (!char) throw new Error(`Character ${id} not found`);
 		const job = this.createJob(char.project_id, 'character_reference', 'characters');
-		char.reference_image_url = '/mock/character.svg';
+		char.reference_image_url = '/mock/sample-character.webp';
+		char.is_sample = true;
+		char.sample_label = 'Approved Model Reference';
 
 		let now = new Date().toISOString();
 		if (char.approved_at && new Date(char.approved_at).getTime() >= new Date(now).getTime()) {
@@ -361,7 +371,9 @@ export class MockApiClient {
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		const job = this.createJob('proj-demo-1', 'draft_sketch', 'draft');
 		const now = new Date().toISOString();
-		page.draft_image_url = '/mock/draft.svg';
+		page.draft_image_url = '/mock/sample-draft.webp';
+		page.is_sample = true;
+		page.sample_label = 'Approved Model Draft';
 
 		page.draft_approved_at = null;
 		page.line_art_approved_at = null;
@@ -383,8 +395,11 @@ export class MockApiClient {
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		const job = this.createJob('proj-demo-1', 'final_line_art', 'line_art');
 		const now = new Date().toISOString();
-		page.line_art_url = '/mock/line-art.svg';
+		page.line_art_url = '/mock/sample-line-art.webp';
 		page.line_art_image_url = page.line_art_url;
+		page.is_sample = true;
+		page.sample_label = 'Approved Real Model Output';
+		page.sample_source = 'Meta AI Production Run (4-Panel Line Art)';
 		page.line_art_approved_at = null;
 		page.updated_at = now;
 		return { job, page };
