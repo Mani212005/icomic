@@ -136,9 +136,11 @@ Each adapter must strictly implement its respective Python protocol.
 The adapters must map external HTTP error responses into structured domain exceptions:
 - **HTTP 400 (Content Policy Violation)**: Must be caught and transformed into a structured domain error containing the policy message without raising an unhandled runtime crash.
   The Go backend catches this error to display a polite, non-technical explanation allowing the user to revise their prompt.
-- **HTTP 429 (Rate Limit Exceeded)**: Must be mapped to a retryable error indicating backoff delay based on the `Retry-After` header.
+- **HTTP 429 (Rate Limit Exceeded)**: A returned rate-limit rejection may be retried within the configured limit, respecting `Retry-After`; exhausted retries map to a rate-limit error.
 - **HTTP 401 / HTTP 403 (Authentication / Authorization Failure)**: Must be mapped to an unrecoverable configuration error with immediate administrative logging.
-- **HTTP 5xx (Upstream Meta Service Failure)**: Must be mapped to a transient upstream failure that triggers exponential backoff retries within configured limits.
+- **HTTP 5xx (Upstream Meta Service Failure)**: The request outcome may be unknown, so map it to an explicit unknown-outcome error and do not retry automatically. A user or operator must choose whether to start a new attempt after reviewing the result. Do not assume provider idempotency.
+
+Network timeouts and disconnects after a POST are also unknown outcomes and must not be retried automatically. The provider may have processed or billed a request before the response was lost.
 
 ### 4.3 Rate Limiting and Worker Concurrency
 
