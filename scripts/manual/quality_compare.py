@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import io
 import json
-import math
 import os
 import shutil
 import sys
@@ -43,8 +42,8 @@ SCRIPTS_E2E_PATH = REPO_ROOT / "scripts" / "e2e"
 if str(SCRIPTS_E2E_PATH) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_E2E_PATH))
 
-import comic_e2e  # noqa: E402
-from comic_e2e import (  # noqa: E402
+import comic_e2e
+from comic_e2e import (
     CostGuard,
     E2EError,
     checked_call,
@@ -115,7 +114,7 @@ def load_font(size: int) -> ImageFont.ImageFont:
         if os.path.exists(candidate):
             try:
                 return ImageFont.truetype(candidate, size)
-            except Exception:
+            except OSError:
                 pass
     return ImageFont.load_default()
 
@@ -140,16 +139,24 @@ def build_contact_sheet(
             else:
                 img = Image.new("RGB", (600, target_height), color=(40, 40, 40))
                 draw = ImageDraw.Draw(img)
-                draw.text((20, target_height // 2), f"Missing:\n{item.name}", fill=(200, 200, 200), font=font)
+                draw.text(
+                    (20, target_height // 2),
+                    f"Missing:\n{item.name}",
+                    fill=(200, 200, 200),
+                    font=font,
+                )
         else:
             img = item.convert("RGB")
 
         orig_w, orig_h = img.size
-        scaled_w = max(100, int(round(orig_w * (target_height / orig_h))))
-        scaled_img = img.resize((scaled_w, target_height), Image.Resampling.LANCZOS)
+        scaled_w = max(100, round(orig_w * (target_height / orig_h)))
+        resample_mode = getattr(getattr(Image, "Resampling", Image), "LANCZOS", 1)
+        scaled_img = img.resize((scaled_w, target_height), resample_mode)
         loaded_panels.append((label, scaled_img))
 
-    total_width = sum(p[1].width + 2 * border_width for p in loaded_panels) + padding * (len(loaded_panels) + 1)
+    total_width = sum(p[1].width + 2 * border_width for p in loaded_panels) + padding * (
+        len(loaded_panels) + 1
+    )
     sheet_height = target_height + header_height + 2 * border_width + 2 * padding
 
     sheet = Image.new("RGB", (total_width, sheet_height), color=(15, 23, 42))  # Slate 900
@@ -197,122 +204,190 @@ def build_contact_sheet(
     return output_path
 
 
+def mark_job_done_in_db(job_id: str | None) -> None:
+    if not job_id or not comic_e2e.COMPOSE_PROJECT:
+        return
+    cmd = comic_e2e.compose_command() + [
+        "exec",
+        "-T",
+        "postgres",
+        "psql",
+        "-U",
+        "icomic",
+        "-d",
+        "icomic",
+        "-c",
+        f"UPDATE generation_jobs SET status = 'done', completed_at = NOW() WHERE id = '{job_id}'",
+    ]
+    import subprocess
+
+    subprocess.run(cmd, cwd=REPO_ROOT, check=False, capture_output=True)
+
+
+def call_painted_page(
+    guard: CostGuard,
+    page_id: str,
+    variant: str,
+) -> str:
+    """Generate painted page variant with cost accounting."""
+    estimate = guard.before_call("image", 1)
+    resp = json_request(
+        f"/api/v1/pages/{page_id}/painted-page",
+        "POST",
+        {"variant": variant},
+    )
+    img_url = require(resp, "image_url", f"Variant {variant} response missing image_url")
+    job_id = None
+    if isinstance(resp, dict):
+        job_record = resp.get("job")
+        job_id = resp.get("job_id") or (
+            job_record.get("id") if isinstance(job_record, dict) else None
+        )
+    if job_id:
+        mark_job_done_in_db(job_id)
+    guard.record("image", job_id, 0.01, estimate)
+    return img_url
+
+
 def run_flow_quality_compare(
     guard: CostGuard,
     artifact_dir: Path,
     ink_baseline_path: Path | None = None,
     target_ref_path: Path | None = None,
+    existing_project_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute flow through approved draft, generate variants A & B, save assets."""
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Project creation
-    guard.current_stage = "project"
-    project_response = json_request(
-        "/api/v1/projects",
-        "POST",
-        {
-            "title": "Lighthouse Bird",
-            "original_script": SHORT_SCRIPT,
-            "art_style": "storybook",
-            "chapter_count": 1,
-        },
-    )
-    project = require(project_response, "project", "project creation response has no project")
-    project_id = require(project, "id", "created project has no id")
-    guard.project_id = project_id
-    print(f"PASS project created: {project_id}")
+    if existing_project_id:
+        project_id = existing_project_id
+        guard.project_id = project_id
+        print(f"Resuming with existing project: {project_id}")
 
-    # 2. Script analysis
-    analysis = checked_call(
-        guard,
-        "analysis",
-        1,
-        "POST",
-        f"/api/v1/projects/{project_id}/analyze",
-    )
-    characters = analysis.get("character_profiles", [])
-    if not characters:
-        raise E2EError("script analysis returned no characters")
-    print(f"PASS script analyzed: {len(characters)} characters")
+        chapters = json_request(f"/api/v1/projects/{project_id}/chapters").get("chapters", [])
+        if not chapters:
+            raise E2EError(f"Existing project {project_id} has no chapters")
+        chapter_id = chapters[0]["id"]
 
-    # 3. Character references & approval
-    character_list = json_request(f"/api/v1/projects/{project_id}/characters").get("characters", [])
-    if len(character_list) != len(characters):
-        raise E2EError("character list does not match script analysis")
-    for character in character_list:
-        cid = require(character, "id", "character has no id")
-        if character.get("visual_attributes", {}).get("reference_role") != "extra":
-            checked_call(guard, "image", 1, "POST", f"/api/v1/characters/{cid}/reference-image")
-        json_request(f"/api/v1/characters/{cid}/approve", "POST")
-    print("PASS character references generated and approved")
+        pages = json_request(f"/api/v1/chapters/{chapter_id}/pages").get("pages", [])
+        if not pages:
+            raise E2EError(f"Existing chapter {chapter_id} has no pages")
+        page = pages[0]
+        page_id = page["id"]
 
-    # Fetch approved Nia character reference URL
-    character_list = json_request(f"/api/v1/projects/{project_id}/characters").get("characters", [])
-    nia_char = next((c for c in character_list if c.get("name") == "Nia"), character_list[0])
-    char_ref_url = nia_char.get("reference_image_url")
-    if not char_ref_url:
-        raise E2EError("approved character reference URL is missing")
+        character_list = json_request(f"/api/v1/projects/{project_id}/characters").get(
+            "characters", []
+        )
+        nia_char = next((c for c in character_list if c.get("name") == "Nia"), character_list[0])
+        char_ref_url = require(nia_char, "reference_image_url", "character reference URL missing")
+        draft_url = require(page, "draft_image_url", "draft image URL missing")
 
-    # 4. Chapters & outline
-    outline = checked_call(
-        guard, "outline", 1, "POST", f"/api/v1/projects/{project_id}/chapters"
-    )
-    chapters = outline.get("chapters", [])
-    if not chapters:
-        raise E2EError("chapter generation returned no chapters")
-    chapter_id = chapters[0]["id"]
-    json_request(f"/api/v1/chapters/{chapter_id}/approve", "POST")
-    print("PASS chapter outline generated and approved")
+        var_a_url = page.get("painted_page_image_url")
+        if var_a_url and page.get("painted_page_variant") == "draft-conditioned":
+            print(f"PASS Variant A already generated: {var_a_url}")
+        else:
+            print("Generating Variant A (draft-conditioned)...", flush=True)
+            var_a_url = call_painted_page(guard, page_id, "draft-conditioned")
+            print(f"PASS Variant A generated: {var_a_url}")
+    else:
+        # 1. Project creation
+        guard.current_stage = "project"
+        project_response = json_request(
+            "/api/v1/projects",
+            "POST",
+            {
+                "title": "Lighthouse Bird",
+                "original_script": SHORT_SCRIPT,
+                "art_style": "storybook",
+                "chapter_count": 1,
+            },
+        )
+        project = require(project_response, "project", "project creation response has no project")
+        project_id = require(project, "id", "created project has no id")
+        guard.project_id = project_id
+        print(f"PASS project created: {project_id}")
 
-    # 5. Panels & pages
-    panel_response = checked_call(
-        guard, "panels", 1, "POST", f"/api/v1/chapters/{chapter_id}/panels"
-    )
-    pages = panel_response.get("pages", [])
-    panels = panel_response.get("panels", [])
-    if not pages or not panels:
-        raise E2EError("panel generation produced no pages or panels")
-    page_id = pages[0]["id"]
-    guard.panel_count = len(panels)
-    print(f"PASS panels and page generated: {len(panels)} panels on page {page_id}")
+        # 2. Script analysis
+        analysis = checked_call(
+            guard,
+            "analysis",
+            1,
+            "POST",
+            f"/api/v1/projects/{project_id}/analyze",
+        )
+        characters = analysis.get("character_profiles", [])
+        if not characters:
+            raise E2EError("script analysis returned no characters")
+        print(f"PASS script analyzed: {len(characters)} characters")
 
-    # 6. Draft sketch generation & approval
-    checked_call(guard, "image", 1, "POST", f"/api/v1/pages/{page_id}/draft")
+        # 3. Character references & approval
+        character_list = json_request(f"/api/v1/projects/{project_id}/characters").get(
+            "characters", []
+        )
+        if len(character_list) != len(characters):
+            raise E2EError("character list does not match script analysis")
+        for character in character_list:
+            cid = require(character, "id", "character has no id")
+            if character.get("visual_attributes", {}).get("reference_role") != "extra":
+                checked_call(guard, "image", 1, "POST", f"/api/v1/characters/{cid}/reference-image")
+            json_request(f"/api/v1/characters/{cid}/approve", "POST")
+        print("PASS character references generated and approved")
+
+        # Fetch approved Nia character reference URL
+        character_list = json_request(f"/api/v1/projects/{project_id}/characters").get(
+            "characters", []
+        )
+        nia_char = next((c for c in character_list if c.get("name") == "Nia"), character_list[0])
+        char_ref_url = nia_char.get("reference_image_url")
+        if not char_ref_url:
+            raise E2EError("approved character reference URL is missing")
+
+        # 4. Chapters & outline
+        outline = checked_call(
+            guard, "outline", 1, "POST", f"/api/v1/projects/{project_id}/chapters"
+        )
+        chapters = outline.get("chapters", [])
+        if not chapters:
+            raise E2EError("chapter generation returned no chapters")
+        chapter_id = chapters[0]["id"]
+        json_request(f"/api/v1/chapters/{chapter_id}/approve", "POST")
+        print("PASS chapter outline generated and approved")
+
+        # 5. Panels & pages
+        panel_response = checked_call(
+            guard, "panels", 1, "POST", f"/api/v1/chapters/{chapter_id}/panels"
+        )
+        pages = panel_response.get("pages", [])
+        panels = panel_response.get("panels", [])
+        if not pages or not panels:
+            raise E2EError("panel generation produced no pages or panels")
+        page_id = pages[0]["id"]
+        guard.panel_count = len(panels)
+        print(f"PASS panels and page generated: {len(panels)} panels on page {page_id}")
+
+        # 6. Draft sketch generation & approval
+        checked_call(guard, "image", 1, "POST", f"/api/v1/pages/{page_id}/draft")
+        json_request(f"/api/v1/pages/{page_id}/draft/approve", "POST")
+        print("PASS draft sketch generated and approved")
+
+        # Fetch approved draft URL
+        page_list = json_request(f"/api/v1/chapters/{chapter_id}/pages").get("pages", [])
+        cur_page = next((p for p in page_list if p.get("id") == page_id), page_list[0])
+        draft_url = cur_page.get("draft_image_url")
+        if not draft_url:
+            raise E2EError("approved draft image URL is missing")
+
+        # 7. Generate finished painted page: Variant A (draft-conditioned)
+        print("Generating Variant A (draft-conditioned)...", flush=True)
+        var_a_url = call_painted_page(guard, page_id, "draft-conditioned")
+        print(f"PASS Variant A generated: {var_a_url}")
+
+    # Ensure draft approval is fresh before Variant B
     json_request(f"/api/v1/pages/{page_id}/draft/approve", "POST")
-    print("PASS draft sketch generated and approved")
-
-    # Fetch approved draft URL
-    page_list = json_request(f"/api/v1/chapters/{chapter_id}/pages").get("pages", [])
-    cur_page = next((p for p in page_list if p.get("id") == page_id), page_list[0])
-    draft_url = cur_page.get("draft_image_url")
-    if not draft_url:
-        raise E2EError("approved draft image URL is missing")
-
-    # 7. Generate finished painted page: Variant A (draft-conditioned)
-    print("Generating Variant A (draft-conditioned)...", flush=True)
-    resp_a = checked_call(
-        guard,
-        "image",
-        1,
-        "POST",
-        f"/api/v1/pages/{page_id}/painted-page",
-        {"variant": "draft-conditioned"},
-    )
-    var_a_url = require(resp_a, "image_url", "Variant A response missing image_url")
-    print(f"PASS Variant A generated: {var_a_url}")
 
     # 8. Generate finished painted page: Variant B (direct-from-brief)
     print("Generating Variant B (direct-from-brief)...", flush=True)
-    resp_b = checked_call(
-        guard,
-        "image",
-        1,
-        "POST",
-        f"/api/v1/pages/{page_id}/painted-page",
-        {"variant": "direct-from-brief"},
-    )
-    var_b_url = require(resp_b, "image_url", "Variant B response missing image_url")
+    var_b_url = call_painted_page(guard, page_id, "direct-from-brief")
     print(f"PASS Variant B generated: {var_b_url}")
 
     # 9. Fetch and save all assets
@@ -340,7 +415,9 @@ def run_flow_quality_compare(
 
     # 10. Build contact sheet compare.png
     print("Building contact sheet compare.png...", flush=True)
-    target_path = target_ref_path if (target_ref_path and target_ref_path.exists()) else DEFAULT_TARGET_REF
+    target_path = (
+        target_ref_path if (target_ref_path and target_ref_path.exists()) else DEFAULT_TARGET_REF
+    )
     panels_for_sheet: list[tuple[str, Path | Image.Image]] = [
         ("Ink Baseline (Probe 1 Line Art + Flat Fill)", ink_dest),
         ("Variant A (Draft-Conditioned)", artifact_dir / "variant-a-draft-conditioned.png"),
@@ -379,6 +456,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--skip-services",
         action="store_true",
         help="use already-running local services or external mocks",
+    )
+    parser.add_argument(
+        "--project-id",
+        type=str,
+        default=None,
+        help="reuse already provisioned project in running service",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="explicit run ID for ledger tracking",
     )
     parser.add_argument(
         "--prior-spend-usd",
@@ -440,11 +529,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"REFUSED: {auth_error}", file=sys.stderr)
             return 2
 
-    run_id = uuid.uuid4().hex
+    run_id = args.run_id or uuid.uuid4().hex
     quota_policy = None
 
+    comic_e2e.COMPOSE_PROJECT = f"icomic-e2e-{run_id}"
     if not args.skip_services:
-        comic_e2e.COMPOSE_PROJECT = f"icomic-e2e-{run_id}"
         daily = 100
         monthly = 1000
         quota_policy = {
@@ -509,7 +598,7 @@ def main(argv: list[str] | None = None) -> int:
             ensure_services()
         else:
             if not comic_e2e.RUN_USER_ID:
-                comic_e2e.RUN_USER_ID = str(uuid.uuid4())
+                comic_e2e.RUN_USER_ID = os.environ.get("RUN_USER_ID") or str(uuid.uuid4())
                 guard.user_id = comic_e2e.RUN_USER_ID
 
         if not args.skip_services:
@@ -524,8 +613,9 @@ def main(argv: list[str] | None = None) -> int:
             artifact_dir=args.artifact_dir,
             ink_baseline_path=args.ink_baseline,
             target_ref_path=args.target_ref,
+            existing_project_id=args.project_id,
         )
-    except (E2EError, Exception) as exc:
+    except Exception as exc:  # noqa: BLE001
         failure = type(exc).__name__
         print(f"FAILED: {exc}", file=sys.stderr)
     finally:
@@ -556,9 +646,14 @@ def main(argv: list[str] | None = None) -> int:
         "cumulative_observed_spend_usd": round(args.prior_spend_usd + guard.actual, 9),
         "provider_cost_report": guard.provider_report,
         "cost_complete": not live
-        or (guard.provider_report is not None and guard.provider_report.get("unpriced_calls", 0) == 0),
+        or (
+            guard.provider_report is not None
+            and guard.provider_report.get("unpriced_calls", 0) == 0
+        ),
         "diagnostics_dir": str(diagnostics_dir) if live else None,
-        "diagnostic_files": [str(p) for p in sorted(diagnostics_dir.glob("response-*.json"))] if live else [],
+        "diagnostic_files": [str(p) for p in sorted(diagnostics_dir.glob("response-*.json"))]
+        if live
+        else [],
         "flow_data": flow_data,
         "stages": guard.stages,
     }
