@@ -2,6 +2,7 @@
 	import Icon from '$lib/design/Icon.svelte';
 	import { onMount } from 'svelte';
 	import { keyboardCanvas } from './keyboardCanvas.js';
+	import { drawColourComposite } from './colourComposite.js';
 	let keyboardCursor = null;
 	const canvasKeyboardHandlers = {
 		undo: handleUndo, redo: handleRedo,
@@ -115,8 +116,7 @@
 		composite.width = width;
 		composite.height = height;
 		const compositeCtx = composite.getContext('2d');
-		compositeCtx.drawImage(canvas, 0, 0);
-		compositeCtx.drawImage(lineArtCanvas, 0, 0);
+		drawColourComposite(compositeCtx, canvas, lineArtCanvas);
 		composite.toBlob((blob) => {
 			if (blob) onApprove(blob);
 		}, 'image/png');
