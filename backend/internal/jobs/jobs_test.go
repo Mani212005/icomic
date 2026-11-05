@@ -167,6 +167,29 @@ func TestAsyncJobLifecycleTransitions(t *testing.T) {
 	}
 }
 
+func TestUncertainJobIsTerminalAndRetainsItsReservation(t *testing.T) {
+	ctx := context.Background()
+	svc := jobs.NewInMemoryJobService()
+	job, _, err := svc.CreateJob(ctx, jobs.CreateJobRequest{
+		ProjectID: "project", UserID: "user", JobType: "draft_sketch", Stage: "draft",
+		ModelID: "muse-image-1.0", IdempotencyKey: "uncertain-attempt", EstimatedCost: 0.01,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := "provider request outcome is unknown"
+	if err := svc.UpdateJobStatus(ctx, job.ID, jobs.StatusUncertain, nil, &message); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := svc.GetJob(ctx, job.ID)
+	if err != nil || saved.Status != jobs.StatusUncertain || saved.ActualCost != nil {
+		t.Fatalf("uncertain attempt lost its state or reservation: %+v, %v", saved, err)
+	}
+	if err := svc.StartJob(ctx, job.ID); !errors.Is(err, jobs.ErrJobAlreadyTerminal) {
+		t.Fatalf("uncertain attempt was restartable: %v", err)
+	}
+}
+
 func TestDispatchAsync(t *testing.T) {
 	ctx := context.Background()
 	svc := jobs.NewInMemoryJobService()

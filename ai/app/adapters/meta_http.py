@@ -13,6 +13,7 @@ import re
 import struct
 import threading
 import time
+import uuid
 from collections.abc import Callable, Mapping
 from io import BytesIO
 from typing import Any
@@ -1122,13 +1123,15 @@ class MetaHttpClient:
 
         while True:
             attempt += 1
+            attempt_key = str(uuid.uuid4())
+            request.headers["Idempotency-Key"] = attempt_key
             request_id: str | None = None
             reservation = (
                 self.cost_ledger.before_call(
                     self.cost_stage,
                     json_body,
                     input_tokens=input_tokens,
-                    request_metadata=request_metadata,
+                    request_metadata={**request_metadata, "idempotency_key": attempt_key},
                 )
                 if self.cost_ledger
                 else None
@@ -1161,6 +1164,7 @@ class MetaHttpClient:
                         response.status_code,
                         usage_data,
                         elapsed_seconds=time.monotonic() - started,
+                        uncertain=response.status_code >= 500,
                     )
                 request_id = response.headers.get("x-request-id")
 

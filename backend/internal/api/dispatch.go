@@ -22,10 +22,17 @@ func generationKey(r *http.Request) string {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(r.Method+":"+r.URL.Path+":"+auth.UserIDFromContext(r.Context())+":"+key)).String()
 }
 
-// Persist the failed state and the separate, idempotent refund transaction.
-// Surface storage failures so an unsuccessful refund never looks successful.
+func uncertainProviderOutcome(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "outcome is unknown")
+}
+
+// Persist a terminal generation outcome and refund only known failed attempts.
+// Unknown provider outcomes keep the debit because the upstream may have billed.
 func (s *Server) failGeneration(ctx context.Context, job *domain.GenerationJob, cause error, amount float64) error {
 	message := cause.Error()
+	if uncertainProviderOutcome(cause) {
+		return s.JobService.UpdateJobStatus(ctx, job.ID, "uncertain", nil, &message)
+	}
 	statusErr := s.JobService.UpdateJobStatus(ctx, job.ID, "failed", nil, &message)
 	_, refundErr := s.CreditService.Refund(ctx, credits.RefundRequest{
 		UserID: job.UserID, ProjectID: job.ProjectID, GenerationJobID: job.ID, Amount: amount,
@@ -75,7 +82,15 @@ func dispatchGeneration[T any](s *Server, ctx context.Context, job *domain.Gener
 		// The in-memory dispatcher may still be returning from its task. Save
 		// usage before HTTP failure handling marks the job terminal.
 		message := result.err.Error()
-		statusErr := s.JobService.UpdateJobStatus(ctx, job.ID, "failed", &result.cost, &message)
+		status := "failed"
+		if uncertainProviderOutcome(result.err) {
+			status = "uncertain"
+		}
+		var actualCost *float64
+		if status != "uncertain" {
+			actualCost = &result.cost
+		}
+		statusErr := s.JobService.UpdateJobStatus(ctx, job.ID, status, actualCost, &message)
 		return result.result, errors.Join(result.err, statusErr)
 	}
 	return result.result, result.err

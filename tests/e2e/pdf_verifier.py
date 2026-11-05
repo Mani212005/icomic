@@ -42,16 +42,24 @@ def verify_pdf_structure(
             f"Expected {expected_page_count} PDF pages, got {page_count}"
         )
 
-    # 4. Decompress all FlateDecode streams to inspect rendered text
-    # PDF streams are enclosed between 'stream' and 'endstream'
-    stream_matches = re.findall(rb"stream\r?\n(.*?)\r?\nendstream", pdf_bytes, re.DOTALL)
+    # 4. Decompress streams to inspect rendered text. Stream bytes are binary, so
+    # locating `endstream` with a regex can stop early if those bytes happen to
+    # contain that sequence. The writer emits direct numeric /Length values.
     decompressed_streams: list[bytes] = []
-    for s in stream_matches:
+    position = 0
+    stream_header = re.compile(rb"/Length\s+(\d+)[^>]*>>\s*stream\r?\n")
+    while match := stream_header.search(pdf_bytes, position):
+        stream_length = int(match.group(1))
+        stream_start = match.end()
+        stream_end = stream_start + stream_length
+        assert stream_end <= len(pdf_bytes), "PDF stream exceeds the file length"
+        stream = pdf_bytes[stream_start:stream_end]
         try:
-            decompressed_streams.append(zlib.decompress(s))
+            decompressed_streams.append(zlib.decompress(stream))
         except Exception:
             # Stream might not be zlib-compressed (e.g. raw metadata or already plain text)
-            decompressed_streams.append(s)
+            decompressed_streams.append(stream)
+        position = stream_end
 
     all_content_text = b" ".join(decompressed_streams) + b" " + pdf_bytes
 
@@ -88,7 +96,7 @@ def verify_pdf_structure(
         "valid_header": True,
         "valid_trailer": True,
         "page_count": page_count,
-        "stream_count": len(stream_matches),
+        "stream_count": len(decompressed_streams),
         "ai_disclosure_verified": True,
         "provenance_metadata_verified": True,
         "project_id_verified": bool(project_id),
