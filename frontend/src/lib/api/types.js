@@ -72,6 +72,16 @@ export function formatApiError(err) {
 	const rawMsg = typeof err === 'string' ? err : (err.message || 'Unknown error');
 	const lower = rawMsg.toLowerCase();
 
+	if (err.code === 'book_budget_reached' || err.code === 'daily_image_limit_reached') {
+		return {
+			type: 'quota_exceeded',
+			title: err.code === 'book_budget_reached' ? 'Book budget reached' : 'Daily limit reached',
+			message: err.code === 'book_budget_reached' ? 'Book image budget used.' : 'Try again tomorrow.',
+			action: '',
+			status: 429
+		};
+	}
+
 	if (
 		lower.includes('stale') ||
 		lower.includes('was modified after approval') ||
@@ -99,8 +109,8 @@ export function formatApiError(err) {
 		return {
 			type: 'kill_switch',
 			title: 'Service unavailable',
-			message: 'Image generation is paused or unavailable.',
-			action: 'Wait for service or disable KILL_SWITCH.',
+			message: 'Image generation unavailable.',
+			action: 'Try again later.',
 			status: status || 503
 		};
 	}
@@ -142,8 +152,8 @@ export function formatApiError(err) {
 		return {
 			type: 'unauthorized',
 			title: 'Sign-in required',
-			message: 'Valid API credentials are required.',
-			action: 'Enable dev mode or add an auth token.',
+			message: 'Sign in to continue.',
+			action: 'Sign in.',
 			status: 401
 		};
 	}

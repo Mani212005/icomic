@@ -341,7 +341,7 @@ func TestRealDBGenerationTransactionsAndRepositories(t *testing.T) {
 	must(t, err)
 	monthly, err := repo.GetUserMonthlyImageCount(ctx, user.ID, since.Add(-29*24*time.Hour))
 	must(t, err)
-	if daily != 2 || monthly != 2 {
+	if daily != 1 || monthly != 1 {
 		t.Fatalf("quota counters did not commit atomically: daily=%d monthly=%d", daily, monthly)
 	}
 

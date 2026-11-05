@@ -1,4 +1,5 @@
 <script>
+	import ErrorBanner from './ErrorBanner.svelte';
 	import Icon from '$lib/design/Icon.svelte';
 	import ColourEditor from '$lib/colour/ColourEditor.svelte';
 	import ExportView from '$lib/export/ExportView.svelte';
@@ -457,21 +458,7 @@
 		</div>
 	{/if}
 
-	{#if jobError}
-		<div class="error-banner error-{jobError.type}" role="alert">
-			<div class="error-header">
-				<span class="error-icon"><Icon name="warning" size={18} /></span>
-				<strong class="error-title">{jobError.title}</strong>
-				<button class="dismiss-btn" on:click={() => (jobError = null)} aria-label="Dismiss error"><Icon name="close" size={18} /></button>
-			</div>
-			<p class="error-msg">{jobError.message}</p>
-			{#if jobError.action}
-				<div class="error-action">
-					<span class="action-tag">Next:</span> {jobError.action}
-				</div>
-			{/if}
-		</div>
-	{/if}
+	<ErrorBanner error={jobError} onDismiss={() => (jobError = null)} />
 
 	{#if activeStage === STAGES.SCRIPT}
 		<section class="stage-section">
@@ -507,7 +494,7 @@
 				<textarea
 					id="script-textarea"
 					rows="8"
-					placeholder="Scenes, dialogue…"
+					placeholder="Script…"
 					bind:value={project.script}
 				></textarea>
 			</div>
@@ -765,7 +752,6 @@
 				</div>
 			{/if}
 
-			<p class="section-desc">Approve drafts.</p>
 
 			{#if pages.length === 0}<div class="stage-empty"><Icon name="draft" size={48} /></div>{/if}
 			<div class="page-grid">

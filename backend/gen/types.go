@@ -24,6 +24,24 @@ func (e AssemblePdfRequestPageSize) Valid() bool {
 	}
 }
 
+// Defines values for ImageBudgetErrorCode.
+const (
+	BookBudgetReached      ImageBudgetErrorCode = "book_budget_reached"
+	DailyImageLimitReached ImageBudgetErrorCode = "daily_image_limit_reached"
+)
+
+// Valid indicates whether the value is a known member of the ImageBudgetErrorCode enum.
+func (e ImageBudgetErrorCode) Valid() bool {
+	switch e {
+	case BookBudgetReached:
+		return true
+	case DailyImageLimitReached:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for JobStatusResponseStatus.
 const (
 	Cancelled JobStatusResponseStatus = "cancelled"
@@ -251,6 +269,16 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
+// ImageBudgetError defines model for ImageBudgetError.
+type ImageBudgetError struct {
+	// Code Present for book and daily limits; other quota and kill-switch errors retain their existing error-only response.
+	Code  *ImageBudgetErrorCode `json:"code,omitempty"`
+	Error string                `json:"error"`
+}
+
+// ImageBudgetErrorCode Present for book and daily limits; other quota and kill-switch errors retain their existing error-only response.
+type ImageBudgetErrorCode string
+
 // JobStatusResponse defines model for JobStatusResponse.
 type JobStatusResponse struct {
 	ActualCost   *float64                `json:"actual_cost,omitempty"`
@@ -336,11 +364,29 @@ type SuggestColourPaletteResponse struct {
 // BadRequest defines model for BadRequest.
 type BadRequest = ErrorResponse
 
+// ImageBudgetExceeded defines model for ImageBudgetExceeded.
+type ImageBudgetExceeded = ImageBudgetError
+
 // InternalError defines model for InternalError.
 type InternalError = ErrorResponse
 
 // NotFound defines model for NotFound.
 type NotFound = ErrorResponse
+
+// RequestCharacterImageParams defines parameters for RequestCharacterImage.
+type RequestCharacterImageParams struct {
+	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
+}
+
+// RequestDraftImageParams defines parameters for RequestDraftImage.
+type RequestDraftImageParams struct {
+	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
+}
+
+// RequestLineArtImageParams defines parameters for RequestLineArtImage.
+type RequestLineArtImageParams struct {
+	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
+}
 
 // AnalyzeScriptJSONRequestBody defines body for AnalyzeScript for application/json ContentType.
 type AnalyzeScriptJSONRequestBody = AnalyzeScriptRequest

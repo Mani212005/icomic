@@ -19,7 +19,7 @@ type transactionFixture struct {
 	fail                       string
 	active                     bool
 	threshold, spend, balance  float64
-	daily, monthly             int
+	daily, monthly, book       int
 	missingApproval, activeJob bool
 	jobs                       map[string]*domain.GenerationJob
 	entries                    []*domain.CreditLedger
@@ -28,6 +28,7 @@ type transactionFixture struct {
 }
 type fixtureTransaction struct {
 	quotaIncrement bool
+	quotaRelease   bool
 	state          *transactionFixture
 	job            *domain.GenerationJob
 	entries        []*domain.CreditLedger
@@ -84,11 +85,13 @@ func (t *fixtureTransaction) QueryRowContext(_ context.Context, q string, args .
 	case strings.Contains(q, "SELECT singleton FROM generation_policy"):
 		return t.row("policy", true)
 	case strings.Contains(q, "FROM generation_policy"):
-		return t.row("policy", t.state.active, t.state.threshold, 25, 250)
+		return t.row("policy", t.state.active, t.state.threshold, 80, 800, 40)
 	case strings.Contains(q, "SELECT id FROM users"):
 		return t.row("user", args[0])
 	case strings.Contains(q, "SUM(CASE transaction_type WHEN 'debit' THEN amount"):
 		return t.row("spend", t.state.spend)
+	case strings.Contains(q, "COUNT(*) FROM image_quota_usage WHERE project_id"):
+		return t.row("book_quota", t.state.book)
 	case strings.Contains(q, "COUNT(*) FILTER"):
 		return t.row("quota", t.state.daily, t.state.monthly)
 	case strings.Contains(q, "original_script FROM projects"):
@@ -142,6 +145,11 @@ func (t *fixtureTransaction) ExecContext(_ context.Context, q string, args ...an
 			return nil, injectedFailure
 		}
 		t.quotaIncrement = true
+	case strings.HasPrefix(q, "DELETE FROM image_quota_usage"):
+		if t.state.fail == "release_quota" {
+			return nil, injectedFailure
+		}
+		t.quotaRelease = true
 	case strings.HasPrefix(q, "UPDATE generation_policy"):
 		if t.state.fail == "latch" {
 			return nil, injectedFailure
@@ -173,6 +181,12 @@ func (t *fixtureTransaction) Commit() error {
 	if t.quotaIncrement {
 		t.state.daily++
 		t.state.monthly++
+		t.state.book++
+	}
+	if t.quotaRelease {
+		t.state.daily--
+		t.state.monthly--
+		t.state.book--
 	}
 	for _, e := range t.entries {
 		t.state.entries = append(t.state.entries, e)
@@ -219,7 +233,7 @@ func TestIsolatedE2EQuotaAllows100AttemptsAndRefuses101st(t *testing.T) {
 	}
 }
 func TestCreateGenerationRollsBackEveryFailure(t *testing.T) {
-	for _, step := range []string{"begin", "policy", "user", "quota", "project", "entity", "active", "balance", "insert_job", "insert_debit", "insert_quota", "commit"} {
+	for _, step := range []string{"begin", "policy", "user", "book_quota", "quota", "project", "entity", "active", "balance", "insert_job", "insert_debit", "insert_quota", "commit"} {
 		t.Run(step, func(t *testing.T) {
 			repo, state, job := newGenerationFixture()
 			state.fail = step
@@ -264,8 +278,9 @@ func TestGenerationRejectsPolicyAndMissingApproval(t *testing.T) {
 		want  error
 	}{
 		{"kill_switch", func(s *transactionFixture, _ *domain.GenerationJob) { s.active = true }, domain.ErrKillSwitchActive},
-		{"daily", func(s *transactionFixture, _ *domain.GenerationJob) { s.daily = 25 }, domain.ErrQuotaExceeded},
-		{"monthly", func(s *transactionFixture, _ *domain.GenerationJob) { s.monthly = 250 }, domain.ErrQuotaExceeded},
+		{"book", func(s *transactionFixture, _ *domain.GenerationJob) { s.book = 40 }, domain.ErrBookBudgetExceeded},
+		{"daily", func(s *transactionFixture, _ *domain.GenerationJob) { s.daily = 80 }, domain.ErrQuotaExceeded},
+		{"monthly", func(s *transactionFixture, _ *domain.GenerationJob) { s.monthly = 800 }, domain.ErrQuotaExceeded},
 		{"balance", func(s *transactionFixture, _ *domain.GenerationJob) { s.balance = 0 }, ErrInsufficientCredit},
 		{"active_entity", func(s *transactionFixture, _ *domain.GenerationJob) { s.activeJob = true }, domain.ErrActiveJobExists},
 		{"draft_approval", func(s *transactionFixture, j *domain.GenerationJob) {
@@ -329,7 +344,7 @@ func TestRefundUsesSeparateTransactionAndIsIdempotent(t *testing.T) {
 	if _, err := repo.RefundGeneration(context.Background(), job.ID, 0.01); err != nil {
 		t.Fatal(err)
 	}
-	if len(state.entries) != 2 || state.balance != 10 || state.daily != 1 {
+	if len(state.entries) != 2 || state.balance != 10 || state.daily != 0 || state.book != 0 || state.monthly != 0 {
 		t.Fatal("refund replay changed balance or quota")
 	}
 }
@@ -352,14 +367,44 @@ func TestImageQuotaDoesNotBlockTextOrExport(t *testing.T) {
 	for _, kind := range []string{"script_analysis", "chapter_outline", "panel_text", "export"} {
 		t.Run(kind, func(t *testing.T) {
 			repo, state, job := newGenerationFixture()
-			state.daily, state.monthly = 25, 250
+			state.daily, state.monthly, state.book = 80, 800, 40
 			job.JobType = kind
 			if _, _, err := repo.CreateGeneration(context.Background(), job, GenerationOptions{}, 0); err != nil {
 				t.Fatal(err)
 			}
-			if state.daily != 25 || state.monthly != 250 {
+			if state.daily != 80 || state.monthly != 800 || state.book != 40 {
 				t.Fatal("non-image generation changed image quota")
 			}
 		})
+	}
+}
+
+func TestRefundQuotaReleaseRollsBackWithLedger(t *testing.T) {
+	for _, failure := range []string{"release_quota", "commit"} {
+		t.Run(failure, func(t *testing.T) {
+			repo, state, job := newGenerationFixture()
+			if _, _, err := repo.CreateGeneration(context.Background(), job, GenerationOptions{EntityID: "character"}, .01); err != nil {
+				t.Fatal(err)
+			}
+			state.fail = failure
+			if _, err := repo.RefundGeneration(context.Background(), job.ID, .01); !errors.Is(err, injectedFailure) {
+				t.Fatalf("refund failure: %v", err)
+			}
+			if state.daily != 1 || state.book != 1 || state.monthly != 1 || len(state.entries) != 1 || state.balance != 9.99 {
+				t.Fatalf("partial refund commit: %+v", state)
+			}
+		})
+	}
+}
+func TestPartialRefundRetainsImageSlot(t *testing.T) {
+	repo, state, job := newGenerationFixture()
+	if _, _, err := repo.CreateGeneration(context.Background(), job, GenerationOptions{EntityID: "character"}, .01); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RefundGeneration(context.Background(), job.ID, .005); err != nil {
+		t.Fatal(err)
+	}
+	if state.daily != 1 || state.book != 1 || state.monthly != 1 {
+		t.Fatal("partial refund released an image")
 	}
 }

@@ -29,7 +29,7 @@ test('formatApiError formats 503 kill switch and service unavailable errors', ()
 	assert.equal(formatted1.type, 'kill_switch');
 	assert.equal(formatted1.status, 503);
 	assert.match(formatted1.title, /Service unavailable/);
-	assert.match(formatted1.action, /disable KILL_SWITCH/);
+	assert.match(formatted1.action, /Try again later/);
 
 	const err2 = new Error('AI service not available');
 	err2.status = 503;
@@ -70,7 +70,7 @@ test('formatApiError formats 401 unauthenticated errors', () => {
 	assert.equal(formatted1.type, 'unauthorized');
 	assert.equal(formatted1.status, 401);
 	assert.match(formatted1.title, /Sign-in required/);
-	assert.match(formatted1.action, /dev mode/);
+	assert.match(formatted1.action, /Sign in/);
 });
 
 test('formatApiError handles fallback and null values gracefully', () => {
@@ -81,3 +81,17 @@ test('formatApiError handles fallback and null values gracefully', () => {
 	assert.equal(generic.type, 'generic');
 	assert.equal(generic.message, 'Network disconnected');
 });
+
+for (const [code, title, message] of [
+	['book_budget_reached', 'Book budget reached', 'Book image budget used.'],
+	['daily_image_limit_reached', 'Daily limit reached', 'Try again tomorrow.']
+]) {
+	test(`formatApiError shows the ${code} message`, () => {
+		const error = Object.assign(new Error('backend detail'), { status: 429, code });
+		const shown = formatApiError(error);
+		assert.equal(shown.type, 'quota_exceeded');
+		assert.equal(shown.title, title);
+		assert.equal(shown.message, message);
+		assert.equal(shown.action, '');
+	});
+}

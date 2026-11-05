@@ -9,6 +9,14 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
+class ImageBudgetError(BaseModel):
+    error: str
+    code: Literal["book_budget_reached", "daily_image_limit_reached"] | None = Field(
+        None,
+        description="Present for book and daily limits; other quota and kill-switch errors retain their existing error-only response.",
+    )
+
+
 class HealthResponse(BaseModel):
     status: str = Field(..., examples=["ok"])
 
