@@ -82,6 +82,24 @@ test('formatApiError handles fallback and null values gracefully', () => {
 	assert.equal(generic.message, 'Network disconnected');
 });
 
+test('formatApiError uses structured safe error guidance', () => {
+	const policy = formatApiError(Object.assign(new Error('Edit it and try again.'), {
+		status: 400,
+		code: 'CONTENT_POLICY_REJECTED'
+	}));
+	assert.equal(policy.title, 'Review this request');
+	assert.match(policy.action, /content guidelines/);
+
+	const limited = formatApiError(Object.assign(new Error('Try again later.'), {
+		status: 429,
+		code: 'RATE_LIMITED',
+		retryable: true,
+		retry_after_seconds: 12
+	}));
+	assert.equal(limited.retryable, true);
+	assert.match(limited.action, /12 seconds/);
+});
+
 for (const [code, title, message] of [
 	['book_budget_reached', 'Book budget reached', 'Book image budget used.'],
 	['daily_image_limit_reached', 'Daily limit reached', 'Try again tomorrow.']

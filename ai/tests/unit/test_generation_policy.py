@@ -66,9 +66,11 @@ def test_observed_reasoning_load_and_real_truncation(tmp_path, fake, truncated):
         "prompt": "A neutral fictional scene.",
     }
     response = client.post("/internal/v1/moderate-prompt", json=payload)
-    assert response.status_code == (500 if truncated else 200), response.text
+    assert response.status_code == (502 if truncated else 200), response.text
     status = client.get(f"/internal/v1/job/{payload['job_id']}/status").json()
     assert status["status"] == ("failed" if truncated else "done")
+    if truncated:
+        assert status["error_code"] == "INVALID_PROVIDER_OUTPUT"
     assert status["actual_cost"] == pytest.approx(calculate_token_cost(34, 1056))
     report = ledger.report()
     assert report["calls"][0]["usage"]["reasoning_tokens"] == 873

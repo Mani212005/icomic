@@ -86,7 +86,7 @@ func TestHTTPQueueDispatchReplayAndRefund(t *testing.T) {
 				handler.ServeHTTP(rec, req)
 				expected := http.StatusAccepted
 				if fail && attempt == 0 {
-					expected = http.StatusBadRequest
+					expected = http.StatusInternalServerError
 				}
 				if rec.Code != expected {
 					t.Fatalf("attempt %d: %d %s", attempt, rec.Code, rec.Body.String())

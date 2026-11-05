@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,30 @@ import (
 
 	"icomic/backend/gen"
 )
+
+func TestAIClientReturnsStructuredSafeError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":"RATE_LIMITED","message":"Try again later.","retryable":true,"retry_after_seconds":12,"details":{"raw":"token=secret"}}`))
+	}))
+	defer server.Close()
+
+	client := gen.NewAIServiceClient(server.URL, time.Second)
+	_, err := client.AnalyzeScript(context.Background(), gen.AnalyzeScriptRequest{})
+	serviceErr, ok := err.(*gen.AIServiceError)
+	if !ok {
+		t.Fatalf("expected structured AIServiceError, got %T: %v", err, err)
+	}
+	if serviceErr.Code != "RATE_LIMITED" || serviceErr.StatusCode != http.StatusTooManyRequests || !serviceErr.Retryable {
+		t.Fatalf("unexpected structured error: %+v", serviceErr)
+	}
+	if serviceErr.RetryAfterSeconds == nil || *serviceErr.RetryAfterSeconds != 12 {
+		t.Fatalf("Retry-After lost: %+v", serviceErr.RetryAfterSeconds)
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("raw upstream details leaked: %v", err)
+	}
+}
 
 type synchronizedBuffer struct {
 	mu  sync.Mutex

@@ -206,9 +206,11 @@ type ColourRegionSuggestion struct {
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
-	Code    string                  `json:"code"`
-	Details *map[string]interface{} `json:"details,omitempty"`
-	Message string                  `json:"message"`
+	Code              string                  `json:"code"`
+	Details           *map[string]interface{} `json:"details,omitempty"`
+	Message           string                  `json:"message"`
+	RetryAfterSeconds *float64                `json:"retry_after_seconds,omitempty"`
+	Retryable         *bool                   `json:"retryable,omitempty"`
 }
 
 // GenerateChapterOutlineRequest defines model for GenerateChapterOutlineRequest.
@@ -369,10 +371,13 @@ type ImageBudgetErrorCode string
 
 // JobStatusResponse defines model for JobStatusResponse.
 type JobStatusResponse struct {
-	ActualCost   *float64                `json:"actual_cost,omitempty"`
-	ErrorMessage *string                 `json:"error_message,omitempty"`
-	JobID        string                  `json:"job_id"`
-	Status       JobStatusResponseStatus `json:"status"`
+	ActualCost        *float64                `json:"actual_cost,omitempty"`
+	ErrorCode         *string                 `json:"error_code,omitempty"`
+	ErrorMessage      *string                 `json:"error_message,omitempty"`
+	JobID             string                  `json:"job_id"`
+	RetryAfterSeconds *float64                `json:"retry_after_seconds,omitempty"`
+	Retryable         *bool                   `json:"retryable,omitempty"`
+	Status            JobStatusResponseStatus `json:"status"`
 }
 
 // JobStatusResponseStatus defines model for JobStatusResponse.Status.

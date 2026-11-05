@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from ..adapters.queue.port import QueuePort
+from .errors import JobExecutionError, classify_error
 
 QUEUE = "generation"
 logger = logging.getLogger(__name__)
@@ -42,14 +43,16 @@ class GenerationWorker:
         except Exception as exc:
             logger.exception("Generation consumer failed")
             uncertain = bool(getattr(exc, "outcome_unknown", False))
+            error = classify_error(exc)
             self.queue.finish(
                 envelope,
                 {
                     "status": "uncertain" if uncertain else "failed",
-                    "error_message": str(exc),
-                    "http_status": 502
-                    if uncertain
-                    else (400 if isinstance(exc, ValueError) else 500),
+                    "error_code": error.code,
+                    "error_message": error.message,
+                    "http_status": error.status,
+                    "retryable": error.retryable,
+                    "retry_after_seconds": error.retry_after_seconds,
                     "actual_cost": getattr(exc, "actual_cost", None),
                 },
             )
@@ -76,10 +79,9 @@ class GenerationWorker:
                 raise HTTPException(409, "Idempotency key already belongs to another request")
             if job["status"] == "done":
                 return job["response"]
-            if job["status"] == "failed":
-                raise HTTPException(job.get("http_status", 500), job["error_message"])
-            if job["status"] == "uncertain":
-                raise HTTPException(job.get("http_status", 502), job["error_message"])
+            if job["status"] in ("failed", "uncertain"):
+                error = classify_error_from_job(job)
+                raise JobExecutionError(error)
             if self.stop.wait(0.05):
                 raise HTTPException(503, "Worker is stopping; retry with the same job ID")
 
@@ -106,3 +108,22 @@ class GenerationWorker:
         self.stop.set()
         if self._thread:
             self._thread.join(timeout=5)
+
+
+def classify_error_from_job(job: dict[str, Any]):
+    """Rehydrate only persisted safe fields, with a safe legacy fallback."""
+    from .errors import SafeError
+
+    status = job.get("http_status", 500)
+    if not isinstance(status, int) or status < 400 or status > 599:
+        status = 500
+    retry_after = job.get("retry_after_seconds")
+    if not isinstance(retry_after, (int, float)):
+        retry_after = None
+    return SafeError(
+        code=job.get("error_code") or "INTERNAL_ERROR",
+        message=job.get("error_message") or "Generation could not be completed. Try again later.",
+        status=status,
+        retryable=job.get("retryable") is True,
+        retry_after_seconds=retry_after,
+    )

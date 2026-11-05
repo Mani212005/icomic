@@ -49,6 +49,32 @@ test('pollJob rejects with JobPollingError when job fails', async () => {
 	);
 });
 
+test('pollJob preserves structured retry guidance from a failed job', async () => {
+	const mockClient = {
+		async getJob(id) {
+			return {
+				id,
+				status: JOB_STATUS.FAILED,
+				error_code: 'RATE_LIMITED',
+				error_message: 'Generation is temporarily rate limited.',
+				retryable: true,
+				retry_after_seconds: 9
+			};
+		}
+	};
+
+	await assert.rejects(
+		async () => pollJob(mockClient, 'job-limited'),
+		(err) => {
+			assert.ok(err instanceof JobPollingError);
+			assert.equal(err.code, 'RATE_LIMITED');
+			assert.equal(err.retryable, true);
+			assert.equal(err.retry_after_seconds, 9);
+			return true;
+		}
+	);
+});
+
 test('pollJob rejects when job is cancelled', async () => {
 	const mockClient = {
 		async getJob(id) {

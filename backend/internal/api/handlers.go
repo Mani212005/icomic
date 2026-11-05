@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,10 +30,13 @@ import (
 )
 
 type JSONResponse struct {
-	Status  string      `json:"status,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
-	Message string      `json:"message,omitempty"`
+	Status            string      `json:"status,omitempty"`
+	Data              interface{} `json:"data,omitempty"`
+	Error             string      `json:"error,omitempty"`
+	Message           string      `json:"message,omitempty"`
+	Code              string      `json:"code,omitempty"`
+	Retryable         bool        `json:"retryable,omitempty"`
+	RetryAfterSeconds *float64    `json:"retry_after_seconds,omitempty"`
 }
 
 // Change this one value to select the default finish used by new pages.
@@ -62,6 +66,23 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, JSONResponse{Error: message})
 }
 
+func writeLookupError(w http.ResponseWriter, err error, resource string) {
+	if errors.Is(err, db.ErrNotFound) || errors.Is(err, jobs.ErrJobNotFound) {
+		writeError(w, http.StatusNotFound, resource+" not found")
+		return
+	}
+	writeJSON(w, http.StatusInternalServerError, JSONResponse{
+		Code: "INTERNAL_ERROR", Message: "Unable to load the requested resource.",
+	})
+}
+
+func lookupStatus(err error) int {
+	if errors.Is(err, db.ErrNotFound) || errors.Is(err, jobs.ErrJobNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
 func (s *Server) aiActualCost(ctx context.Context, jobID string) float64 {
 	status, err := s.AIClient.GetJobStatus(ctx, jobID)
 	if err != nil || status == nil || (status.Status != "done" && status.Status != "failed") || status.ActualCost == nil {
@@ -77,7 +98,7 @@ func (s *Server) getUserID(r *http.Request) string {
 func (s *Server) getOwnedProject(r *http.Request, projectID string) (*domain.Project, int) {
 	proj, err := s.Repo.GetProject(r.Context(), projectID)
 	if err != nil {
-		return nil, http.StatusNotFound
+		return nil, lookupStatus(err)
 	}
 	if proj.UserID != s.getUserID(r) {
 		return nil, http.StatusForbidden
@@ -88,11 +109,11 @@ func (s *Server) getOwnedProject(r *http.Request, projectID string) (*domain.Pro
 func (s *Server) getOwnedPage(r *http.Request, pageID string) (*domain.Page, int) {
 	page, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		return nil, http.StatusNotFound
+		return nil, lookupStatus(err)
 	}
 	chapter, err := s.Repo.GetChapter(r.Context(), page.ChapterID)
 	if err != nil {
-		return nil, http.StatusNotFound
+		return nil, lookupStatus(err)
 	}
 	_, status := s.getOwnedProject(r, chapter.ProjectID)
 	return page, status
@@ -134,7 +155,7 @@ func (s *Server) ModeratePromptHandler(w http.ResponseWriter, r *http.Request) {
 	hashedUID := domain.HashUserID(userID)
 	blocked, reason, err := s.checkPromptModeration(r, body.Prompt, hashedUID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Moderation check failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -292,7 +313,7 @@ func (s *Server) ListProjects(w http.ResponseWriter, r *http.Request) {
 
 	projects, err := s.Repo.ListProjects(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeLookupError(w, err, "Project list")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"projects": projects})
@@ -309,7 +330,7 @@ func (s *Server) GetProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	proj, err := s.Repo.GetProject(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Project not found")
+		writeLookupError(w, err, "Project")
 		return
 	}
 
@@ -333,7 +354,7 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	proj, err := s.Repo.GetProject(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Project not found")
+		writeLookupError(w, err, "Project")
 		return
 	}
 
@@ -394,7 +415,7 @@ func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	proj, err := s.Repo.GetProject(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Project not found")
+		writeLookupError(w, err, "Project")
 		return
 	}
 
@@ -422,14 +443,18 @@ func (s *Server) ListCharacters(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("id")
 
 	proj, err := s.Repo.GetProject(r.Context(), projectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusNotFound, "Project not found")
 		return
 	}
 
 	chars, err := s.Repo.ListCharacters(r.Context(), projectID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeLookupError(w, err, "Character list")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"characters": chars})
@@ -442,12 +467,16 @@ func (s *Server) UpdateCharacter(w http.ResponseWriter, r *http.Request) {
 
 	ch, err := s.Repo.GetCharacter(r.Context(), charID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Character not found")
+		writeLookupError(w, err, "Character")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), ch.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -489,12 +518,16 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 
 	ch, err := s.Repo.GetCharacter(r.Context(), charID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Character not found")
+		writeLookupError(w, err, "Character")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), ch.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -532,7 +565,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 	// Pre-moderation
 	blocked, reason, err := s.checkPromptModeration(r, prompt, hashedUID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 	if blocked {
@@ -592,7 +625,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Character reference generation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -630,12 +663,16 @@ func (s *Server) ApproveCharacter(w http.ResponseWriter, r *http.Request) {
 
 	ch, err := s.Repo.GetCharacter(r.Context(), charID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Character not found")
+		writeLookupError(w, err, "Character")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), ch.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -672,7 +709,11 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("id")
 
 	proj, err := s.Repo.GetProject(r.Context(), projectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusNotFound, "Project not found")
 		return
 	}
@@ -691,7 +732,7 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 	// Pre-moderation
 	blocked, reason, err := s.checkPromptModeration(r, proj.OriginalScript, hashedUID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 	if blocked {
@@ -728,9 +769,9 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		errMsg := err.Error()
+		errMsg := safeGenerationMessage(err)
 		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("AI script analysis failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -796,13 +837,21 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("id")
 
 	proj, err := s.Repo.GetProject(r.Context(), projectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusNotFound, "Project not found")
 		return
 	}
 
 	// Check character reference approval gate
-	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
+	chars, err := s.Repo.ListCharacters(r.Context(), proj.ID)
+	if err != nil {
+		writeLookupError(w, err, "Character list")
+		return
+	}
 	for _, ch := range chars {
 		if ch.ApprovedAt == nil || domain.IsApprovalStale(ch.ApprovedAt, ch.UpdatedAt) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("Character %s must be approved", ch.Name))
@@ -824,7 +873,7 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 	// Pre-moderation
 	blocked, reason, err := s.checkPromptModeration(r, proj.OriginalScript, hashedUID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 	if blocked {
@@ -891,9 +940,9 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		errMsg := err.Error()
+		errMsg := safeGenerationMessage(err)
 		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Chapter outline generation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -926,14 +975,18 @@ func (s *Server) ListChapters(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("id")
 
 	proj, err := s.Repo.GetProject(r.Context(), projectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusNotFound, "Project not found")
 		return
 	}
 
 	chapters, err := s.Repo.ListChapters(r.Context(), projectID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeLookupError(w, err, "Chapter list")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"chapters": chapters})
@@ -946,12 +999,16 @@ func (s *Server) UpdateChapter(w http.ResponseWriter, r *http.Request) {
 
 	c, err := s.Repo.GetChapter(r.Context(), chapID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -991,12 +1048,16 @@ func (s *Server) ApproveChapter(w http.ResponseWriter, r *http.Request) {
 
 	c, err := s.Repo.GetChapter(r.Context(), chapID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1034,12 +1095,16 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 
 	c, err := s.Repo.GetChapter(r.Context(), chapID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1069,7 +1134,7 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 	// Pre-moderation
 	blocked, reason, err := s.checkPromptModeration(r, chapterScript+" "+c.Summary+" "+c.Title, hashedUID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 	if blocked {
@@ -1095,7 +1160,11 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
+	chars, err := s.Repo.ListCharacters(r.Context(), proj.ID)
+	if err != nil {
+		writeLookupError(w, err, "Character list")
+		return
+	}
 	var charNames []string
 	for _, ch := range chars {
 		charNames = append(charNames, ch.Name)
@@ -1117,9 +1186,9 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		errMsg := err.Error()
+		errMsg := safeGenerationMessage(err)
 		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Panel text generation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -1200,17 +1269,25 @@ func (s *Server) ListPanels(w http.ResponseWriter, r *http.Request) {
 
 	c, err := s.Repo.GetChapter(r.Context(), chapID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
-	panels, _ := s.Repo.ListPanels(r.Context(), chapID)
+	panels, err := s.Repo.ListPanels(r.Context(), chapID)
+	if err != nil {
+		writeLookupError(w, err, "Panel list")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"panels": panels})
 }
 
@@ -1239,18 +1316,22 @@ func (s *Server) UpdatePanel(w http.ResponseWriter, r *http.Request) {
 
 	p, err := s.Repo.GetPanel(r.Context(), panID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Panel not found")
+		writeLookupError(w, err, "Panel")
 		return
 	}
 
 	c, err := s.Repo.GetChapter(r.Context(), p.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1287,7 +1368,7 @@ func (s *Server) UpdatePanel(w http.ResponseWriter, r *http.Request) {
 	// Cascade: panel edit stales parent page draft approval (SPEC 3.5, 3.6, ARCHITECTURE 5.3)
 	pages, err := s.Repo.ListPages(r.Context(), p.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to load pages for approval invalidation")
+		writeLookupError(w, err, "Page list")
 		return
 	}
 	for _, pg := range pages {
@@ -1313,19 +1394,31 @@ func (s *Server) ListPages(w http.ResponseWriter, r *http.Request) {
 
 	c, err := s.Repo.GetChapter(r.Context(), chapID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
-	pages, _ := s.Repo.ListPages(r.Context(), chapID)
+	pages, err := s.Repo.ListPages(r.Context(), chapID)
+	if err != nil {
+		writeLookupError(w, err, "Page list")
+		return
+	}
 	for _, page := range pages {
 		approval, approvalErr := s.Repo.GetLatestApproval(r.Context(), "colour_page", page.ID)
+		if approvalErr != nil && !errors.Is(approvalErr, db.ErrNotFound) {
+			writeLookupError(w, approvalErr, "Colour approval")
+			return
+		}
 		if approvalErr == nil && page.ColourImageUploadedAt != nil && approval.ApprovedAt.After(*page.ColourImageUploadedAt) && !domain.IsApprovalStale(&approval.ApprovedAt, page.UpdatedAt) {
 			approvedAt := approval.ApprovedAt
 			page.ColourApprovedAt = &approvedAt
@@ -1341,18 +1434,22 @@ func (s *Server) UpdatePage(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 
 	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1385,18 +1482,22 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 
 	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1408,7 +1509,11 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prerequisite approval check: character references & chapter outline (ARCHITECTURE 5.3)
-	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
+	chars, err := s.Repo.ListCharacters(r.Context(), proj.ID)
+	if err != nil {
+		writeLookupError(w, err, "Character list")
+		return
+	}
 	allCharsApproved := len(chars) > 0
 	for _, ch := range chars {
 		if ch.ApprovedAt == nil || domain.IsApprovalStale(ch.ApprovedAt, ch.UpdatedAt) {
@@ -1416,7 +1521,11 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	outlineApp, _ := s.Repo.GetLatestApproval(r.Context(), "chapter_outline", c.ID)
+	outlineApp, err := s.Repo.GetLatestApproval(r.Context(), "chapter_outline", c.ID)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		writeLookupError(w, err, "Chapter outline approval")
+		return
+	}
 	outlineApproved := outlineApp != nil && !domain.IsApprovalStale(&outlineApp.ApprovedAt, c.UpdatedAt)
 
 	prereqs := domain.ApprovedPrereqs{
@@ -1434,7 +1543,11 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allPanels, _ := s.Repo.ListPanels(r.Context(), c.ID)
+	allPanels, err := s.Repo.ListPanels(r.Context(), c.ID)
+	if err != nil {
+		writeLookupError(w, err, "Panel list")
+		return
+	}
 	panelMap := make(map[string]*domain.Panel)
 	for _, p := range allPanels {
 		panelMap[p.ID] = p
@@ -1469,7 +1582,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	// Pre-moderation
 	blocked, reason, err := s.checkPromptModeration(r, strings.Join(combinedText, " "), hashedUID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Prompt moderation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 	if blocked {
@@ -1523,7 +1636,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Draft sketch generation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -1560,18 +1673,22 @@ func (s *Server) ApproveDraft(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 
 	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1623,18 +1740,22 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 
 	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1657,9 +1778,17 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
+	chars, err := s.Repo.ListCharacters(r.Context(), proj.ID)
+	if err != nil {
+		writeLookupError(w, err, "Character list")
+		return
+	}
 
-	allPanels, _ := s.Repo.ListPanels(r.Context(), c.ID)
+	allPanels, err := s.Repo.ListPanels(r.Context(), c.ID)
+	if err != nil {
+		writeLookupError(w, err, "Panel list")
+		return
+	}
 	panelMap := make(map[string]*domain.Panel)
 	for _, p := range allPanels {
 		panelMap[p.ID] = p
@@ -1736,7 +1865,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Line art generation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -1780,18 +1909,22 @@ func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 
 	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1825,18 +1958,22 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 
 	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1872,7 +2009,11 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 
 	// Gate checks:
 	// 1. Chapter outline and character references must be approved
-	allChars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
+	allChars, err := s.Repo.ListCharacters(r.Context(), proj.ID)
+	if err != nil {
+		writeLookupError(w, err, "Character list")
+		return
+	}
 	allRefsApproved := len(allChars) > 0
 	mainReferenceCount := 0
 	for _, ch := range allChars {
@@ -1881,6 +2022,10 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		}
 		mainReferenceCount++
 		approval, err := s.Repo.GetLatestApproval(r.Context(), "character_reference", ch.ID)
+		if err != nil && !errors.Is(err, db.ErrNotFound) {
+			writeLookupError(w, err, "Character approval")
+			return
+		}
 		if err != nil || ch.ReferenceImageURL == "" || domain.IsApprovalStale(&approval.ApprovedAt, ch.UpdatedAt) {
 			allRefsApproved = false
 			break
@@ -1890,6 +2035,10 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		allRefsApproved = false
 	}
 	outlineApproval, err := s.Repo.GetLatestApproval(r.Context(), "chapter_outline", c.ID)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		writeLookupError(w, err, "Chapter outline approval")
+		return
+	}
 	outlineApproved := err == nil && domain.CheckChapterOutlineApproval(&outlineApproval.ApprovedAt, c.UpdatedAt) == nil
 
 	if chosenVariant == "draft-conditioned" {
@@ -1918,7 +2067,11 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allPanels, _ := s.Repo.ListPanels(r.Context(), c.ID)
+	allPanels, err := s.Repo.ListPanels(r.Context(), c.ID)
+	if err != nil {
+		writeLookupError(w, err, "Panel list")
+		return
+	}
 	panelMap := make(map[string]*domain.Panel)
 	for _, p := range allPanels {
 		panelMap[p.ID] = p
@@ -2002,7 +2155,7 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Painted page generation failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -2043,18 +2196,22 @@ func (s *Server) ApprovePaintedPage(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 
 	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -2098,12 +2255,22 @@ func (s *Server) GetColourPalette(w http.ResponseWriter, r *http.Request) {
 		if status == http.StatusNotFound {
 			message = "Page not found"
 		}
+		if status >= http.StatusInternalServerError {
+			message = "Unable to load the requested resource."
+		}
 		writeError(w, status, message)
 		return
 	}
 	cp, err := s.Repo.GetColourPalette(r.Context(), pageID)
-	if err != nil {
+	if errors.Is(err, db.ErrNotFound) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"palette": map[string]string{}})
+		return
+	}
+	if err != nil || cp == nil {
+		if err == nil {
+			err = errors.New("palette repository returned no data")
+		}
+		writeLookupError(w, err, "Colour palette")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"palette": cp.Palette})
@@ -2116,18 +2283,22 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 
 	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -2203,7 +2374,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
 			return
 		}
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Colour palette suggestion failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -2241,6 +2412,9 @@ func (s *Server) UpdateColourPalette(w http.ResponseWriter, r *http.Request) {
 		if status == http.StatusNotFound {
 			message = "Page not found"
 		}
+		if status >= http.StatusInternalServerError {
+			message = "Unable to load the requested resource."
+		}
 		writeError(w, status, message)
 		return
 	}
@@ -2276,16 +2450,20 @@ func (s *Server) UploadColourImage(w http.ResponseWriter, r *http.Request) {
 	pageID := r.PathValue("id")
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 	chapter, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 	project, err := s.Repo.GetProject(r.Context(), chapter.ProjectID)
-	if err != nil || project.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if project.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -2352,17 +2530,21 @@ func (s *Server) ApproveColour(w http.ResponseWriter, r *http.Request) {
 
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Page not found")
+		writeLookupError(w, err, "Page")
 		return
 	}
 	chapter, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Chapter not found")
+		writeLookupError(w, err, "Chapter")
 		return
 	}
 
 	project, err := s.Repo.GetProject(r.Context(), chapter.ProjectID)
-	if err != nil || project.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if project.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -2397,8 +2579,11 @@ func (s *Server) ApproveColour(w http.ResponseWriter, r *http.Request) {
 func (s *Server) EstimateCost(w http.ResponseWriter, r *http.Request) {
 	if _, status := s.getOwnedProject(r, r.PathValue("id")); status != http.StatusOK {
 		message := "forbidden"
-		if status == http.StatusNotFound {
+		if status == http.StatusNotFound || status == http.StatusForbidden {
 			message = "Project not found"
+		}
+		if status >= http.StatusInternalServerError {
+			message = "Unable to load the requested resource."
 		}
 		writeError(w, status, message)
 		return
@@ -2423,7 +2608,7 @@ func (s *Server) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 
 	job, err := s.JobService.GetJob(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Job not found")
+		writeLookupError(w, err, "Job")
 		return
 	}
 
@@ -2431,18 +2616,22 @@ func (s *Server) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	if (job.Status == jobs.StatusPending || job.Status == jobs.StatusRunning) && s.AIClient != nil {
+	var workerStatus *gen.JobStatusResponse
+	if (job.Status == jobs.StatusPending || job.Status == jobs.StatusRunning || job.Status == jobs.StatusFailed || job.Status == jobs.StatusUncertain) && s.AIClient != nil {
 		// Reconcile a failed worker delivery even if the submitting HTTP connection
 		// was interrupted. Successful jobs complete after saving the entity link.
 		if status, statusErr := s.AIClient.GetJobStatus(r.Context(), job.ID); statusErr == nil && status != nil && (status.Status == jobs.StatusFailed || status.Status == jobs.StatusUncertain) {
-			if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, string(status.Status), status.ActualCost, status.ErrorMessage); err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			job, err = s.JobService.GetJob(r.Context(), job.ID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
+			workerStatus = status
+			if job.Status == jobs.StatusPending || job.Status == jobs.StatusRunning {
+				if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, string(status.Status), status.ActualCost, status.ErrorMessage); err != nil {
+					writeError(w, http.StatusInternalServerError, "Unable to update generation status.")
+					return
+				}
+				job, err = s.JobService.GetJob(r.Context(), job.ID)
+				if err != nil {
+					writeLookupError(w, err, "Job")
+					return
+				}
 			}
 		}
 	}
@@ -2453,7 +2642,18 @@ func (s *Server) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"job": job})
+	jobView := struct {
+		*domain.GenerationJob
+		ErrorCode         *string  `json:"error_code,omitempty"`
+		Retryable         *bool    `json:"retryable,omitempty"`
+		RetryAfterSeconds *float64 `json:"retry_after_seconds,omitempty"`
+	}{GenerationJob: job}
+	if workerStatus != nil {
+		jobView.ErrorCode = workerStatus.ErrorCode
+		jobView.Retryable = workerStatus.Retryable
+		jobView.RetryAfterSeconds = workerStatus.RetryAfterSeconds
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"job": jobView})
 }
 
 // CancelJob handles POST /api/v1/generation-jobs/{id}/cancel
@@ -2463,7 +2663,7 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 
 	job, err := s.JobService.GetJob(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Job not found")
+		writeLookupError(w, err, "Job")
 		return
 	}
 
@@ -2516,8 +2716,12 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("id")
 
 	proj, err := s.Repo.GetProject(r.Context(), projectID)
-	if err != nil || proj.UserID != userID {
-		writeError(w, http.StatusNotFound, "Project not found")
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 
@@ -2526,10 +2730,18 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chapters, _ := s.Repo.ListChapters(r.Context(), proj.ID)
+	chapters, err := s.Repo.ListChapters(r.Context(), proj.ID)
+	if err != nil {
+		writeLookupError(w, err, "Chapter list")
+		return
+	}
 	var exportPages []gen.PageExportItem
 	for _, ch := range chapters {
-		pages, _ := s.Repo.ListPages(r.Context(), ch.ID)
+		pages, err := s.Repo.ListPages(r.Context(), ch.ID)
+		if err != nil {
+			writeLookupError(w, err, "Page list")
+			return
+		}
 		for _, pg := range pages {
 			type finishCandidate struct {
 				url         string
@@ -2552,6 +2764,10 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 
 			if pg.ColourImageURL != "" && pg.ColourImageUploadedAt != nil {
 				approval, approvalErr := s.Repo.GetLatestApproval(r.Context(), "colour_page", pg.ID)
+				if approvalErr != nil && !errors.Is(approvalErr, db.ErrNotFound) {
+					writeLookupError(w, approvalErr, "Colour approval")
+					return
+				}
 				if approvalErr == nil && approval.ApprovedAt.After(*pg.ColourImageUploadedAt) && !domain.IsApprovalStale(&approval.ApprovedAt, pg.UpdatedAt) {
 					var orig *string
 					if pg.LineArtImageURL != "" {
@@ -2658,9 +2874,9 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		errMsg := err.Error()
+		errMsg := safeGenerationMessage(err)
 		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Assemble PDF failed: %v", err))
+		writeGenerationError(w, err)
 		return
 	}
 
@@ -2691,12 +2907,16 @@ func (s *Server) GetExport(w http.ResponseWriter, r *http.Request) {
 
 	exp, err := s.Repo.GetExport(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Export not found")
+		writeLookupError(w, err, "Export")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), exp.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -2754,12 +2974,16 @@ func (s *Server) DownloadExport(w http.ResponseWriter, r *http.Request) {
 
 	exp, err := s.Repo.GetExport(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Export not found")
+		writeLookupError(w, err, "Export")
 		return
 	}
 
 	proj, err := s.Repo.GetProject(r.Context(), exp.ProjectID)
-	if err != nil || proj.UserID != userID {
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -2863,6 +3087,24 @@ func generationErrorStatus(err error) int {
 
 // Stable error codes let clients distinguish lifetime book and rolling daily caps.
 func writeGenerationError(w http.ResponseWriter, err error) {
+	var serviceErr *gen.AIServiceError
+	if errors.As(err, &serviceErr) {
+		if serviceErr.RetryAfterSeconds != nil {
+			seconds := int(*serviceErr.RetryAfterSeconds)
+			if float64(seconds) < *serviceErr.RetryAfterSeconds {
+				seconds++
+			}
+			if seconds < 1 {
+				seconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		}
+		writeJSON(w, serviceErr.StatusCode, JSONResponse{
+			Code: serviceErr.Code, Message: serviceErr.Message,
+			Retryable: serviceErr.Retryable, RetryAfterSeconds: serviceErr.RetryAfterSeconds,
+		})
+		return
+	}
 	code := ""
 	switch {
 	case errors.Is(err, domain.ErrBookBudgetExceeded):
@@ -2871,8 +3113,16 @@ func writeGenerationError(w http.ResponseWriter, err error) {
 		code = "daily_image_limit_reached"
 	}
 	if code == "" {
-		writeError(w, generationErrorStatus(err), err.Error())
+		status := generationErrorStatus(err)
+		message := err.Error()
+		if status >= http.StatusInternalServerError {
+			code = "INTERNAL_ERROR"
+			message = "Generation could not be completed. Try again later."
+		} else {
+			code = "GENERATION_REJECTED"
+		}
+		writeJSON(w, status, JSONResponse{Code: code, Message: message})
 		return
 	}
-	writeJSON(w, generationErrorStatus(err), map[string]string{"error": err.Error(), "code": code})
+	writeJSON(w, generationErrorStatus(err), JSONResponse{Error: err.Error(), Code: code, Message: err.Error()})
 }

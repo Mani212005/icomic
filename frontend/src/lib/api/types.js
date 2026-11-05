@@ -102,6 +102,48 @@ export function formatApiError(err) {
 		};
 	}
 
+	const retryDelay = Number.isFinite(Number(err.retry_after_seconds))
+		? Math.max(1, Math.ceil(Number(err.retry_after_seconds)))
+		: null;
+	if (err.code === 'CONTENT_POLICY_REJECTED') {
+		return {
+			type: 'moderation_rejected',
+			title: 'Review this request',
+			message: rawMsg,
+			action: 'Edit the request to meet content guidelines, then try again.',
+			status: status || 400
+		};
+	}
+	if (err.code === 'RATE_LIMITED' || err.code === 'UPSTREAM_UNAVAILABLE') {
+		return {
+			type: 'service_unavailable',
+			title: 'Generation is temporarily unavailable',
+			message: rawMsg,
+			action: retryDelay ? `Try again in about ${retryDelay} seconds.` : 'Try again later.',
+			status: status || (err.code === 'RATE_LIMITED' ? 429 : 503),
+			retryable: err.retryable === true,
+			retry_after_seconds: retryDelay
+		};
+	}
+	if (err.code === 'OUTCOME_UNKNOWN') {
+		return {
+			type: 'generic',
+			title: 'Generation status is uncertain',
+			message: rawMsg,
+			action: 'Check the job status before trying again.',
+			status: status || 502
+		};
+	}
+	if (err.code === 'INVALID_PROVIDER_OUTPUT' || err.code === 'SERVICE_CONFIGURATION') {
+		return {
+			type: 'generic',
+			title: 'Generation could not be completed',
+			message: rawMsg,
+			action: err.code === 'SERVICE_CONFIGURATION' ? 'Contact support.' : 'Try again later.',
+			status: status || 502
+		};
+	}
+
 	if (
 		lower.includes('stale') ||
 		lower.includes('was modified after approval') ||

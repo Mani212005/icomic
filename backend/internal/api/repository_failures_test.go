@@ -21,6 +21,18 @@ type failingWriteRepository struct {
 	calls     int
 }
 
+type failingProjectReadRepository struct{ db.Repository }
+
+func (r *failingProjectReadRepository) GetProject(context.Context, string) (*domain.Project, error) {
+	return nil, errors.New("injected database read failure")
+}
+
+type failingPaletteReadRepository struct{ db.Repository }
+
+func (r *failingPaletteReadRepository) GetColourPalette(context.Context, string) (*domain.ColourPalette, error) {
+	return nil, errors.New("injected palette database read failure")
+}
+
 func (r *failingWriteRepository) fail(operation string) bool {
 	if operation != r.operation {
 		return false
@@ -179,6 +191,33 @@ func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 				t.Fatalf("missing error: %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestProjectReadFailureIsNotReportedAsNotFound(t *testing.T) {
+	s, _, repo := setupTestServer(true, "test-user")
+	s.Repo = &failingProjectReadRepository{Repository: repo}
+	rec := httptest.NewRecorder()
+	s.NewRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/projects/00000000-0000-0000-0000-000000000001", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("database read failure returned %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "injected database") {
+		t.Fatalf("database details leaked to client: %s", rec.Body.String())
+	}
+}
+
+func TestPaletteReadFailureIsNotReturnedAsEmptySuccess(t *testing.T) {
+	s, _, repo := setupTestServer(true, "test-user")
+	seedWriteFailureFlow(t, repo)
+	s.Repo = &failingPaletteReadRepository{Repository: repo}
+	rec := httptest.NewRecorder()
+	s.NewRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("palette read failure returned %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "injected palette database") {
+		t.Fatalf("database details leaked to client: %s", rec.Body.String())
 	}
 }
 

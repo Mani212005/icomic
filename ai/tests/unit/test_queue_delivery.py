@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fakeredis import FakeRedis
 
+from app.adapters.meta_http import MetaContentPolicyError, MetaRateLimitError
 from app.adapters.queue.redis import RedisQueueAdapter
 from app.services.worker import QUEUE, GenerationWorker
 
@@ -54,6 +55,12 @@ def test_unknown_provider_outcome_is_saved_as_terminal_uncertain():
     saved = queue.get_job(QUEUE, "uncertain-key")
     assert saved["status"] == "uncertain"
     assert saved["http_status"] == 502
+    assert saved["error_code"] == "OUTCOME_UNKNOWN"
+    assert (
+        saved["error_message"]
+        == "The generation outcome could not be confirmed. Check its status before retrying."
+    )
+    assert saved["error_message"] != "outcome is unknown"
     assert worker.run_once() is False
 
 
@@ -81,3 +88,50 @@ def test_duplicate_running_delivery_does_not_generate_concurrently():
     assert worker.run_once()
     queue.finish(owner, {"status": "done", "response": {"image_url": "saved"}})
     assert queue.get_job(QUEUE, "key")["status"] == "done"
+
+
+def test_worker_persists_safe_structured_retryable_error():
+    queue = RedisQueueAdapter(client=FakeRedis())
+    queue.enqueue(QUEUE, {"operation": "image", "request": {}}, "error-key")
+    worker = GenerationWorker(queue)
+    provider_error = MetaRateLimitError("private upstream body with token=secret", retry_after=17.5)
+    provider_error.actual_cost = 0.07
+    worker.register(
+        "image",
+        lambda request: (_ for _ in ()).throw(provider_error),
+    )
+
+    assert worker.run_once()
+    saved = queue.get_job(QUEUE, "error-key")
+
+    assert saved["error_code"] == "RATE_LIMITED"
+    assert saved["error_message"] == "Generation is temporarily rate limited. Try again later."
+    assert saved["retryable"] is True
+    assert saved["retry_after_seconds"] == 17.5
+    assert saved["actual_cost"] == 0.07
+    assert "secret" not in str(saved)
+    assert "private upstream" not in str(saved)
+
+
+def test_worker_persists_policy_revision_guidance_without_provider_text():
+    queue = RedisQueueAdapter(client=FakeRedis())
+    queue.enqueue(QUEUE, {"operation": "image", "request": {}}, "policy-key")
+    worker = GenerationWorker(queue)
+    worker.register(
+        "image",
+        lambda request: (_ for _ in ()).throw(
+            MetaContentPolicyError("blocked because private prompt content was unsafe")
+        ),
+    )
+
+    assert worker.run_once()
+    saved = queue.get_job(QUEUE, "policy-key")
+
+    assert saved["error_code"] == "CONTENT_POLICY_REJECTED"
+    assert (
+        saved["error_message"]
+        == "This request could not be completed under content guidelines. Edit it and try again."
+    )
+    assert saved["retryable"] is False
+    assert saved.get("retry_after_seconds") is None
+    assert "private prompt" not in str(saved)

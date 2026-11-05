@@ -106,4 +106,46 @@ def test_generation_failure_is_saved_and_not_reexecuted():
     assert len(calls) == 1
     status = client.get(f"/internal/v1/job/{payload['job_id']}/status")
     assert status.json()["status"] == "failed"
-    assert status.json()["error_message"] == "Generation rejected"
+    assert status.json()["error_code"] == "INVALID_ARGUMENT"
+    assert status.json()["error_message"] == "Review the request and try again."
+    assert status.json()["retryable"] is False
+
+
+def test_retryable_provider_error_uses_safe_shared_envelope():
+    from app.adapters.meta_http import MetaRateLimitError
+
+    app = create_app()
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(1)
+        raise MetaRateLimitError("raw provider body token=secret", retry_after=13)
+
+    app.state.image_adapter.generate = fail
+    payload = {
+        "job_id": "11111111-1111-4111-8111-444444444444",
+        "hashed_user_id": "test-user",
+        "project_id": "22222222-2222-4222-8222-222222222222",
+        "character_id": "33333333-3333-4333-8333-333333333333",
+        "character_name": "Maya",
+        "prompt": "An explorer",
+        "style": "classic-comic",
+    }
+    client = TestClient(app)
+    response = client.post("/internal/v1/generate-character-reference", json=payload)
+    body = response.json()
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "13"
+    assert body == {
+        "code": "RATE_LIMITED",
+        "message": "Generation is temporarily rate limited. Try again later.",
+        "details": None,
+        "retryable": True,
+        "retry_after_seconds": 13.0,
+    }
+    assert "secret" not in response.text and "raw provider" not in response.text
+    assert len(calls) == 1
+    status = client.get(f"/internal/v1/job/{payload['job_id']}/status").json()
+    assert status["error_code"] == "RATE_LIMITED"
+    assert status["retryable"] is True
+    assert status["retry_after_seconds"] == 13

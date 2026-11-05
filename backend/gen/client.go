@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"icomic/backend/internal/domain"
@@ -66,14 +67,46 @@ func (c *AIServiceClient) postJSON(ctx context.Context, path string, reqBody int
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("ai service %s returned status %d: %s", path, resp.StatusCode, string(body))
+		return decodeServiceError(resp.Body, resp.StatusCode, resp.Header)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(respBody); err != nil {
 		return fmt.Errorf("decode response from %s: %w", path, err)
 	}
 	return nil
+}
+
+// AIServiceError carries only the service's safe, structured error envelope.
+// Provider response bodies and transport details are deliberately discarded.
+type AIServiceError struct {
+	Code              string
+	Message           string
+	StatusCode        int
+	Retryable         bool
+	RetryAfterSeconds *float64
+}
+
+func (e *AIServiceError) Error() string { return e.Message }
+
+func decodeServiceError(body io.Reader, status int, headers http.Header) error {
+	var response ErrorResponse
+	if err := json.NewDecoder(io.LimitReader(body, 64*1024)).Decode(&response); err != nil || response.Code == "" || response.Message == "" {
+		return &AIServiceError{
+			Code: "AI_SERVICE_ERROR", Message: "Generation service could not complete the request.", StatusCode: status,
+		}
+	}
+	retryable := response.Retryable != nil && *response.Retryable
+	retryAfter := response.RetryAfterSeconds
+	if retryAfter == nil {
+		if seconds, err := strconv.Atoi(headers.Get("Retry-After")); err == nil && seconds >= 0 {
+			value := float64(seconds)
+			retryAfter = &value
+		}
+	}
+	return &AIServiceError{
+		Code: response.Code, Message: response.Message, StatusCode: status,
+		Retryable: retryable, RetryAfterSeconds: retryAfter,
+	}
 }
 
 func (c *AIServiceClient) AnalyzeScript(ctx context.Context, req AnalyzeScriptRequest) (*AnalyzeScriptResponse, error) {
@@ -177,8 +210,7 @@ func (c *AIServiceClient) GetJobStatus(ctx context.Context, jobID string) (*JobS
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ai service %s returned %d: %s", path, resp.StatusCode, string(body))
+		return nil, decodeServiceError(resp.Body, resp.StatusCode, resp.Header)
 	}
 
 	var statusResp JobStatusResponse

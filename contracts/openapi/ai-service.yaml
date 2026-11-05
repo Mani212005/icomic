@@ -423,6 +423,13 @@ components:
         details:
           type: object
           additionalProperties: true
+        retryable:
+          type: boolean
+          default: false
+        retry_after_seconds:
+          type: number
+          nullable: true
+          minimum: 0
 
     CharacterProfile:
       type: object
@@ -1154,3 +1161,13 @@ components:
         error_message:
           type: string
           nullable: true
+        error_code:
+          type: string
+          nullable: true
+        retryable:
+          type: boolean
+          default: false
+        retry_after_seconds:
+          type: number
+          nullable: true
+          minimum: 0

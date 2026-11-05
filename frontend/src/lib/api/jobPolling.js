@@ -2,11 +2,14 @@
 import { JOB_STATUS } from './types.js';
 
 export class JobPollingError extends Error {
-	constructor(message, job = null, code = 'JOB_ERROR') {
+	constructor(message, job = null, code = 'JOB_ERROR', options = {}) {
 		super(message);
 		this.name = 'JobPollingError';
 		this.job = job;
 		this.code = code;
+		this.status = options.status;
+		this.retryable = options.retryable === true;
+		this.retry_after_seconds = options.retry_after_seconds;
 	}
 }
 
@@ -47,7 +50,12 @@ export async function pollJob(apiClient, jobId, options = {}) {
 			throw new JobPollingError(
 				job.error_message || `Job ${jobId} failed`,
 				job,
-				'JOB_FAILED'
+				job.error_code || 'JOB_FAILED',
+				{
+					status: job.error_code === 'RATE_LIMITED' ? 429 : undefined,
+					retryable: job.retryable,
+					retry_after_seconds: job.retry_after_seconds
+				}
 			);
 		}
 

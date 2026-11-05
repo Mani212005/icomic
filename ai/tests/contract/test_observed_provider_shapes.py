@@ -100,21 +100,21 @@ def request_for(operation, image_url):
 @pytest.mark.parametrize(
     "operation,name,expected",
     [
-        ("analyze-script", "schema_echo", "schema_echo"),
-        ("analyze-script", "characters_object", "schema_mismatch"),
-        ("generate-chapter-outline", "outline_list", "schema_mismatch"),
-        ("generate-chapter-outline", "schema_echo", "schema_echo"),
-        ("generate-panel-text", "schema_echo", "schema_echo"),
-        ("analyze-script", "empty_length", "empty content"),
-        ("generate-panel-text", "truncated_json", "incomplete output"),
-        ("generate-panel-text", "invalid_json", "invalid_or_incomplete_json"),
-        ("moderate-prompt", "http_404", "404"),
-        ("moderate-prompt", "moderation_length_873", "incomplete output"),
-        ("generate-panel-text", "http_400", "400"),
-        ("suggest-colour-palette", "palette_schema_echo", "schema_echo"),
-        ("suggest-colour-palette", "palette_list", "schema_mismatch"),
-        ("suggest-colour-palette", "palette_invalid_json", "invalid_or_incomplete_json"),
-        ("generate-character-reference", "invalid_image", "unrecognized_image_bytes"),
+        ("analyze-script", "schema_echo", "INVALID_PROVIDER_OUTPUT"),
+        ("analyze-script", "characters_object", "INVALID_PROVIDER_OUTPUT"),
+        ("generate-chapter-outline", "outline_list", "INVALID_PROVIDER_OUTPUT"),
+        ("generate-chapter-outline", "schema_echo", "INVALID_PROVIDER_OUTPUT"),
+        ("generate-panel-text", "schema_echo", "INVALID_PROVIDER_OUTPUT"),
+        ("analyze-script", "empty_length", "INVALID_PROVIDER_OUTPUT"),
+        ("generate-panel-text", "truncated_json", "INVALID_PROVIDER_OUTPUT"),
+        ("generate-panel-text", "invalid_json", "INVALID_PROVIDER_OUTPUT"),
+        ("moderate-prompt", "http_404", "UPSTREAM_ERROR"),
+        ("moderate-prompt", "moderation_length_873", "INVALID_PROVIDER_OUTPUT"),
+        ("generate-panel-text", "http_400", "UPSTREAM_ERROR"),
+        ("suggest-colour-palette", "palette_schema_echo", "INVALID_PROVIDER_OUTPUT"),
+        ("suggest-colour-palette", "palette_list", "INVALID_PROVIDER_OUTPUT"),
+        ("suggest-colour-palette", "palette_invalid_json", "INVALID_PROVIDER_OUTPUT"),
+        ("generate-character-reference", "invalid_image", "INVALID_PROVIDER_OUTPUT"),
     ],
 )
 def test_failed_shapes_stop_retain_usage_and_do_not_publish(
@@ -125,11 +125,15 @@ def test_failed_shapes_stop_retain_usage_and_do_not_publish(
     client = TestClient(create_app(adapters))
     request = request_for(operation, image_url)
     response = client.post("/internal/v1/" + operation, json=request)
-    assert response.status_code in (400, 500), response.text
-    assert expected in response.text
+    assert response.status_code == 502, response.text
+    assert response.json()["code"] == expected
+    assert response.json()["retryable"] is False
+    assert response.json()["retry_after_seconds"] is None
+    assert "raw provider" not in response.text
     status = client.get(f"/internal/v1/job/{request['job_id']}/status").json()
     report = adapters.cost_ledger.report()
     assert status["status"] == "failed"
+    assert status["error_code"] == expected
     assert len(report["calls"]) == 1
     assert status["actual_cost"] == pytest.approx(report["actual_spend_usd"])
     if name.startswith("http_"):
