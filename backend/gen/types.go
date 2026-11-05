@@ -149,6 +149,15 @@ type CharacterProfile struct {
 	VisualAttributes map[string]interface{} `json:"visual_attributes"`
 }
 
+// CharacterRenderIdentity Stored character identity paired with its approved reference image.
+type CharacterRenderIdentity struct {
+	CharacterID       string                 `json:"character_id"`
+	Description       string                 `json:"description"`
+	Name              string                 `json:"name"`
+	ReferenceImageURL string                 `json:"reference_image_url"`
+	VisualAttributes  map[string]interface{} `json:"visual_attributes"`
+}
+
 // ColourRegionSuggestion defines model for ColourRegionSuggestion.
 type ColourRegionSuggestion struct {
 	HexColor   string `json:"hex_color"`
@@ -201,14 +210,16 @@ type GenerateCharacterReferenceResponse struct {
 
 // GenerateDraftSketchRequest defines model for GenerateDraftSketchRequest.
 type GenerateDraftSketchRequest struct {
-	CharacterReferenceImageURLs *[]string       `json:"character_reference_image_urls,omitempty"`
-	HashedUserID                string          `json:"hashed_user_id"`
-	JobID                       string          `json:"job_id"`
-	PageID                      string          `json:"page_id"`
-	PageNumber                  int             `json:"page_number"`
-	Panels                      []PanelTextItem `json:"panels"`
-	ProjectID                   string          `json:"project_id"`
-	Style                       string          `json:"style"`
+	// CharacterIdentities Stable ordered identities; reference images precede legacy URL-only references.
+	CharacterIdentities         *[]CharacterRenderIdentity `json:"character_identities,omitempty"`
+	CharacterReferenceImageURLs *[]string                  `json:"character_reference_image_urls,omitempty"`
+	HashedUserID                string                     `json:"hashed_user_id"`
+	JobID                       string                     `json:"job_id"`
+	PageID                      string                     `json:"page_id"`
+	PageNumber                  int                        `json:"page_number"`
+	Panels                      []PanelTextItem            `json:"panels"`
+	ProjectID                   string                     `json:"project_id"`
+	Style                       string                     `json:"style"`
 }
 
 // GenerateDraftSketchResponse defines model for GenerateDraftSketchResponse.
@@ -221,15 +232,17 @@ type GenerateDraftSketchResponse struct {
 
 // GenerateLineArtRequest defines model for GenerateLineArtRequest.
 type GenerateLineArtRequest struct {
-	CharacterReferenceImageURLs *[]string       `json:"character_reference_image_urls,omitempty"`
-	DraftImageURL               string          `json:"draft_image_url"`
-	HashedUserID                string          `json:"hashed_user_id"`
-	JobID                       string          `json:"job_id"`
-	PageID                      string          `json:"page_id"`
-	PageNumber                  int             `json:"page_number"`
-	Panels                      []PanelTextItem `json:"panels"`
-	ProjectID                   string          `json:"project_id"`
-	Style                       string          `json:"style"`
+	// CharacterIdentities Stable ordered identities; reference images precede legacy URL-only references.
+	CharacterIdentities         *[]CharacterRenderIdentity `json:"character_identities,omitempty"`
+	CharacterReferenceImageURLs *[]string                  `json:"character_reference_image_urls,omitempty"`
+	DraftImageURL               string                     `json:"draft_image_url"`
+	HashedUserID                string                     `json:"hashed_user_id"`
+	JobID                       string                     `json:"job_id"`
+	PageID                      string                     `json:"page_id"`
+	PageNumber                  int                        `json:"page_number"`
+	Panels                      []PanelTextItem            `json:"panels"`
+	ProjectID                   string                     `json:"project_id"`
+	Style                       string                     `json:"style"`
 }
 
 // GenerateLineArtResponse defines model for GenerateLineArtResponse.

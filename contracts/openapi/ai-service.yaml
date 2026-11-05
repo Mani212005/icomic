@@ -695,6 +695,28 @@ components:
           items:
             $ref: '#/components/schemas/PanelTextItem'
 
+    CharacterRenderIdentity:
+      type: object
+      description: Stored character identity paired with its approved reference image.
+      required:
+        - character_id
+        - name
+        - description
+        - visual_attributes
+        - reference_image_url
+      properties:
+        character_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        visual_attributes:
+          type: object
+          additionalProperties: true
+        reference_image_url:
+          type: string
+
     GenerateDraftSketchRequest:
       type: object
       required:
@@ -729,6 +751,13 @@ components:
           type: array
           items:
             type: string
+          default: []
+
+        character_identities:
+          type: array
+          description: Stable ordered identities; reference images precede legacy URL-only references.
+          items:
+            $ref: '#/components/schemas/CharacterRenderIdentity'
           default: []
 
     GenerateDraftSketchResponse:
@@ -786,6 +815,13 @@ components:
           type: array
           items:
             type: string
+          default: []
+
+        character_identities:
+          type: array
+          description: Stable ordered identities; reference images precede legacy URL-only references.
+          items:
+            $ref: '#/components/schemas/CharacterRenderIdentity'
           default: []
 
     GenerateLineArtResponse:

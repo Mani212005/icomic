@@ -506,10 +506,11 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 
 	prompt := body.Prompt
 	if prompt == "" {
-		prompt = ch.Description
-	}
-	if prompt == "" {
-		prompt = ch.Name
+		prompt, err = defaultCharacterReferencePrompt(ch)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Invalid character visual attributes")
+			return
+		}
 	}
 	style := body.Style
 	if style == "" {
@@ -1352,14 +1353,10 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	// Prerequisite approval check: character references & chapter outline (ARCHITECTURE 5.3)
 	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
 	allCharsApproved := len(chars) > 0
-	var charImageURLs []string
 	for _, ch := range chars {
 		if ch.ApprovedAt == nil || domain.IsApprovalStale(ch.ApprovedAt, ch.UpdatedAt) {
 			allCharsApproved = false
 			break
-		}
-		if ch.ReferenceImageURL != "" {
-			charImageURLs = append(charImageURLs, ch.ReferenceImageURL)
 		}
 	}
 	outlineApp, _ := s.Repo.GetLatestApproval(r.Context(), "chapter_outline", c.ID)
@@ -1454,14 +1451,14 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(context.WithoutCancel(r.Context()))
 	draftResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateDraftSketchResponse, error) {
 		return s.AIClient.GenerateDraftSketch(ctx, gen.GenerateDraftSketchRequest{
-			JobID:                       job.ID,
-			HashedUserID:                hashedUID,
-			ProjectID:                   proj.ID,
-			PageID:                      pg.ID,
-			PageNumber:                  pg.PageNumber,
-			Panels:                      panelItems,
-			Style:                       draftStyle,
-			CharacterReferenceImageURLs: optionalStringSlice(charImageURLs),
+			JobID:               job.ID,
+			HashedUserID:        hashedUID,
+			ProjectID:           proj.ID,
+			PageID:              pg.ID,
+			PageNumber:          pg.PageNumber,
+			Panels:              panelItems,
+			Style:               draftStyle,
+			CharacterIdentities: characterRenderIdentities(chars),
 		})
 	})
 	if err != nil {
@@ -1586,12 +1583,6 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	chars, _ := s.Repo.ListCharacters(r.Context(), proj.ID)
-	var charImageURLs []string
-	for _, ch := range chars {
-		if ch.ReferenceImageURL != "" {
-			charImageURLs = append(charImageURLs, ch.ReferenceImageURL)
-		}
-	}
 
 	allPanels, _ := s.Repo.ListPanels(r.Context(), c.ID)
 	panelMap := make(map[string]*domain.Panel)
@@ -1654,15 +1645,15 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(context.WithoutCancel(r.Context()))
 	lineArtResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateLineArtResponse, error) {
 		return s.AIClient.GenerateLineArt(ctx, gen.GenerateLineArtRequest{
-			JobID:                       job.ID,
-			HashedUserID:                hashedUID,
-			ProjectID:                   proj.ID,
-			PageID:                      pg.ID,
-			PageNumber:                  pg.PageNumber,
-			DraftImageURL:               pg.DraftImageURL,
-			Panels:                      panelItems,
-			Style:                       lineArtStyle,
-			CharacterReferenceImageURLs: optionalStringSlice(charImageURLs),
+			JobID:               job.ID,
+			HashedUserID:        hashedUID,
+			ProjectID:           proj.ID,
+			PageID:              pg.ID,
+			PageNumber:          pg.PageNumber,
+			DraftImageURL:       pg.DraftImageURL,
+			Panels:              panelItems,
+			Style:               lineArtStyle,
+			CharacterIdentities: characterRenderIdentities(chars),
 		})
 	})
 	if err != nil {

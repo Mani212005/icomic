@@ -5,9 +5,9 @@ from uuid import uuid4
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
-from ..gen.models import PanelTextItem
-from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
+from ..gen.models import CharacterRenderIdentity, PanelTextItem
 from .images import store_page_image
+from .render_brief import build_page_render_request
 
 
 class LineArtService:
@@ -26,23 +26,24 @@ class LineArtService:
         style: str,
         hashed_user_id: str,
         character_reference_image_urls: list[str] | None = None,
+        character_identities: list[CharacterRenderIdentity] | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
         """Generate final clean closed-contour inking from approved draft."""
-        panel_count = len(panels)
-        prompt = (
-            f"Comic book page {page_number} final black and white line art, {panel_count}-panel grid. "
-            f"Bold clean closed-contour comic book lines, thick outlines, flat white fills, "
-            f"no shading, high contrast graphic novel inking based on draft {draft_image_url}. Style: {style}. "
-            f"{IMAGE_ONLY_INSTRUCTIONS}"
+        brief, reference_images = build_page_render_request(
+            page_number=page_number,
+            panels=panels,
+            style=style,
+            storage=self.storage_adapter,
+            character_identities=character_identities,
+            character_reference_image_urls=character_reference_image_urls,
+            draft_image_url=draft_image_url,
         )
-        if character_reference_image_urls:
-            refs = ", ".join(character_reference_image_urls)
-            prompt += f". Character references: {refs}"
-
-        reference_images: list[bytes] = [self.storage_adapter.get(draft_image_url)]
-        if character_reference_image_urls:
-            for ref_url in character_reference_image_urls:
-                reference_images.append(self.storage_adapter.get(ref_url))
+        stage_prompt = (
+            f"Comic book page {page_number} final black and white line art, {len(panels)}-panel grid. "
+            "Bold clean closed-contour comic book lines, thick outlines, flat white fills, "
+            "no shading, high contrast graphic novel inking. Follow the approved draft composition. "
+        )
+        prompt = f"{stage_prompt}\n{brief}"
 
         result = self.image_adapter.generate(
             prompt=prompt,

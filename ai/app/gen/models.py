@@ -132,6 +132,18 @@ class GeneratePanelTextResponse(BaseModel):
     panels: list[PanelTextItem]
 
 
+class CharacterRenderIdentity(BaseModel):
+    """
+    Stored character identity paired with its approved reference image.
+    """
+
+    character_id: str
+    name: str
+    description: str
+    visual_attributes: dict[str, Any]
+    reference_image_url: str
+
+
 class GenerateDraftSketchRequest(BaseModel):
     job_id: str
     hashed_user_id: str
@@ -141,6 +153,11 @@ class GenerateDraftSketchRequest(BaseModel):
     panels: list[PanelTextItem]
     style: str
     character_reference_image_urls: list[str] = []
+    character_identities: list[CharacterRenderIdentity] = Field(
+        [],
+        description="Stable ordered identities; reference images precede legacy URL-only references.",
+        validate_default=True,
+    )
 
 
 class GenerateDraftSketchResponse(BaseModel):
@@ -160,6 +177,11 @@ class GenerateLineArtRequest(BaseModel):
     panels: list[PanelTextItem]
     style: str
     character_reference_image_urls: list[str] = []
+    character_identities: list[CharacterRenderIdentity] = Field(
+        [],
+        description="Stable ordered identities; reference images precede legacy URL-only references.",
+        validate_default=True,
+    )
 
 
 class GenerateLineArtResponse(BaseModel):

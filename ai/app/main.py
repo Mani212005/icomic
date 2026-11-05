@@ -275,6 +275,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             style=req.style,
             hashed_user_id=req.hashed_user_id,
             character_reference_image_urls=req.character_reference_image_urls,
+            character_identities=req.character_identities,
         )
         return GenerateDraftSketchResponse(
             job_id=str(req.job_id),
@@ -297,6 +298,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             style=req.style,
             hashed_user_id=req.hashed_user_id,
             character_reference_image_urls=req.character_reference_image_urls,
+            character_identities=req.character_identities,
         )
         return GenerateLineArtResponse(
             job_id=str(req.job_id),
