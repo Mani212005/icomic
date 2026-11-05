@@ -49,8 +49,8 @@ export class MockApiClient {
 			art_style: 'cyberpunk-noir',
 			chapter_count: 3,
 			is_sample: true,
-			sample_label: 'Approved Real Model Output',
-			sample_source: 'Meta AI Production Run',
+			sample_label: 'Sample',
+			sample_source: 'Meta AI',
 			script: 'In the neon-drenched alleys of Sector 4, Detective Jack Vance pursued the enigmatic cipher...',
 			original_script: 'In the neon-drenched alleys of Sector 4, Detective Jack Vance pursued the enigmatic cipher...',
 			created_at: now,
@@ -70,7 +70,7 @@ export class MockApiClient {
 			reference_image_url:
 				'/mock/sample-character.webp',
 			is_sample: true,
-			sample_label: 'Approved Model Reference',
+			sample_label: 'Sample',
 			approved_at: now,
 			created_at: now,
 			updated_at: now
@@ -116,8 +116,8 @@ export class MockApiClient {
 			line_art_image_url:
 				'/mock/sample-line-art.webp',
 			is_sample: true,
-			sample_label: 'Approved Real Model Output',
-			sample_source: 'Meta AI Production Run (4-Panel Line Art)',
+			sample_label: 'Sample',
+			sample_source: 'Meta AI',
 			line_art_approved_at: now,
 			colour_approved_at: null,
 			created_at: now,
@@ -243,7 +243,7 @@ export class MockApiClient {
 		const job = this.createJob(char.project_id, 'character_reference', 'characters');
 		char.reference_image_url = '/mock/sample-character.webp';
 		char.is_sample = true;
-		char.sample_label = 'Approved Model Reference';
+		char.sample_label = 'Sample';
 
 		let now = new Date().toISOString();
 		if (char.approved_at && new Date(char.approved_at).getTime() >= new Date(now).getTime()) {
@@ -373,7 +373,7 @@ export class MockApiClient {
 		const now = new Date().toISOString();
 		page.draft_image_url = '/mock/sample-draft.webp';
 		page.is_sample = true;
-		page.sample_label = 'Approved Model Draft';
+		page.sample_label = 'Sample';
 
 		page.draft_approved_at = null;
 		page.line_art_approved_at = null;
@@ -398,8 +398,8 @@ export class MockApiClient {
 		page.line_art_url = '/mock/sample-line-art.webp';
 		page.line_art_image_url = page.line_art_url;
 		page.is_sample = true;
-		page.sample_label = 'Approved Real Model Output';
-		page.sample_source = 'Meta AI Production Run (4-Panel Line Art)';
+		page.sample_label = 'Sample';
+		page.sample_source = 'Meta AI';
 		page.line_art_approved_at = null;
 		page.updated_at = now;
 		return { job, page };

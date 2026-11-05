@@ -170,8 +170,8 @@
 			</div>
 
 			{#if authMode === 'mock'}
-				<div class="status-pill mock-pill" title="Interactive demo previewing real model output">
-					<Icon name="mock" size={14} /><span class="badge blue">Sample Demo</span>
+				<div class="status-pill mock-pill">
+					<Icon name="mock" size={14} /><span class="badge blue">Sample</span>
 				</div>
 			{:else if authMode === 'dev'}
 				<div class="status-pill dev-pill">
@@ -263,16 +263,6 @@
 			</button>
 		</div>
 	</section>
-
-	{#if authMode === 'mock'}
-		<aside class="demo-sample-banner" role="status" aria-label="Interactive Demo Notice">
-			<span class="sample-banner-icon"><Icon name="check" size={18} /></span>
-			<div class="sample-banner-body">
-				<strong>Interactive Sample Demo:</strong>
-				Showing approved real Meta AI model output from our publication pipeline. Fully interactive stage previews with zero API key or credit requirements.
-			</div>
-		</aside>
-	{/if}
 
 	{#if projectError}
 		<div class="project-error-banner" role="alert">
