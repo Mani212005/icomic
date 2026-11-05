@@ -104,6 +104,9 @@ Across the whole one-character fixture, normalized counts per panel are
 `27/51` language, `25/51` image, `12/51` vision and `35/51` moderation;
 per comic page they are `27/12`, `25/12`, `1`, and `35/12` respectively.
 Including moderation, the language provider receives `61 + C` calls in total.
+Page image calls attach only named references selected from that page's visual panel fields, plus the relevant composition/style inputs; URL-only legacy callers supply their own selected references.
+Conditioning limits and payload accounting are documented in [the Meta guide](META_SWAP.md#upload-response-and-conditioning-budgets).
+Attachment selection does not change the flat image fee, image-call count or reserved image cost in this inventory.
 Live counts assume concise structured responses obeying the prompt: each combined
 chapter outline and its source fit two moderation chunks, and each page's scene
 and dialogue fit one. More verbose user edits can require additional moderation

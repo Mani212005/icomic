@@ -47,7 +47,8 @@ class ProviderCostLedger:
 
     Unknown outcomes retain their full reservation. An atomic file and advisory
     lock protect pending calls across threads, workers, and process restarts.
-    The file contains only operation IDs, numeric usage, status and costs.
+    The file contains operation IDs, usage, status, costs and prompt-free
+    request measurements (byte sizes, image hashes/dimensions and elapsed time).
     """
 
     def __init__(self, cap, prior=0, reserve=0, path: Path | None = None, run_id="test"):
@@ -143,7 +144,7 @@ class ProviderCostLedger:
         with self._locked():
             return self._report()
 
-    def before_call(self, stage, payload, *, input_tokens=None):
+    def before_call(self, stage, payload, *, input_tokens=None, request_metadata=None):
         if stage == "image":
             if payload.get("model") != "muse-image-1.0":
                 raise ProviderBudgetError("Capped image calls require the priced Muse image model")
@@ -187,17 +188,20 @@ class ProviderCostLedger:
                     "input_bound": input_bound,
                     "output_bound": output_bound,
                     "usage": None,
+                    **(request_metadata or {}),
                 }
             )
             return index
 
-    def finish_call(self, index, status, data=None):
+    def finish_call(self, index, status, data=None, *, elapsed_seconds=None):
         with self._locked():
             call = self.state["calls"][index]
             call.update(
                 status="completed" if status is not None and 200 <= status < 300 else "failed",
                 http_status=status,
             )
+            if elapsed_seconds is not None:
+                call["elapsed_seconds"] = round(elapsed_seconds, 6)
             usage = data.get("usage") if isinstance(data, dict) else None
             if call["stage"] == "image" and status is not None and 200 <= status < 300:
                 count = 0

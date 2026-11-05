@@ -6,13 +6,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from tests.image_fixtures import image_bytes
 
 
 @pytest.mark.parametrize("stage", ["draft-sketch", "line-art"])
 def test_unrelated_stories_produce_different_image_requests(stage):
     app = create_app()
     storage = app.state.storage_adapter
-    draft_url = storage.put("draft.png", b"draft", "image/png")
+    draft_url = storage.put("draft.png", image_bytes("draft"), "image/png")
     payload = {
         "hashed_user_id": "test-user-hash",
         "project_id": str(uuid4()),
@@ -85,7 +86,11 @@ def test_ordered_panels_identity_and_reference_bytes_reach_image_wire(stage):
     fakes = create_app().state.adapters
     app = create_app(replace(fakes, image=adapter))
     storage = app.state.storage_adapter
-    contents = [b"\x89PNG\r\n\x1a\ndraft", b"\x89PNG\r\n\x1a\nNia", b"\x89PNG\r\n\x1a\nbird"]
+    contents = [
+        image_bytes("89504e470d0a1a0a6472616674"),
+        image_bytes("89504e470d0a1a0a4e6961"),
+        image_bytes("89504e470d0a1a0a62697264"),
+    ]
     urls = [storage.put(f"ref{i}.png", content, "image/png") for i, content in enumerate(contents)]
     panels = [
         {

@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -23,6 +24,12 @@ from typing_extensions import Self
 from ..provider_costs import ProviderBudgetError, ProviderCostLedger, token_output_bound
 from ..provider_diagnostics import ProviderDiagnostics, last_response
 from ..provider_output import ProviderOutputError, reject_schema_echo
+from .image.conditioning import (
+    ConditioningLimits,
+    ImagePayloadError,
+    check_image_budget,
+    describe_image,
+)
 from .image.port import ImageResult
 from .language.port import Message, TokenUsage
 from .vision.port import ColourItem, PaletteSuggestion
@@ -45,6 +52,29 @@ DEFAULT_HTTP_TIMEOUT: float = 60.0
 DEFAULT_MAX_RETRIES: int = 3
 DEFAULT_BASE_BACKOFF: float = 0.5
 DEFAULT_MAX_BACKOFF: float = 8.0
+
+
+def configured_timeout(call_type: str) -> httpx.Timeout:
+    """Independent upload and response budgets; no timeout authorizes a retry."""
+    image = call_type == "image"
+    prefix = "META_IMAGE" if image else "META_TEXT"
+    defaults = {
+        "CONNECT": 10.0,
+        "WRITE": 120.0 if image else 30.0,
+        "READ": 300.0 if image else 120.0,
+    }
+    values = {}
+    for phase, default in defaults.items():
+        name = f"{prefix}_{phase}_TIMEOUT_SECONDS"
+        try:
+            value = float(os.getenv(name, default))
+        except ValueError as exc:
+            raise MetaConfigurationError(f"{name} must be a positive finite number") from exc
+        if not math.isfinite(value) or value <= 0:
+            raise MetaConfigurationError(f"{name} must be a positive finite number")
+        values[phase.lower()] = value
+    return httpx.Timeout(**values, pool=values["connect"])
+
 
 # Third-party summaries of Meta's API describe these values; a live check must confirm them.
 META_REASONING_ALLOWED: tuple[str, ...] = ("minimal", "low", "medium", "high", "xhigh")
@@ -853,7 +883,8 @@ class MetaHttpClient:
         sleeper: Callable[[float], None] | None = None,
         rate_limiter: TokenBucket | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
-        timeout: float = DEFAULT_HTTP_TIMEOUT,
+        timeout: float | httpx.Timeout | None = None,
+        call_type: str = "text",
         cost_ledger: ProviderCostLedger | None = None,
         cost_stage: str = "language",
         diagnostics: ProviderDiagnostics | None = None,
@@ -879,7 +910,8 @@ class MetaHttpClient:
         self.cost_ledger = cost_ledger
         self.cost_stage = cost_stage
         self.diagnostics = diagnostics
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else configured_timeout(call_type)
+        self.call_type = call_type
         self.rate_limiter = rate_limiter
 
         # Injectable transport/session
@@ -1011,6 +1043,7 @@ class MetaHttpClient:
         response = self._client.post(
             f"{self.base_url}/responses/input_tokens",
             json=count_payload,
+            timeout=self.timeout,
         )
         if self.diagnostics is not None:
             self.diagnostics.capture(
@@ -1060,26 +1093,59 @@ class MetaHttpClient:
             if endpoint.startswith("http")
             else f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
         )
+        request = self._client.build_request("POST", url, json=json_body, timeout=self.timeout)
+        request_metadata = {"request_payload_bytes": len(request.content)}
+        if self.call_type == "image" or self.cost_stage == "image":
+            limits = ConditioningLimits.from_env()
+            images = [
+                base64.b64decode(part["image_url"].split(",", 1)[1], validate=True)
+                for item in json_body.get("input", [])
+                for part in item.get("content", [])
+                if part.get("type") == "input_image"
+            ]
+            check_image_budget(images, limits)
+            if len(request.content) > limits.request_bytes:
+                raise ImagePayloadError(
+                    f"Image request is {len(request.content)} bytes; limit {limits.request_bytes} bytes"
+                )
+            request_metadata.update(
+                attached_image_bytes=sum(map(len, images)),
+                attached_images=[describe_image(image) for image in images],
+            )
+            logger.info(
+                "Meta image request: payload_bytes=%d attached_image_bytes=%d images=%d",
+                len(request.content),
+                sum(map(len, images)),
+                len(images),
+            )
         attempt = 0
 
         while True:
             attempt += 1
             request_id: str | None = None
             reservation = (
-                self.cost_ledger.before_call(self.cost_stage, json_body, input_tokens=input_tokens)
+                self.cost_ledger.before_call(
+                    self.cost_stage,
+                    json_body,
+                    input_tokens=input_tokens,
+                    request_metadata=request_metadata,
+                )
                 if self.cost_ledger
                 else None
             )
+            started = time.monotonic()
             try:
                 try:
                     if self.diagnostics is not None:
                         # A network failure has no response body. Never attribute
                         # a previous call or successful preflight body to it.
                         last_response.set(None)
-                    response = self._client.post(url, json=json_body)
+                    response = self._client.send(request)
                 except Exception:
                     if reservation is not None:
-                        self.cost_ledger.finish_call(reservation, None)
+                        self.cost_ledger.finish_call(
+                            reservation, None, elapsed_seconds=time.monotonic() - started
+                        )
                     raise
                 if self.diagnostics is not None:
                     self.diagnostics.capture(response.content, response.status_code, self.api_key)
@@ -1090,7 +1156,12 @@ class MetaHttpClient:
                         usage_data = response.json()
                     except (ValueError, json.JSONDecodeError):
                         usage_data = None
-                    self.cost_ledger.finish_call(reservation, response.status_code, usage_data)
+                    self.cost_ledger.finish_call(
+                        reservation,
+                        response.status_code,
+                        usage_data,
+                        elapsed_seconds=time.monotonic() - started,
+                    )
                 request_id = response.headers.get("x-request-id")
 
                 # Successful HTTP 2xx

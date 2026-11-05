@@ -52,6 +52,29 @@ The following environment variables configure the Python AI service and backgrou
 
 The checked-in Compose files omit model and endpoint overrides so they use the adapter defaults defined in `ai/app/adapters/meta_http.py`. Services pass no model override unless explicitly configured at construction. Hermetic tests check Compose and env templates against those defaults and exercise service requests through mocked Meta transports. Language and vision use `/chat/completions`; image generation uses `/responses`.
 
+#### Upload, response and conditioning budgets
+
+Timeouts are positive finite seconds, configured independently per HTTP phase.
+`META_IMAGE_CONNECT_TIMEOUT_SECONDS`, `META_IMAGE_WRITE_TIMEOUT_SECONDS` and `META_IMAGE_READ_TIMEOUT_SECONDS` default to 10, 120 and 300 respectively.
+Text and vision use `META_TEXT_CONNECT_TIMEOUT_SECONDS`, `META_TEXT_WRITE_TIMEOUT_SECONDS` and `META_TEXT_READ_TIMEOUT_SECONDS`, defaulting to 10, 30 and 120.
+The connection-pool timeout equals the connect timeout.
+An explicitly injected client timeout remains supported for callers and tests.
+The image read budget allows over six times the longest observed successful image job (45 seconds including local processing), while upload has a separate budget for conditioning bytes.
+These are independent phase budgets, not a promise that an entire request completes within either one.
+Any transmitted POST that times out still has an unknown outcome; it is never automatically resent and its cost reservation remains held.
+
+Named character references are selected from names in the allocated panels' visual scene, action and image-prompt fields, using case-insensitive whole-name matching.
+Dialogue and narration alone do not put an off-screen character into the cast.
+The approved composition remains first, followed by selected character identities and any explicit style reference.
+Legacy URL-only callers must supply the page's selected references themselves; their inputs remain subject to the same limits.
+`META_IMAGE_REFERENCE_MAX_SIDE` defaults to 1024 pixels and `META_IMAGE_REFERENCE_WEBP_QUALITY` to 85.
+Conditioning copies preserve aspect ratio and reduce resolution further if necessary to fit `META_IMAGE_MAX_REFERENCE_BYTES` (262144 bytes per image).
+Already bounded WebP inputs can be reused unchanged.
+Stored master images and their provenance remain untouched; the brief records both source and conditioning hashes, dimensions and byte sizes.
+`META_IMAGE_MAX_TOTAL_REFERENCE_BYTES` defaults to 2097152 bytes including composition and style inputs; `META_IMAGE_MAX_REQUEST_BYTES` defaults to 3145728 bytes for the complete encoded request.
+An `ImagePayloadError` refuses oversized inputs before the generation POST and before reserving provider cost.
+Capped cost reports record exact serialized payload bytes, attached-image bytes/hashes/dimensions and HTTP elapsed seconds, without prompts, image contents or credentials.
+
 ### 2.2 Key Placement and Secrets Management
 
 API credentials must be managed with strict security boundaries:

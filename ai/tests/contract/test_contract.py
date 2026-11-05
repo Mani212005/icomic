@@ -21,6 +21,7 @@ from app.gen.models import (
     SuggestColourPaletteResponse,
 )
 from app.main import create_app
+from tests.image_fixtures import image_bytes
 
 app = create_app()
 client = TestClient(app)
@@ -166,7 +167,7 @@ def test_generate_panel_text_contract():
 
 
 def test_generate_draft_sketch_contract():
-    app.state.storage_adapter.put("char1.png", b"\x89PNG\r\n\x1a\nreference", "image/png")
+    app.state.storage_adapter.put("char1.png", image_bytes("reference"), "image/png")
     payload = {
         "job_id": "77777777-7777-7777-7777-777777777777",
         "hashed_user_id": "user-hash-abc",
@@ -198,8 +199,10 @@ def test_generate_draft_sketch_contract():
 
 
 def test_generate_line_art_contract():
-    app.state.storage_adapter.put("draft_1.png", b"\x89PNG\r\n\x1a\ndraft", "image/png")
-    app.state.storage_adapter.put("char1.png", b"\x89PNG\r\n\x1a\nreference", "image/png")
+    app.state.storage_adapter.put(
+        "draft_1.png", image_bytes("89504e470d0a1a0a6472616674"), "image/png"
+    )
+    app.state.storage_adapter.put("char1.png", image_bytes("reference"), "image/png")
     payload = {
         "job_id": "99999999-9999-9999-9999-999999999999",
         "hashed_user_id": "user-hash-abc",

@@ -1,14 +1,19 @@
 """Deterministic page story and identity brief shared by image stages."""
 
-import hashlib
 import json
+import re
 from typing import Any
 
+from ..adapters.image.conditioning import (
+    ConditioningLimits,
+    check_image_budget,
+    conditioning_copy,
+)
 from ..adapters.storage.port import StoragePort
 from ..gen.models import CharacterRenderIdentity, PanelTextItem
 from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
 
-RENDER_BRIEF_VERSION = "page-render-brief-v1"
+RENDER_BRIEF_VERSION = "page-render-brief-v2"
 
 
 def build_page_render_request(
@@ -30,16 +35,18 @@ def build_page_render_request(
     """
     images: list[bytes] = []
     references: list[dict[str, Any]] = []
+    limits = ConditioningLimits.from_env()
 
     def add_reference(url: str, role: str, **identity: Any) -> None:
-        content = storage.get(url)
+        content, metadata = conditioning_copy(storage.get(url), limits)
         images.append(content)
+        check_image_budget(images, limits)
         references.append(
             {
                 "input_image_index": len(images),
                 "role": role,
                 "source_url": url,
-                "sha256": hashlib.sha256(content).hexdigest(),
+                **metadata,
                 **identity,
             }
         )
@@ -47,7 +54,18 @@ def build_page_render_request(
     if draft_image_url:
         add_reference(draft_image_url, "approved composition: panel geometry and staging only")
     identities = character_identities or []
+    page_text = "\n".join(
+        str(getattr(panel, field))
+        for panel in panels
+        for field in ("scene_description", "character_actions", "image_prompt")
+    )
     for character in identities:
+        if not character.name.strip() or not re.search(
+            r"(?<!\w)" + re.escape(character.name.strip()) + r"(?!\w)",
+            page_text,
+            re.IGNORECASE,
+        ):
+            continue
         add_reference(
             character.reference_image_url,
             "character identity: face, hair, silhouette, costume and signature props",
@@ -57,7 +75,9 @@ def build_page_render_request(
             visual_attributes=character.visual_attributes,
         )
     named_urls = {character.reference_image_url for character in identities}
-    for url in character_reference_image_urls or []:
+    # Unnamed legacy inputs cannot be selected by cast; retain the legacy path
+    # only when no named identities were supplied, under the same byte limits.
+    for url in (character_reference_image_urls or []) if not identities else []:
         if url not in named_urls:
             add_reference(url, "character reference: identity only; name unspecified")
     if style_reference_image_url:
