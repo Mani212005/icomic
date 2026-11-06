@@ -1,4 +1,5 @@
 <script>
+	import { tick } from 'svelte';
 	import ErrorBanner from './ErrorBanner.svelte';
 	import { stageList, quoteStages } from './stages.js';
 	import Icon from '#lib/design/Icon.svelte';
@@ -16,10 +17,15 @@
 	let stageNavOpen = false;
 	let stageDrawerToggle;
 	let exportCompleted = false;
-	function selectStage(id) {
+	async function selectStage(id) {
 		activeStage = id;
 		stageNavOpen = false;
 		if (stageDrawerToggle?.offsetParent) stageDrawerToggle.focus();
+		if (id === STAGES.PANELS) {
+			await tick();
+			await Promise.all([...letteringSessions.values()].map((session) => session.pendingRequest));
+			await reloadProjectData();
+		}
 	}
 	function handleStageNavKeydown(event) {
 		if (event.key === 'Escape' && stageNavOpen) {
@@ -158,6 +164,10 @@
 				}));
 				panels = chapterData.flatMap((chapter) => chapter.panels);
 				pages = chapterData.flatMap((chapter) => chapter.pages);
+				await Promise.all(pages.map((page) => {
+					const session = letteringSessions.get(page.id);
+					return session && !session.value.busy ? session.load(true) : undefined;
+				}));
 
 				const loadedPalettes = await Promise.all(pages.map((page) => apiClient.getColourPalette(page.id)));
 				palettesByPage = Object.fromEntries(pages.map((page, index) => [page.id, normalizePalette(loadedPalettes[index]?.palette || loadedPalettes[index])]));
@@ -735,7 +745,7 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
-					on:click={() => (activeStage = STAGES.PANELS)}
+					on:click={() => selectStage(STAGES.PANELS)}
 					disabled={!allChaptersApproved}
 				>
 					Continue <Icon name="arrow" size={18} />

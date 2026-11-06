@@ -17,7 +17,10 @@ export class LetteringSession {
 		if (this.loading && !force) return this.loading;
 		this.publish({ busy: true, error: null });
 		this.loading = this.api.getLettering(this.pageId).then((response) => {
-			this.publish({ lettering: response.lettering || null, busy: false });
+			const ids = new Set(response.lettering?.input.panels.flatMap((panel) => panel.utterances.map((u) => u.utterance_id)) || []);
+			this.publish({ lettering: response.lettering || null, busy: false,
+				selected: ids.has(this.value.selected) ? this.value.selected : null,
+				undo: this.value.undo.filter((entry) => ids.has(entry.id)), redo: this.value.redo.filter((entry) => ids.has(entry.id)) });
 		}).catch(() => {
 			this.publish({ busy: false, error: 'Load failed.' });
 			this.loading = null;

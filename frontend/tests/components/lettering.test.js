@@ -184,3 +184,31 @@ it('restores rejected inline text and announces the failure', async () => {
 	await waitFor(() => expect(view.getByRole('alert').textContent).toContain('Save failed.'));
 	await waitFor(() => expect(input.value).toBe('We found it!'));
 });
+
+it('refreshes source panels after inline lettering edits when returning to Panels', async () => {
+	const api = new MockApiClient({ letteringFixtures: [{ page, lettering: fixture }] });
+	const original = api.getPanels.bind(api);
+	api.getPanels = async (chapterId) => {
+		const state = api.pages.get(page.id).lettering;
+		const text = state.input.panels[0].utterances[1].text;
+		return [...await original(chapterId), { id: 'overlay-panel', chapter_id: chapterId, panel_number: 5, dialogue: text, narration: '', scene_description: '' }];
+	};
+	const view = render(Editor, { apiClient: api, project: (await api.listProjects())[0], activeStage: 'draft' });
+	const body = await view.findByRole('button', { name: 'Nia: We found it!' });
+	await fireEvent.keyDown(body, { key: 'Enter' });
+	const input = view.getByRole('textbox', { name: 'Text' });
+	await fireEvent.input(input, { target: { value: 'Fresh lettering' } });
+	await waitFor(() => expect(api.pages.get(page.id).lettering.input.panels[0].utterances[1].text).toBe('Fresh lettering'));
+	await fireEvent.keyDown(input, { key: 'Escape' });
+	await fireEvent.click(view.getByRole('button', { name: '4. Panels Complete' }));
+	await waitFor(() => expect(view.getByText('"Fresh lettering"')).toBeTruthy());
+});
+
+it('refreshes a cached lettering session when source panels reload', async () => {
+	const api = new MockApiClient({ letteringFixtures: [{ page, lettering: fixture }] });
+	const view = render(Editor, { apiClient: api, project: (await api.listProjects())[0], activeStage: 'draft' });
+	await view.findByRole('button', { name: 'Nia: We found it!' });
+	await api.patchLetteringText(page.id, speech, 'Updated source');
+	await view.component.reloadProjectData();
+	await waitFor(() => expect(view.getByRole('button', { name: 'Nia: Updated source' })).toBeTruthy());
+});
