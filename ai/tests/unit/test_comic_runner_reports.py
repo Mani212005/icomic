@@ -19,10 +19,17 @@ runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
 
+def stub_managed_stack(monkeypatch):
+    monkeypatch.setattr(runner, "warn_stale_e2e_projects", lambda project: [])
+    monkeypatch.setattr(runner, "teardown_managed_stack", lambda project: None)
+
+
 @pytest.mark.parametrize("startup_failure", [False, True])
 def test_fake_failure_report_is_written_without_claiming_a_pdf(
     monkeypatch, tmp_path, startup_failure
 ):
+    stub_managed_stack(monkeypatch)
+
     def services():
         if startup_failure:
             raise runner.E2EError("Service failed")
@@ -78,6 +85,7 @@ def test_new_project_title_uses_explicit_value_or_script_filename(tmp_path):
 def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
     monkeypatch, tmp_path
 ):
+    stub_managed_stack(monkeypatch)
     for name in ("LANGUAGE", "VISION", "IMAGE"):
         monkeypatch.setenv("ADAPTER_" + name, "meta")
     monkeypatch.setattr(runner, "live_authorization_error", lambda *args: None)
@@ -150,6 +158,7 @@ def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
 
 
 def test_artifacts_inside_repository_are_ignored(monkeypatch, tmp_path):
+    stub_managed_stack(monkeypatch)
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(runner, "ensure_services", lambda: None)
     monkeypatch.setattr(runner, "run_flow", lambda *args: (0, "synthetic-project"))
@@ -521,6 +530,8 @@ def test_consecutive_flows_provision_distinct_users_and_use_their_headers(monkey
 
 
 def test_alert_is_logged_once_and_recorded_on_failure(monkeypatch, tmp_path, capsys):
+    stub_managed_stack(monkeypatch)
+
     def fail(guard, artifact_dir):
         guard.record("language", "job-1", 0.6, 0.6)
         assert not guard.alert_raised

@@ -49,6 +49,9 @@ def test_managed_run_reports_its_unique_stack_and_limits(monkeypatch, tmp_path, 
     monkeypatch.delenv("ICOMIC_E2E_MONTHLY_IMAGES", raising=False)
     projects = []
     monkeypatch.setattr(runner, "ensure_services", lambda: projects.append(runner.COMPOSE_PROJECT))
+    monkeypatch.setattr(runner, "warn_stale_e2e_projects", lambda project: [])
+    cleaned = []
+    monkeypatch.setattr(runner, "teardown_managed_stack", lambda project: cleaned.append(project))
     monkeypatch.setattr(runner, "run_flow", lambda *args: (0, "synthetic-project"))
     for n in range(2):
         output = tmp_path / str(n)
@@ -60,7 +63,50 @@ def test_managed_run_reports_its_unique_stack_and_limits(monkeypatch, tmp_path, 
         command = runner.compose_command()
         assert "deploy/docker-compose.e2e.yml" in command and projects[-1] in command
     assert projects[0] != projects[1]
+    assert cleaned == projects
     assert "daily=100 monthly=1000" in capsys.readouterr().out
+
+
+def test_managed_stack_teardown_targets_only_its_compose_project(monkeypatch):
+    project = "icomic-e2e-owned-run"
+    monkeypatch.setattr(runner, "COMPOSE_PROJECT", project)
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append((command, kwargs))
+
+    runner.teardown_managed_stack(project, run=fake_run)
+
+    command, kwargs = commands[0]
+    assert command[-2:] == ["down", "-v"]
+    assert project in command
+    assert kwargs["check"] is True
+
+
+def test_stale_project_warning_lists_only_old_managed_projects(capsys):
+    now = runner.datetime(2026, 11, 6, tzinfo=runner.timezone.utc)
+    outputs = iter(
+        [
+            "old-id\nrecent-id\ncurrent-id\nother-id\n",
+            (
+                "icomic-e2e-old\t2026-11-04T00:00:00Z\n"
+                "icomic-e2e-recent\t2026-11-05T12:00:00Z\n"
+                "icomic-e2e-current\t2026-11-04T00:00:00Z\n"
+                "deploy_default\t2026-11-01T00:00:00Z\n"
+            ),
+        ]
+    )
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return type("Result", (), {"stdout": next(outputs)})()
+
+    stale = runner.warn_stale_e2e_projects("icomic-e2e-current", now=now, run=fake_run)
+
+    assert stale == ["icomic-e2e-old"]
+    assert "icomic-e2e-old" in capsys.readouterr().err
+    assert len(commands) == 2
 
 
 def test_external_service_run_leaves_quota_unchanged(monkeypatch, tmp_path):
@@ -74,3 +120,88 @@ def test_external_service_run_leaves_quota_unchanged(monkeypatch, tmp_path):
     policy = json.loads((tmp_path / "cost-report.json").read_text())["quota_policy"]
     assert policy == {"scope": "external_services", "limits": "unchanged"}
     assert "deploy/docker-compose.e2e.yml" not in runner.compose_command()
+
+
+def test_keep_stack_skips_managed_teardown(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "warn_stale_e2e_projects", lambda project: [])
+    monkeypatch.setattr(runner, "ensure_services", lambda: None)
+    monkeypatch.setattr(runner, "run_flow", lambda *args: (0, "synthetic-project"))
+    monkeypatch.setattr(
+        runner,
+        "teardown_managed_stack",
+        lambda project: (_ for _ in ()).throw(AssertionError("stack must be kept")),
+    )
+
+    assert runner.main(["--keep-stack", "--artifact-dir", str(tmp_path)]) == 0
+    report = json.loads((tmp_path / "cost-report.json").read_text())
+    assert report["stack_kept"] is True
+
+
+def test_failed_managed_run_still_tears_down_its_stack(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "warn_stale_e2e_projects", lambda project: [])
+    monkeypatch.setattr(runner, "ensure_services", lambda: None)
+    cleaned = []
+
+    def fail_flow(*args):
+        raise runner.E2EError("synthetic failure")
+
+    monkeypatch.setattr(runner, "run_flow", fail_flow)
+    monkeypatch.setattr(runner, "teardown_managed_stack", lambda project: cleaned.append(project))
+
+    assert runner.main(["--artifact-dir", str(tmp_path)]) == 1
+    assert len(cleaned) == 1 and cleaned[0].startswith("icomic-e2e-")
+
+
+def test_live_overlay_flag_reaches_isolated_runner_without_fake_only_refusal(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setenv("ICOMIC_E2E_LIVE", "1")
+    for name in ("LANGUAGE", "VISION", "IMAGE"):
+        monkeypatch.setenv(f"ADAPTER_{name}", "meta")
+    monkeypatch.setattr(runner, "live_authorization_error", lambda *args: None)
+    monkeypatch.setattr(runner, "warn_stale_e2e_projects", lambda project: [])
+
+    def start_fake_services():
+        run_id = runner.os.environ["ICOMIC_E2E_RUN_ID"]
+        reserve = runner.calculate_checklist_worst_case(runner.DEFAULT_REASONING_RESERVE_TOKENS)
+        (tmp_path / f"provider-costs-{run_id}.json").write_text(
+            json.dumps(
+                {
+                    "actual_spend_usd": 0,
+                    "accounted_spend_usd": 0,
+                    "hard_cap_usd": 2,
+                    "prior_spend_usd": 0,
+                    "third_check_reserve_usd": round(reserve, 9),
+                    "calls": [],
+                    "unpriced_calls": 0,
+                    "uncertain_amount_usd": 0,
+                }
+            )
+        )
+
+    monkeypatch.setattr(runner, "ensure_services", start_fake_services)
+    monkeypatch.setattr(runner, "teardown_managed_stack", lambda project: None)
+    calls = []
+
+    def stop_before_provider_call(guard, artifact_dir):
+        calls.append((guard.live, guard.overlay_lettering))
+        raise runner.E2EError("synthetic stop before provider calls")
+
+    monkeypatch.setattr(runner, "run_flow", stop_before_provider_call)
+
+    assert (
+        runner.main(
+            [
+                "--live",
+                "--cost-cap-usd",
+                "2",
+                "--overlay-lettering",
+                "--artifact-dir",
+                str(tmp_path),
+            ]
+        )
+        == 1
+    )
+
+    assert calls == [(True, True)]
+    assert "fake-only" not in capsys.readouterr().err

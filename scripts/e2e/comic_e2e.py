@@ -317,10 +317,11 @@ def wait_for_api(timeout: float = 180.0) -> None:
     raise E2EError("Go API did not become healthy within 180 seconds")
 
 
-def compose_command() -> list[str]:
+def compose_command(project: str | None = None) -> list[str]:
     command = ["docker", "compose", "-f", "deploy/docker-compose.yml"]
-    if COMPOSE_PROJECT is not None:
-        command += ["-f", "deploy/docker-compose.e2e.yml", "-p", COMPOSE_PROJECT]
+    selected_project = COMPOSE_PROJECT if project is None else project
+    if selected_project is not None:
+        command += ["-f", "deploy/docker-compose.e2e.yml", "-p", selected_project]
     return command
 
 
@@ -354,6 +355,59 @@ def ensure_services() -> None:
     API_URL, STORAGE_URL = addresses
     print(f"Isolated E2E endpoints: API={API_URL} storage={STORAGE_URL}", flush=True)
     wait_for_api()
+
+
+def warn_stale_e2e_projects(
+    current_project: str | None,
+    now: datetime | None = None,
+    run=subprocess.run,
+) -> list[str]:
+    """Print managed E2E projects with containers older than one day."""
+    try:
+        listed = run(
+            ["docker", "ps", "-aq", "--filter", "label=com.docker.compose.project"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        if not listed:
+            return []
+        inspected = run(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                '{{ index .Config.Labels "com.docker.compose.project" }}\t{{ .Created }}',
+                *listed,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"WARNING: could not check for stale E2E projects: {exc}", file=sys.stderr)
+        return []
+
+    cutoff = (now or datetime.now(timezone.utc)).timestamp() - 24 * 60 * 60
+    created_by_project: dict[str, float] = {}
+    for line in inspected.splitlines():
+        project, separator, created = line.partition("\t")
+        if not separator or not project.startswith("icomic-e2e-") or project == current_project:
+            continue
+        try:
+            created_at = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        created_by_project[project] = min(created_by_project.get(project, created_at), created_at)
+    stale = sorted(project for project, created_at in created_by_project.items() if created_at < cutoff)
+    if stale:
+        print("WARNING: stale managed E2E projects older than one day: " + ", ".join(stale), file=sys.stderr)
+    return stale
+
+
+def teardown_managed_stack(project: str, run=subprocess.run) -> None:
+    """Remove only this runner's managed Compose project and its volumes."""
+    run(compose_command(project) + ["down", "-v"], cwd=REPO_ROOT, check=True)
 
 
 def require(mapping: dict[str, Any], key: str, message: str) -> Any:
@@ -808,12 +862,14 @@ def run_flow(
 
     for page_index, page in enumerate(pages):
         page_id = page["id"]
-        if guard.overlay_lettering:
+        if guard.overlay_lettering and not guard.live:
             if page.get("lettering_mode") != "overlay":
                 raise E2EError("overlay smoke requires newly created overlay pages")
             json_request(f"/api/v1/panels/{page['panel_ids'][0]}", "PATCH", {
                 "dialogue": "Maya: Follow the light!", "narration": "Before dawn."
             })
+        if guard.overlay_lettering and guard.live and page.get("lettering_mode") != "overlay":
+            raise E2EError("live overlay probe requires newly created overlay pages")
         if not page.get("draft_image_url"):
             generate_missing_image(
                 f"/api/v1/pages/{page_id}/draft", page.get("draft_image_job_id")
@@ -850,18 +906,36 @@ def run_flow(
             state = json_request(endpoint)["lettering"]
             if not state["layout"]["bubbles"]:
                 raise E2EError("overlay layout was not stored")
-            utterance = next(u for u in state["input"]["panels"][0]["utterances"] if u["kind"] == "speech")
-            current = json_request(f"/api/v1/chapters/{page_chapter_ids[page_id]}/pages")["pages"]
-            image_url = next(p for p in current if p["id"] == page_id)["painted_page_image_url"]
-            before_hash = hashlib.sha256(fetch_line_art_image(image_url)).hexdigest()
-            edited = json_request(endpoint + f"/utterances/{utterance['utterance_id']}/override", "PATCH", {
-                "override": {"center": {"x": 0.5, "y": 0.32}}
-            })["lettering"]
-            if utterance["utterance_id"] not in edited["overrides"] or edited["layout"] == state["layout"]:
-                raise E2EError("manual override did not replace stored layout")
-            if hashlib.sha256(fetch_line_art_image(image_url)).hexdigest() != before_hash:
-                raise E2EError("lettering edit changed source image bytes")
-            (artifact_dir / f"lettering-{page_index+1:02d}.json").write_text(json.dumps(edited, indent=2) + "\n")
+            speech = next(
+                (u for panel in state["input"]["panels"] for u in panel["utterances"] if u["kind"] == "speech" and u["text"].strip()),
+                None,
+            )
+            if speech is None:
+                raise E2EError("overlay page has no source speech to render")
+            if guard.live:
+                (artifact_dir / f"lettering-{page_index+1:02d}.json").write_text(json.dumps(state, indent=2) + "\n")
+            else:
+                current = json_request(f"/api/v1/chapters/{page_chapter_ids[page_id]}/pages")["pages"]
+                image_url = next(p for p in current if p["id"] == page_id)["painted_page_image_url"]
+                before_hash = hashlib.sha256(fetch_line_art_image(image_url)).hexdigest()
+                edited = json_request(endpoint + f"/utterances/{speech['utterance_id']}/override", "PATCH", {
+                    "override": {"center": {"x": 0.5, "y": 0.32}}
+                })["lettering"]
+                if speech["utterance_id"] not in edited["overrides"] or edited["layout"] == state["layout"]:
+                    raise E2EError("manual override did not replace stored layout")
+                if hashlib.sha256(fetch_line_art_image(image_url)).hexdigest() != before_hash:
+                    raise E2EError("lettering edit changed source image bytes")
+                (artifact_dir / f"lettering-{page_index+1:02d}.json").write_text(json.dumps(edited, indent=2) + "\n")
+            if getattr(guard, "finish_preset", "print-heavy") != "off":
+                finished = json_request(
+                    f"/api/v1/pages/{page_id}/finish?variant=painted", "POST"
+                )
+                raw_url = require(finished, "raw_master_image_url", "raw painted art URL missing")
+                finished_url = require(finished, "finished_image_url", "finished painted art URL missing")
+                raw_bytes = fetch_line_art_image(raw_url)
+                finished_bytes = fetch_line_art_image(finished_url)
+                (artifact_dir / f"raw-art-{page_index+1:02d}.png").write_bytes(raw_bytes)
+                (artifact_dir / f"finished-art-{page_index+1:02d}.jpg").write_bytes(finished_bytes)
         if not ink_variant:
             continue
         if page.get("colour_image_url"):
@@ -916,7 +990,13 @@ def run_flow(
     guard.pdf_page_count = verify_pdf(pdf, len(pages))
     if guard.overlay_lettering:
         text = subprocess.run(["pdftotext", "-", "-"], input=pdf, capture_output=True, check=True).stdout.decode()
-        if "Follow the light!" not in " ".join(text.split()) or len(pdf) > 500_000 * len(pages):
+        expected_text = " ".join(
+            line["text"]
+            for bubble in state["layout"]["bubbles"]
+            for line in bubble["lines"]
+            if line.get("text")
+        )
+        if not expected_text or expected_text not in " ".join(text.split()) or len(pdf) > 500_000 * len(pages):
             raise E2EError("overlay PDF must contain extractable edited text and stay compact")
     artifact_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -929,12 +1009,12 @@ def run_flow(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--overlay-lettering", action="store_true", help="fake-only text-free art, edited stored lettering and vector PDF smoke")
+    parser.add_argument("--overlay-lettering", action="store_true", help="enable overlay lettering; fake runs exercise edits, live runs preserve generated speech")
     parser.add_argument(
         "--finish-preset",
         choices=("off", "print", "print-plus", "print-heavy"),
         default="print-heavy",
-        help="project print finish preset for the fake run",
+        help="project print finish preset; new projects default to print-heavy",
     )
     parser.add_argument(
         "--script-file",
@@ -959,6 +1039,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--skip-services",
         action="store_true",
         help="use already-running local services",
+    )
+    parser.add_argument(
+        "--keep-stack",
+        action="store_true",
+        help="retain this managed isolated Compose stack for later resume or inspection",
     )
     parser.add_argument(
         "--resume-project-id",
@@ -1109,9 +1194,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-    if args.overlay_lettering and args.live:
-        print("REFUSED: overlay lettering smoke is fake-only; the live probe is a separate opt-in operation", file=sys.stderr)
-        return 2
     if args.overlay_lettering:
         os.environ["LETTERING_OVERLAY_ENABLED"] = "true"
     live = bool(args.live)
@@ -1177,6 +1259,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         COMPOSE_PROJECT = f"icomic-e2e-{run_id}"
+        warn_stale_e2e_projects(COMPOSE_PROJECT)
         quota_policy = {
             "scope": "isolated_e2e_stack",
             "daily_image_limit": daily,
@@ -1281,8 +1364,16 @@ def main(argv: list[str] | None = None) -> int:
         except E2EError:
             if failure is None:
                 failure = "ProviderLedgerUnavailable"
+        if COMPOSE_PROJECT is not None and not args.keep_stack:
+            try:
+                teardown_managed_stack(COMPOSE_PROJECT)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                print(f"FAILED to tear down managed E2E stack {COMPOSE_PROJECT}: {exc}", file=sys.stderr)
+                if failure is None:
+                    failure = "StackTeardownFailed"
     report = {
         "quota_policy": quota_policy,
+        "stack_kept": bool(COMPOSE_PROJECT is not None and args.keep_stack),
         "api_url": API_URL,
         "storage_url": STORAGE_URL,
         "user_id": guard.user_id,
