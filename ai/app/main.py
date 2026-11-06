@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import hashlib
 import math
 import mimetypes
 import posixpath
@@ -23,6 +24,8 @@ from .gen.models import (
     AssemblePdfRequest,
     AssemblePdfResponse,
     ErrorResponse,
+    FinishPageImageRequest,
+    FinishPageImageResponse,
     GenerateChapterOutlineRequest,
     GenerateChapterOutlineResponse,
     GenerateCharacterReferenceRequest,
@@ -53,6 +56,7 @@ from .services.character import CharacterService
 from .services.colour import ColourService
 from .services.draft import DraftService
 from .services.errors import JobExecutionError, classify_error
+from .services.finish_layer import FinishStrength, finish_image, page_seed
 from .services.lettering import layout_page
 from .services.line_art import LineArtService
 from .services.moderation import ModerationService
@@ -412,6 +416,34 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         return StoreColourImageResponse(image_url=image_url)
 
     @app.post(
+        "/internal/v1/finish-page-image",
+        response_model=FinishPageImageResponse,
+    )
+    def finish_page_image(req: FinishPageImageRequest):
+        strength = {
+            "print": FinishStrength.PRINT,
+            "print-plus": FinishStrength.PLUS,
+            "print-heavy": FinishStrength.HEAVY,
+        }.get(req.finish_preset.root)
+        if strength is None:
+            raise HTTPException(status_code=400, detail="Finish preset must not be off")
+        source = app.state.media_fetch_adapter.fetch(req.image_url)
+        finished = finish_image(
+            source,
+            seed=page_seed(f"{req.page_id}/{req.finish_preset.root}"),
+            strength=strength,
+        )
+        with Image.open(BytesIO(finished)) as image:
+            output = BytesIO()
+            image.convert("RGB").save(output, format="JPEG", quality=92, optimize=True)
+        display_bytes = output.getvalue()
+        digest = hashlib.sha256(display_bytes).hexdigest()
+        key = f"finishes/{req.page_id}/{req.finish_preset.root}/{digest}.jpg"
+        return FinishPageImageResponse(
+            image_url=app.state.storage_adapter.put(key, display_bytes, "image/jpeg")
+        )
+
+    @app.post(
         "/internal/v1/moderate-prompt",
         response_model=ModeratePromptResponse,
     )
@@ -436,6 +468,8 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             page_size=req.page_size,
             include_ai_disclosure=req.include_ai_disclosure,
             pages=req.pages,
+            finish_preset=req.finish_preset.root if req.finish_preset else "off",
+            finish_preset_explicit=req.finish_preset_explicit,
         )
         return AssemblePdfResponse(
             job_id=str(req.job_id),

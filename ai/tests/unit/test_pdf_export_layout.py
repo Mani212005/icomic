@@ -99,6 +99,77 @@ def test_export_keeps_rgb_master_pixels_and_original_attachment_bytes():
     assert original_master in pdf
 
 
+def test_overlay_pdf_finishes_display_image_and_keeps_raw_attachment():
+    storage = FakeStorageAdapter()
+    image = Image.new("RGB", (128, 192), (142, 98, 72))
+    output = BytesIO()
+    image.save(output, format="PNG")
+    raw = output.getvalue()
+    url = storage.put("pages/overlay.png", raw, "image/png")
+    service = PdfAssemblyService(storage)
+    finished_url, _, _, _ = service.assemble_pdf(
+        project_id="finish-test",
+        title="Finish test",
+        page_size="A4",
+        include_ai_disclosure=False,
+        finish_preset="print-heavy",
+        pages=[
+            PageExportItem(
+                page_id="stable-page-id",
+                page_number=1,
+                image_url=url,
+                lettering_mode="overlay",
+            )
+        ],
+    )
+    finished_pdf = storage.get(finished_url)
+    assert raw in finished_pdf
+    derivatives = [
+        key for key in storage._blobs if key.startswith("finishes/stable-page-id/print-heavy/")
+    ]
+    assert len(derivatives) == 1
+    assert storage.get(derivatives[0])
+
+    raw_pdf_url, _, _, _ = service.assemble_pdf(
+        project_id="finish-test",
+        title="Finish test",
+        page_size="A4",
+        include_ai_disclosure=False,
+        finish_preset="off",
+        pages=[
+            PageExportItem(
+                page_id="stable-page-id",
+                page_number=1,
+                image_url=url,
+                lettering_mode="overlay",
+            )
+        ],
+    )
+    raw_pdf = storage.get(raw_pdf_url)
+    assert finished_pdf != raw_pdf
+
+
+def test_explicit_preset_can_finish_baked_art():
+    storage = FakeStorageAdapter()
+    image = Image.new("RGB", (128, 192), (142, 98, 72))
+    output = BytesIO()
+    image.save(output, format="PNG")
+    raw = output.getvalue()
+    url = storage.put("pages/baked.png", raw, "image/png")
+    pdf_url, _, _, _ = PdfAssemblyService(storage).assemble_pdf(
+        project_id="finish-test",
+        title="Finish test",
+        page_size="A4",
+        include_ai_disclosure=False,
+        finish_preset="print",
+        finish_preset_explicit=True,
+        pages=[PageExportItem(page_id="baked-page", page_number=1, image_url=url)],
+    )
+    pdf = storage.get(pdf_url)
+    assert raw in pdf
+    assert any(key.startswith("finishes/baked-page/print/") for key in storage._blobs)
+
+
 def test_twelve_page_native_art_export_stays_under_25_mb():
     image = Image.new("RGB", (1280, 1920), "#edf0e8")
     for x in range(0, 1280, 32):

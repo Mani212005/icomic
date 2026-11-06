@@ -236,6 +236,28 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /internal/v1/finish-page-image:
+    post:
+      summary: Create an immutable print-finished display derivative
+      operationId: finishPageImage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinishPageImageRequest'
+      responses:
+        '200':
+          description: Finished derivative stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FinishPageImageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /internal/v1/moderate-prompt:
     post:
       summary: Pre-moderate prompt before dispatching to image generation
@@ -1118,6 +1140,29 @@ components:
         image_url:
           type: string
 
+    FinishPageImageRequest:
+      type: object
+      required:
+        - page_id
+        - image_url
+        - finish_preset
+      properties:
+        page_id:
+          type: string
+          format: uuid
+        image_url:
+          type: string
+        finish_preset:
+          $ref: '#/components/schemas/FinishPreset'
+
+    FinishPageImageResponse:
+      type: object
+      required:
+        - image_url
+      properties:
+        image_url:
+          type: string
+
     ModeratePromptRequest:
       type: object
       required:
@@ -1169,8 +1214,16 @@ components:
         - page_number
         - image_url
       properties:
+        page_id:
+          type: string
+          description: Stable page identifier used to seed print finishing deterministically.
         page_number:
           type: integer
+        finish_preset:
+          $ref: '#/components/schemas/FinishPreset'
+        finish_preset_explicit:
+          type: boolean
+          default: false
         image_url:
           type: string
         original_image_url:
@@ -1224,6 +1277,11 @@ components:
           type: string
           enum: [A4, US_Letter, Custom_Comic]
           default: A4
+        finish_preset:
+          $ref: '#/components/schemas/FinishPreset'
+        finish_preset_explicit:
+          type: boolean
+          default: false
         include_ai_disclosure:
           type: boolean
           default: true
@@ -1231,6 +1289,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PageExportItem'
+
+    FinishPreset:
+      type: string
+      description: Print finish preset applied to art. Baked lettering pages are skipped until the project preset is explicitly selected.
+      enum: [off, print, print-plus, print-heavy]
+      default: off
 
     AssemblePdfResponse:
       type: object

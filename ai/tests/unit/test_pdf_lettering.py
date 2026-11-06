@@ -81,6 +81,12 @@ def test_vector_operator_golden_and_exact_positioning():
     assert page_streams(pdf)[1].count(b" BDC") == len(layout.bubbles[0].lines)
 
 
+def test_finishing_art_leaves_vector_lettering_operators_unchanged():
+    raw_pdf, _ = build([page()])
+    finished_pdf, _ = build([page(finish_preset="print-heavy", page_id="vector-fixture")])
+    assert page_streams(raw_pdf)[1] == page_streams(finished_pdf)[1]
+
+
 @pytest.mark.parametrize("name", ["unicode-latin", "unicode-devanagari"])
 def test_unicode_subset_fonts_have_extractable_logical_text(name):
     p = page(name)

@@ -109,6 +109,7 @@ func (s *Server) NewRouter() http.Handler {
 	// Pages
 	handle("GET /api/v1/chapters/{id}/pages", s.ListPages)
 	handle("PATCH /api/v1/pages/{id}", s.UpdatePage)
+	handle("POST /api/v1/pages/{id}/finish", s.FinishPageImage)
 
 	// Draft Sketch
 	handle("GET /api/v1/pages/{id}/lettering", s.GetLettering)

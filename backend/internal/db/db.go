@@ -222,6 +222,9 @@ func (m *InMemoryRepository) CreateProject(_ context.Context, p *domain.Project)
 	if p.ID == "" {
 		p.ID = uuid.NewString()
 	}
+	if p.FinishPreset == "" {
+		p.FinishPreset = "print-heavy"
+	}
 	now := time.Now().UTC()
 	if p.CreatedAt.IsZero() {
 		p.CreatedAt = now

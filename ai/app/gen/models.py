@@ -228,6 +228,10 @@ class StoreColourImageResponse(BaseModel):
     image_url: str
 
 
+class FinishPageImageResponse(BaseModel):
+    image_url: str
+
+
 class ModeratePromptRequest(BaseModel):
     job_id: str
     hashed_user_id: str
@@ -238,6 +242,13 @@ class ModeratePromptResponse(BaseModel):
     job_id: str
     blocked: bool
     reason: str | None = None
+
+
+class FinishPreset(RootModel[Literal["off", "print", "print-plus", "print-heavy"]]):
+    root: Literal["off", "print", "print-plus", "print-heavy"] = Field(
+        "off",
+        description="Print finish preset applied to art. Baked lettering pages are skipped until the project preset is explicitly selected.",
+    )
 
 
 class JobStatusResponse(BaseModel):
@@ -540,6 +551,12 @@ class GeneratePaintedPageRequest(BaseModel):
     style_reference_image_url: str | None = None
 
 
+class FinishPageImageRequest(BaseModel):
+    page_id: UUID
+    image_url: str
+    finish_preset: FinishPreset
+
+
 class PdfLetteringWarning(BaseModel):
     page_number: int
     code: Literal["stale_lettering", "lettering_review_required"]
@@ -548,7 +565,12 @@ class PdfLetteringWarning(BaseModel):
 
 
 class PageExportItem(BaseModel):
+    page_id: str | None = Field(
+        None, description="Stable page identifier used to seed print finishing deterministically."
+    )
     page_number: int
+    finish_preset: FinishPreset | None = Field("off", validate_default=True)
+    finish_preset_explicit: bool = False
     image_url: str
     original_image_url: str | None = Field(
         None,
@@ -572,6 +594,8 @@ class AssemblePdfRequest(BaseModel):
     project_id: str
     title: str
     page_size: Literal["A4", "US_Letter", "Custom_Comic"] = "A4"
+    finish_preset: FinishPreset | None = Field("off", validate_default=True)
+    finish_preset_explicit: bool = False
     include_ai_disclosure: bool = True
     pages: list[PageExportItem]
 

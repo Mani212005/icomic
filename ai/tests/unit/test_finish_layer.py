@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from io import BytesIO
 
+from fastapi.testclient import TestClient
 from PIL import Image
 
+from app.adapters.storage.fake import FakeStorageAdapter
+from app.main import create_app
 from app.services.finish_layer import (
     FinishStrength,
     FinishTreatment,
@@ -30,6 +34,13 @@ def test_seeded_output_is_byte_identical_and_page_seed_is_stable() -> None:
     assert first == second
     assert page_seed("page-17") == page_seed("page-17")
     assert page_seed("page-17") != page_seed("page-18")
+
+
+def test_distinct_page_seeds_produce_distinct_page_derivatives() -> None:
+    source = _encode(Image.new("RGB", (128, 192), (142, 98, 72)))
+    first = finish_image(source, seed=page_seed("page-a"), strength=FinishStrength.HEAVY)
+    second = finish_image(source, seed=page_seed("page-b"), strength=FinishStrength.HEAVY)
+    assert first != second
 
 
 def test_plus_and_heavy_are_seeded_and_distinct_presets() -> None:
@@ -83,6 +94,28 @@ def test_print_treatment_has_paper_white_instead_of_pure_white() -> None:
     source = _encode(Image.new("RGB", (35, 29), (255, 255, 255)))
     finished = _decode(finish_image(source, seed=1))
     assert max(finished.getextrema()[channel][1] for channel in range(3)) < 255
+
+
+def test_finish_page_endpoint_stores_a_deterministic_immutable_derivative() -> None:
+    storage = FakeStorageAdapter()
+    app = create_app()
+    app.state.storage_adapter = storage
+    source = _encode(Image.new("RGB", (83, 117), (132, 87, 46)))
+    app.state.media_fetch_adapter = type("Media", (), {"fetch": lambda self, _url: source})()
+    payload = {
+        "page_id": "2e6aa8c0-318d-4571-b1cd-2be622d35b48",
+        "image_url": "master.png",
+        "finish_preset": "print-heavy",
+    }
+    with TestClient(app) as client:
+        first = client.post("/internal/v1/finish-page-image", json=payload)
+        second = client.post("/internal/v1/finish-page-image", json=payload)
+    assert first.status_code == second.status_code == 200
+    assert first.json()["image_url"] == second.json()["image_url"]
+    key = first.json()["image_url"].split("/storage/fake/")[-1]
+    derivative = storage.get(key)
+    assert derivative.startswith(b"\xff\xd8")
+    assert sha256(derivative).hexdigest() in key
 
 
 def test_registration_offsets_stay_subpixel_to_one_pixel_at_work_width() -> None:

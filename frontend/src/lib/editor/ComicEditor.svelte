@@ -48,6 +48,7 @@
 	}
 	let palette = [];
 	let finishVariant = 'painted';
+	let rawPreviewByPage = {};
 	let palettesByPage = {};
 	let failedImages = new Set();
 	function markImageFailed(event) {
@@ -88,6 +89,42 @@
 	function updatePagePalette(pageId, newPalette) {
 		palettesByPage = { ...palettesByPage, [pageId]: newPalette };
 		if (pages[0]?.id === pageId) palette = newPalette;
+	}
+
+	async function changeFinishPreset(event) {
+		const finish_preset = event.currentTarget.value;
+		try {
+			project = await apiClient.updateProject(project.id, { finish_preset });
+			pages = await Promise.all(pages.map(refreshFinishedPreviews));
+		} catch (error) {
+			jobError = formatApiError(error);
+		}
+	}
+
+	async function refreshFinishedPreviews(page) {
+		const request = async (variant) => {
+			try {
+				return await apiClient.request(`/api/v1/pages/${page.id}/finish?variant=${variant}`, { method: 'POST' });
+			} catch {
+				return {};
+			}
+		};
+		const [painted, ink] = await Promise.all([request('painted'), request('ink')]);
+		return {
+			...page,
+			raw_master_image_url: painted.raw_master_image_url || page.painted_page_image_url || page.line_art_image_url,
+			finished_image_url: painted.finished_image_url || '',
+			raw_ink_image_url: ink.raw_master_image_url || page.line_art_image_url,
+			finished_ink_image_url: ink.finished_image_url || ''
+		};
+	}
+
+	function finishPreviewUrl(page) {
+		const finished = finishVariant === INK_VARIANT ? page.finished_ink_image_url : page.finished_image_url;
+		const raw = finishVariant === INK_VARIANT ? page.raw_ink_image_url : page.raw_master_image_url;
+		return rawPreviewByPage[page.id]
+			? (raw || finishImageUrl(page))
+			: (finished || finishImageUrl(page));
 	}
 
 
@@ -163,7 +200,7 @@
 					};
 				}));
 				panels = chapterData.flatMap((chapter) => chapter.panels);
-				pages = chapterData.flatMap((chapter) => chapter.pages);
+				pages = await Promise.all(chapterData.flatMap((chapter) => chapter.pages).map(refreshFinishedPreviews));
 				await Promise.all(pages.map((page) => {
 					const session = letteringSessions.get(page.id);
 					return session && !session.value.busy ? session.load(true) : undefined;
@@ -597,7 +634,7 @@
 
 			{#if anyCharacterStale}
 				<div class="stale-stage-banner">
-					<Icon name="warning" size={18} /> Re-approve.
+					<Icon name="warning" size={18} />
 				</div>
 			{/if}
 
@@ -609,7 +646,7 @@
 							{#if char.reference_image_url && !failedImages.has(char.reference_image_url)}
 								<img src={char.reference_image_url} alt={char.name} class="char-img" on:error={markImageFailed} />
 							{:else}
-								<div class="placeholder-avatar"><Icon name="characters" size={48} />Pending</div>
+								<div class="placeholder-avatar"><Icon name="characters" size={48} /></div>
 							{/if}
 						</div>
 
@@ -635,7 +672,7 @@
 								</div>
 								<p><strong>Bio:</strong> {char.description}</p>
 								{#if char.visual_attributes?.reference_role === 'extra'}
-									<p>Reference image optional.</p>
+								<p>Optional.</p>
 								{/if}
 								<p><strong>Look:</strong> {char.visual_attributes?.appearance || char.appearance || 'Standard'}</p>
 								<p><strong>Clothes:</strong> {char.visual_attributes?.clothing || char.clothing || 'Standard'}</p>
@@ -651,7 +688,7 @@
 								<div class="stale-action-box">
 									<span class="stale-warning-text"><Icon name="warning" size={18} /> Edited</span>
 									<button class="reapprove-btn" on:click={() => approveCharacter(char.id)}>
-										Re-approve
+										Approve
 									</button>
 								</div>
 							{:else if char.approved_at}
@@ -694,13 +731,13 @@
 
 			{#if anyChapterStale}
 				<div class="stale-stage-banner">
-					<Icon name="warning" size={18} /> Re-approve.
+					<Icon name="warning" size={18} />
 				</div>
 			{/if}
 
 			{#if chapters.length === 0}
 				<div class="stage-empty"><Icon name="chapters" size={48} /></div>
-				<button class="primary-btn" on:click={generateChapters} disabled={isJobActive || !allCharactersApproved}>Generate outline</button>
+				<button class="primary-btn" on:click={generateChapters} disabled={isJobActive || !allCharactersApproved}>Outline</button>
 			{/if}
 			<div class="chapters-list">
 				{#each chapters as chap}
@@ -721,7 +758,7 @@
 								{#if isApprovalStale(chap.approved_at, chap.updated_at)}
 									<span class="stale-warning-text"><Icon name="warning" size={18} /> Edited</span>
 									<button class="reapprove-btn" on:click={() => approveChapter(chap.id)}>
-										Re-approve
+										Approve
 									</button>
 								{:else if chap.approved_at || chap.status === 'approved'}
 									<span class="status-approved"><Icon name="check" size={18} /> Approved</span>
@@ -759,9 +796,9 @@
 				<h2>Panels</h2>
 			</header>
 
-			<p class="section-desc">{panels.length} panels across {pages.length} pages</p>
+			<p class="section-desc">{panels.length} panels, {pages.length} pages</p>
 			{#if chapters.some((chapter) => !panels.some((panel) => panel.chapter_id === chapter.id))}
-				<button class="primary-btn" on:click={generatePanels} disabled={isJobActive || !allChaptersApproved}>Generate panels</button>
+				<button class="primary-btn" on:click={generatePanels} disabled={isJobActive || !allChaptersApproved}>Panels</button>
 			{/if}
 			{#if panels.length === 0}<div class="stage-empty"><Icon name="panels" size={48} /></div>{/if}
 			<div class="panels-list">
@@ -820,7 +857,7 @@
 
 			{#if anyDraftStale}
 				<div class="stale-stage-banner">
-					<Icon name="warning" size={18} /> Re-approve.
+					<Icon name="warning" size={18} />
 				</div>
 			{/if}
 
@@ -830,7 +867,7 @@
 				{#each pages as page}
 					<div class="page-preview-card" class:card-stale={isApprovalStale(page.draft_approved_at, page.updated_at)}>
 						<div class="card-title-row">
-							<h3>Chapter {page.chapter_number}, Page {page.page_number}</h3>
+							<h3>#{page.page_number}</h3>
 							{#if page.is_sample || page.sample_label}
 								<span class="sample-tag">Sample</span>
 							{/if}
@@ -843,7 +880,7 @@
 									<img src={page.draft_image_url} alt="Draft {page.page_number}" on:error={markImageFailed} />
 								{/if}
 							{:else}
-								<div class="empty-img"><Icon name="draft" size={48} />Pending</div>
+								<div class="empty-img"><Icon name="draft" size={48} /></div>
 							{/if}
 						</div>
 						<div class="card-footer">
@@ -855,7 +892,7 @@
 								<div class="stale-action-box">
 									<span class="stale-warning-text"><Icon name="warning" size={18} /> Edited</span>
 									<button class="reapprove-btn" on:click={() => approveDraft(page.id)}>
-										Re-approve
+										Approve
 									</button>
 								</div>
 							{:else if page.draft_approved_at}
@@ -885,7 +922,15 @@
 		<section class="stage-section">
 			<header class="section-header">
 				<label class="finish-variant">
-					<select bind:value={finishVariant} aria-label="Finish">
+					<select value={project.finish_preset || 'off'} on:change={changeFinishPreset} aria-label="Finish">
+						<option value="off">Off</option>
+						<option value="print">Print</option>
+						<option value="print-plus">Plus</option>
+						<option value="print-heavy">Heavy</option>
+					</select>
+				</label>
+				<label class="finish-variant">
+					<select bind:value={finishVariant} aria-label="Variant">
 						<option value="painted">Painted</option>
 						<option value="ink">Ink</option>
 					</select>
@@ -912,20 +957,25 @@
 				{#each pages as page}
 					<div class="page-preview-card" class:card-stale={isApprovalStale(finishApprovalAt(page), page.updated_at)}>
 						<div class="card-title-row">
-							<h3>Chapter {page.chapter_number}, Page {page.page_number}</h3>
+							<h3>#{page.page_number}</h3>
 							{#if page.is_sample || page.sample_label}
 								<span class="sample-tag">Sample</span>
 							{/if}
 						</div>
 						<div class="img-container" class:overlay-preview={page.lettering_mode === 'overlay'}>
-							{#if finishImageUrl(page) && !failedImages.has(finishImageUrl(page))}
+							{#if (finishVariant === INK_VARIANT ? page.finished_ink_image_url : page.finished_image_url)}
+								<button class="image-toggle" aria-label="Raw" on:click={() => rawPreviewByPage = { ...rawPreviewByPage, [page.id]: !rawPreviewByPage[page.id] }}>
+									<Icon name="eye" size={18} />
+								</button>
+							{/if}
+							{#if finishPreviewUrl(page) && !failedImages.has(finishPreviewUrl(page))}
 								{#if page.lettering_mode === 'overlay' && finishVariant !== INK_VARIANT && !page.line_art_image_url && !page.line_art_url}
-									<LetteringPreview session={letteringSession(page)} imageUrl={finishImageUrl(page)} imageAlt={`Page ${page.page_number}`} onImageError={markImageFailed} />
+									<LetteringPreview session={letteringSession(page)} imageUrl={finishPreviewUrl(page)} imageAlt={`Page ${page.page_number}`} onImageError={markImageFailed} />
 								{:else}
-									<img src={finishImageUrl(page)} alt="Page {page.page_number}" on:error={markImageFailed} />
+									<img src={finishPreviewUrl(page)} alt="Page {page.page_number}" on:error={markImageFailed} />
 								{/if}
 							{:else}
-								<div class="empty-img"><Icon name="line_art" size={48} />Pending</div>
+								<div class="empty-img"><Icon name="line_art" size={48} /></div>
 							{/if}
 						</div>
 						<div class="card-footer">
@@ -975,7 +1025,7 @@
 				<div class="page-colour-heading">
 					<h3>Page {page.page_number}</h3>
 					<button class="secondary-btn" on:click={() => suggestNewPalette(page.id)}>
-						<Icon name="colour" size={18} /> Suggest palette ({quoteLabel('colour_suggestion', costQuotes)})
+						<Icon name="colour" size={18} /> Palette ({quoteLabel('colour_suggestion', costQuotes)})
 					</button>
 				</div>
 				<ColourEditor

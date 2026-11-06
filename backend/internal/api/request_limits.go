@@ -244,7 +244,7 @@ func (s *Server) publicFields(pattern string) map[string]string {
 	case "POST /api/v1/projects":
 		return map[string]string{"title": "title", "original_script": "script", "art_style": "artStyle", "chapter_count": "chapters"}
 	case "PATCH /api/v1/projects/{id}":
-		return map[string]string{"title": "title", "original_script": "script", "art_style": "artStyle", "chapter_count": "positiveChapters", "status": "projectStatus"}
+		return map[string]string{"title": "title", "original_script": "script", "art_style": "artStyle", "chapter_count": "positiveChapters", "status": "projectStatus", "finish_preset": "finishPreset"}
 	case "PATCH /api/v1/characters/{id}":
 		return map[string]string{"name": "title", "description": "text", "visual_attributes": "object"}
 	case "POST /api/v1/characters/{id}/reference-image":
@@ -373,6 +373,7 @@ func (s *Server) validateField(name, kind string, raw json.RawMessage) error {
 			"stage":  "draft,draft_sketch,line_art,final_line_art,character_reference,reference,colour_suggestion,colour",
 			"format": "pdf,png,png_zip", "pageSize": "a4,A4,us_letter,US_Letter,custom,Custom",
 			"projectStatus": "draft,in_progress,completed,archived", "chapterStatus": "pending,in_progress,approved,completed",
+			"finishPreset": "off,print,print-plus,print-heavy",
 		}
 		if options, ok := enums[kind]; ok {
 			found := false

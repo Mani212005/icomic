@@ -4,6 +4,79 @@ info:
   version: 1.0.0
   description: Public Go API. Shared payload models are generated from ai-service.yaml.
 paths:
+  /api/v1/projects/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getProjectFinishSettings
+      description: Read project settings, including finish_preset. Access is limited to the owning user.
+      responses:
+        '200':
+          description: Project settings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project]
+                properties:
+                  project:
+                    type: object
+                    properties:
+                      finish_preset:
+                        $ref: './ai-service.yaml#/components/schemas/FinishPreset'
+        '403':
+          description: Project belongs to another user
+        '404':
+          description: Project does not exist
+    patch:
+      operationId: patchProjectFinishSettings
+      description: Change the project finish preset. PDF export derives finished images from untouched raw page masters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              properties:
+                finish_preset:
+                  $ref: './ai-service.yaml#/components/schemas/FinishPreset'
+      responses:
+        '200':
+          description: Updated project settings
+        '400':
+          description: Unknown preset
+        '403':
+          description: Project belongs to another user
+        '404':
+          description: Project does not exist
+  /api/v1/pages/{id}/finish:
+    parameters:
+      - $ref: '#/components/parameters/PageID'
+    post:
+      operationId: finishPageImage
+      description: Build an immutable display derivative from approved art using the owning project's preset.
+      responses:
+        '200':
+          description: Finished and raw image URLs, or an empty finished URL when not eligible
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  raw_master_image_url:
+                    type: string
+                  finished_image_url:
+                    type: string
+        '403':
+          description: Page belongs to another user
+        '409':
+          description: Page has no approved final art
   /api/v1/pages/{id}/lettering:
     parameters:
       - $ref: '#/components/parameters/PageID'

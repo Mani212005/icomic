@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+func ValidFinishPreset(preset string) bool {
+	switch preset {
+	case "off", "print", "print-plus", "print-heavy":
+		return true
+	default:
+		return false
+	}
+}
+
 // User represents a registered system user (SPEC 9).
 type User struct {
 	ID           string    `json:"id"`
@@ -25,16 +34,18 @@ type Plan struct {
 
 // Project represents a user comic book creation project (SPEC 9).
 type Project struct {
-	LetteringMode  string    `json:"lettering_mode"`
-	ID             string    `json:"id"`
-	UserID         string    `json:"user_id"`
-	Title          string    `json:"title"`
-	OriginalScript string    `json:"original_script"`
-	ChapterCount   int       `json:"chapter_count"`
-	ArtStyle       string    `json:"art_style"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	LetteringMode        string    `json:"lettering_mode"`
+	FinishPreset         string    `json:"finish_preset"`
+	FinishPresetExplicit bool      `json:"finish_preset_explicit"`
+	ID                   string    `json:"id"`
+	UserID               string    `json:"user_id"`
+	Title                string    `json:"title"`
+	OriginalScript       string    `json:"original_script"`
+	ChapterCount         int       `json:"chapter_count"`
+	ArtStyle             string    `json:"art_style"`
+	Status               string    `json:"status"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // Chapter represents a chapter within a project (SPEC 9).

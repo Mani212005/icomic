@@ -290,6 +290,7 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		Status:         "draft",
 		CreatedAt:      time.Now().UTC(),
 		UpdatedAt:      time.Now().UTC(),
+		FinishPreset:   "print-heavy",
 	}
 
 	proj.LetteringMode = "baked"
@@ -373,6 +374,7 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		ChapterCount   *int    `json:"chapter_count"`
 		ArtStyle       *string `json:"art_style"`
 		Status         *string `json:"status"`
+		FinishPreset   *string `json:"finish_preset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request payload")
@@ -397,6 +399,14 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Status != nil {
 		proj.Status = *body.Status
+	}
+	if body.FinishPreset != nil {
+		if !domain.ValidFinishPreset(*body.FinishPreset) {
+			writeError(w, http.StatusBadRequest, "finish_preset must be one of off, print, print-plus, print-heavy")
+			return
+		}
+		proj.FinishPreset = *body.FinishPreset
+		proj.FinishPresetExplicit = true
 	}
 
 	proj.UpdatedAt = time.Now().UTC()
@@ -1447,6 +1457,71 @@ func (s *Server) ListPages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"pages": pages})
+}
+
+// FinishPageImage creates or retrieves the immutable display derivative for the
+// page's currently approved art and owning project's preset.
+func (s *Server) FinishPageImage(w http.ResponseWriter, r *http.Request) {
+	userID := s.getUserID(r)
+	pageID := r.PathValue("id")
+	page, err := s.Repo.GetPage(r.Context(), pageID)
+	if err != nil {
+		writeLookupError(w, err, "Page")
+		return
+	}
+	chapter, err := s.Repo.GetChapter(r.Context(), page.ChapterID)
+	if err != nil {
+		writeLookupError(w, err, "Chapter")
+		return
+	}
+	project, err := s.Repo.GetProject(r.Context(), chapter.ProjectID)
+	if err != nil {
+		writeLookupError(w, err, "Project")
+		return
+	}
+	if project.UserID != userID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	inkVariant := r.URL.Query().Get("variant") == "ink"
+	if variant := r.URL.Query().Get("variant"); variant != "" && variant != "ink" && variant != "painted" {
+		writeError(w, http.StatusBadRequest, "variant must be painted or ink")
+		return
+	}
+	eligible := (page.LetteringMode == "overlay" && page.LineArtImageURL == "" && !inkVariant) || project.FinishPresetExplicit
+	if !eligible || project.FinishPreset == "off" {
+		writeJSON(w, http.StatusOK, map[string]string{"finished_image_url": ""})
+		return
+	}
+	var sourceURL string
+	if inkVariant {
+		if page.LineArtImageURL != "" && page.LineArtApprovedAt != nil && !domain.IsApprovalStale(page.LineArtApprovedAt, page.UpdatedAt) {
+			sourceURL = page.LineArtImageURL
+		}
+	} else if page.PaintedPageImageURL != "" && page.PaintedPageApprovedAt != nil && !domain.IsApprovalStale(page.PaintedPageApprovedAt, page.UpdatedAt) {
+		sourceURL = page.PaintedPageImageURL
+	} else if page.LineArtImageURL != "" && page.LineArtApprovedAt != nil && !domain.IsApprovalStale(page.LineArtApprovedAt, page.UpdatedAt) {
+		sourceURL = page.LineArtImageURL
+	} else {
+		writeError(w, http.StatusConflict, "page has no approved final art")
+		return
+	}
+	if sourceURL == "" {
+		writeError(w, http.StatusConflict, "page has no approved final art for this variant")
+		return
+	}
+	preset := gen.FinishPreset(project.FinishPreset)
+	finished, err := s.AIClient.FinishPageImage(r.Context(), gen.FinishPageImageRequest{
+		PageID: page.ID, ImageURL: sourceURL, FinishPreset: preset,
+	})
+	if err != nil {
+		writeGenerationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"raw_master_image_url": s.ImageHosting.ResolveURL(sourceURL),
+		"finished_image_url":   s.ImageHosting.ResolveURL(finished.ImageURL),
+	})
 }
 
 // UpdatePage handles PATCH /api/v1/pages/{id}
@@ -2793,6 +2868,8 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var exportPages []gen.PageExportItem
+	finishPreset := gen.FinishPreset(proj.FinishPreset)
+	finishPresetExplicit := proj.FinishPresetExplicit
 	for _, ch := range chapters {
 		pages, err := s.Repo.ListPages(r.Context(), ch.ID)
 		if err != nil {
@@ -2899,14 +2976,17 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 			panelCount := len(pg.PanelIDs)
 			provenance := map[string]interface{}{"c2pa": true}
 			exportPages = append(exportPages, gen.PageExportItem{
-				LetteringMode:      &mode,
-				Lettering:          layer,
-				LetteringStale:     &stale,
-				PageNumber:         len(exportPages) + 1,
-				ImageURL:           imgURL,
-				OriginalImageURL:   originalImageURL,
-				PanelCount:         optionalInt(panelCount),
-				ProvenanceMetadata: &provenance,
+				PageID:               &pg.ID,
+				FinishPreset:         &finishPreset,
+				FinishPresetExplicit: &finishPresetExplicit,
+				LetteringMode:        &mode,
+				Lettering:            layer,
+				LetteringStale:       &stale,
+				PageNumber:           len(exportPages) + 1,
+				ImageURL:             imgURL,
+				OriginalImageURL:     originalImageURL,
+				PanelCount:           optionalInt(panelCount),
+				ProvenanceMetadata:   &provenance,
 			})
 		}
 	}
@@ -2914,10 +2994,12 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 		panelCount := 1
 		provenance := map[string]interface{}{"c2pa": true}
 		exportPages = append(exportPages, gen.PageExportItem{
-			PageNumber:         1,
-			ImageURL:           fmt.Sprintf("projects/%s/page_1.png", proj.ID),
-			PanelCount:         &panelCount,
-			ProvenanceMetadata: &provenance,
+			FinishPreset:         &finishPreset,
+			FinishPresetExplicit: &finishPresetExplicit,
+			PageNumber:           1,
+			ImageURL:             fmt.Sprintf("projects/%s/page_1.png", proj.ID),
+			PanelCount:           &panelCount,
+			ProvenanceMetadata:   &provenance,
 		})
 	}
 
@@ -2943,13 +3025,15 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(context.WithoutCancel(r.Context()))
 	pdfResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.AssemblePdfResponse, error) {
 		return s.AIClient.AssemblePdf(ctx, gen.AssemblePdfRequest{
-			JobID:               job.ID,
-			HashedUserID:        hashedUID,
-			ProjectID:           proj.ID,
-			Title:               proj.Title,
-			PageSize:            gen.A4,
-			IncludeAIDisclosure: true,
-			Pages:               exportPages,
+			JobID:                job.ID,
+			HashedUserID:         hashedUID,
+			ProjectID:            proj.ID,
+			Title:                proj.Title,
+			PageSize:             gen.A4,
+			IncludeAIDisclosure:  true,
+			FinishPreset:         &finishPreset,
+			FinishPresetExplicit: &finishPresetExplicit,
+			Pages:                exportPages,
 		})
 	})
 	if err != nil {
