@@ -26,6 +26,7 @@ export default defineConfig({
 		})
 	],
 	server: {
+		fs: { allow: ['./tests/fixtures'] },
 		port: 5173,
 		host: true
 	}

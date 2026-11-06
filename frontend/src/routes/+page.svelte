@@ -266,7 +266,7 @@
 		<div class="demo-sample-banner" role="status">
 			<span class="sample-banner-icon"><Icon name="check" size={18} /></span>
 			<div class="sample-banner-body">
-				This demo uses sample artwork made by Meta AI; nothing here costs anything.
+				Meta AI sample art. No charges.
 			</div>
 		</div>
 	{/if}

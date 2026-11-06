@@ -1,4 +1,5 @@
 
+import { mockLettering } from './mockLettering.js';
 import { JOB_STATUS, STAGE_ESTIMATED_COSTS } from './types.js';
 
 let counter = 1;
@@ -29,6 +30,13 @@ export class MockApiClient {
 		};
 
 		this.seedInitialData();
+		this.letteringBases = new Map();
+		this.letteringTexts = new Map();
+		for (const { page, lettering } of options.letteringFixtures || []) {
+			this.pages.set(page.id, structuredClone(page));
+			this.letteringBases.set(page.id, structuredClone(lettering));
+			this.pages.get(page.id).lettering = structuredClone(lettering);
+		}
 	}
 
 	isAuthenticated() {
@@ -109,6 +117,7 @@ export class MockApiClient {
 
 		const page1 = {
 			id: 'page-1',
+			lettering_mode: 'baked',
 			chapter_id: chap1.id,
 			page_number: 1,
 			panel_ids: seededPanels.map((panel) => panel.id),
@@ -361,6 +370,38 @@ export class MockApiClient {
 
 	async getPages(chapterId) {
 		return Array.from(this.pages.values()).filter((p) => p.chapter_id === chapterId);
+	}
+
+	async getLettering(pageId) {
+		const page = this.pages.get(pageId);
+		if (!page) throw new Error('Page not found');
+		if (page.lettering_mode !== 'overlay' || page.line_art_image_url || page.line_art_url) return { lettering_mode: 'baked' };
+		if (!page.lettering) throw new Error('Layout unavailable');
+		return structuredClone({ lettering_mode: 'overlay', lettering: page.lettering });
+	}
+
+	async patchLetteringOverride(pageId, utteranceId, override) {
+		const response = await this.getLettering(pageId);
+		if (!response.lettering) throw new Error('Baked art cannot receive lettering');
+		const state = response.lettering;
+		if (!state.input.panels.some((p) => p.utterances.some((u) => u.utterance_id === utteranceId))) throw new Error('Utterance not found');
+		if (override.size_scale !== undefined && (!Number.isFinite(override.size_scale) || override.size_scale <= 0 || override.size_scale > 8)) throw new Error('Invalid size');
+		state.overrides[utteranceId] = structuredClone(override);
+		if (!Object.keys(override).length) delete state.overrides[utteranceId];
+		this.pages.get(pageId).lettering = mockLettering(this.letteringBases.get(pageId), state.overrides, this.letteringTexts.get(pageId));
+		return this.getLettering(pageId);
+	}
+
+	async patchLetteringText(pageId, utteranceId, text) {
+		const response = await this.getLettering(pageId);
+		if (!response.lettering) throw new Error('Baked art cannot receive lettering');
+		const entry = response.lettering.input.panels.flatMap((p) => p.utterances).find((u) => u.utterance_id === utteranceId);
+		if (!entry) throw new Error('Utterance not found');
+		if (typeof text !== 'string' || text.length > 8000 || (entry.kind === 'speech' && /[\r\n]/.test(text))) throw new Error('Invalid text');
+		const texts = { ...this.letteringTexts.get(pageId), [utteranceId]: text };
+		this.letteringTexts.set(pageId, texts);
+		this.pages.get(pageId).lettering = mockLettering(this.letteringBases.get(pageId), response.lettering.overrides, texts);
+		return this.getLettering(pageId);
 	}
 
 	async updatePage(id, data) {

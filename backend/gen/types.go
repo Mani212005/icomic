@@ -824,6 +824,11 @@ type PatchLetteringOverrideRequest struct {
 	Override LetteringOverride `json:"override"`
 }
 
+// PatchLetteringTextRequest defines model for PatchLetteringTextRequest.
+type PatchLetteringTextRequest struct {
+	Text string `json:"text"`
+}
+
 // PatchLetteringZonesRequest defines model for PatchLetteringZonesRequest.
 type PatchLetteringZonesRequest struct {
 	PanelID       string              `json:"panel_id"`

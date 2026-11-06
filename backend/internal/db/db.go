@@ -60,6 +60,7 @@ type Repository interface {
 	ListPages(ctx context.Context, chapterID string) ([]*domain.Page, error)
 	UpdatePage(ctx context.Context, pg *domain.Page) error
 	SavePageLettering(ctx context.Context, id string, previous, next json.RawMessage) error
+	SaveLetteringText(ctx context.Context, pageID string, before, next *domain.Panel, previous, lettering json.RawMessage) error
 	SavePageColourImage(ctx context.Context, pageID, imageURL string, uploadedAt time.Time) error
 
 	// Colour Palettes and Regions
@@ -894,5 +895,26 @@ func (m *InMemoryRepository) SavePageLettering(_ context.Context, id string, pre
 	cpy := *pg
 	cpy.Lettering = append(json.RawMessage(nil), next...)
 	m.pages[id] = &cpy
+	return nil
+}
+
+// SaveLetteringText changes only source text and the layer, atomically.
+func (m *InMemoryRepository) SaveLetteringText(_ context.Context, pageID string, before, next *domain.Panel, previous, lettering json.RawMessage) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pg, ok := m.pages[pageID]
+	panel, exists := m.panels[before.ID]
+	if !ok || !exists {
+		return ErrNotFound
+	}
+	if pg.LetteringMode != "overlay" || !bytes.Equal(pg.Lettering, previous) || panel.Dialogue != before.Dialogue || panel.Narration != before.Narration {
+		return ErrConflict
+	}
+	p := *panel
+	p.Dialogue, p.Narration, p.UpdatedAt = next.Dialogue, next.Narration, next.UpdatedAt
+	m.panels[p.ID] = &p
+	page := *pg
+	page.Lettering = append(json.RawMessage(nil), lettering...)
+	m.pages[pageID] = &page
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"icomic/backend/internal/domain"
 )
@@ -79,4 +80,47 @@ func TestRealDBLetteringUpgradeKeepsExistingBookBaked(t *testing.T) {
 		t.Fatal("ink cannot be assigned to an overlay page")
 	}
 
+}
+
+func TestRealDBLetteringTextIsAtomicAndPreservesImageState(t *testing.T) {
+	_, repo, ctx := realDatabase(t)
+	user := &domain.User{Email: "text@realdb.test", PasswordHash: "fake"}
+	must(t, repo.CreateUser(ctx, user))
+	project := &domain.Project{UserID: user.ID, Title: "Text", OriginalScript: "Story", ChapterCount: 1, ArtStyle: "classic-comic", Status: "draft"}
+	must(t, repo.CreateProject(ctx, project))
+	chapter := &domain.Chapter{ProjectID: project.ID, ChapterNumber: 1, Title: "One", Status: "pending"}
+	must(t, repo.CreateChapter(ctx, chapter))
+	panel := &domain.Panel{ChapterID: chapter.ID, PanelNumber: 1, Dialogue: "Nia: Hello", Narration: "Dawn"}
+	must(t, repo.CreatePanel(ctx, panel))
+	beforeLayer := json.RawMessage(`{"version":"page-lettering-v1","input":{},"overrides":{},"layout":{}}`)
+	nextLayer := json.RawMessage(`{"version":"page-lettering-v1","input":{"text":"Hello!"},"overrides":{},"layout":{}}`)
+	page := &domain.Page{ChapterID: chapter.ID, PageNumber: 1, PanelIDs: []string{panel.ID}, LetteringMode: "overlay", Lettering: beforeLayer, DraftImageURL: "fake://draft", PaintedPageImageURL: "fake://painted"}
+	must(t, repo.CreatePage(ctx, page))
+	original, err := repo.GetPanel(ctx, panel.ID)
+	must(t, err)
+	beforePage, err := repo.GetPage(ctx, page.ID)
+	must(t, err)
+	next := *original
+	next.Dialogue = "Nia: Hello!"
+	next.UpdatedAt = next.UpdatedAt.Add(time.Second)
+	must(t, repo.SaveLetteringText(ctx, page.ID, original, &next, beforeLayer, nextLayer))
+	// Both possible compare failures must roll back the complete transaction.
+	if err := repo.SaveLetteringText(ctx, page.ID, original, &next, nextLayer, json.RawMessage(`{}`)); !errors.Is(err, db.ErrConflict) {
+		t.Fatal("stale source accepted", err)
+	}
+	source, err := repo.GetPanel(ctx, panel.ID)
+	must(t, err)
+	if err := repo.SaveLetteringText(ctx, page.ID, source, &next, beforeLayer, json.RawMessage(`{}`)); !errors.Is(err, db.ErrConflict) {
+		t.Fatal("stale layer accepted", err)
+	}
+	afterPage, err := repo.GetPage(ctx, page.ID)
+	must(t, err)
+	if !afterPage.UpdatedAt.Equal(beforePage.UpdatedAt) || afterPage.DraftImageURL != beforePage.DraftImageURL || afterPage.PaintedPageImageURL != beforePage.PaintedPageImageURL {
+		t.Fatal("image state changed")
+	}
+	var data map[string]any
+	must(t, json.Unmarshal(afterPage.Lettering, &data))
+	if data["input"].(map[string]any)["text"] != "Hello!" || source.Dialogue != "Nia: Hello!" {
+		t.Fatal("source and layer did not commit atomically")
+	}
 }

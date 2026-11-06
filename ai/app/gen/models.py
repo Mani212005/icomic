@@ -146,6 +146,13 @@ class CharacterRenderIdentity(BaseModel):
     reference_image_url: str
 
 
+class PatchLetteringTextRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    text: str = Field(..., max_length=8000)
+
+
 class GenerateDraftSketchResponse(BaseModel):
     job_id: str
     image_url: str

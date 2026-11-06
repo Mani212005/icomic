@@ -1,20 +1,16 @@
 <script>
 	import ErrorBanner from './ErrorBanner.svelte';
+	import { stageList, quoteStages } from './stages.js';
 	import Icon from '#lib/design/Icon.svelte';
 	import ColourEditor from '#lib/colour/ColourEditor.svelte';
+	import LetteringPreview from '#lib/lettering/LetteringPreview.svelte';
+	import { LetteringSession } from '#lib/lettering/session.js';
 	import ExportView from '#lib/export/ExportView.svelte';
 	import { pollJob } from '#lib/api/jobPolling.js';
 	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote } from '#lib/api/types.js';
 	const INK_VARIANT = 'ink';
 
-	export let project = {
-		id: 'proj-demo-1',
-		title: 'Demo',
-		art_style: 'cyberpunk-noir',
-		chapter_count: 3,
-		script: '',
-		original_script: ''
-	};
+	export let project;
 	export let apiClient;
 	export let activeStage = STAGES.SCRIPT;
 	let stageNavOpen = false;
@@ -39,6 +35,11 @@
 	let chapters = [];
 	let panels = [];
 	let pages = [];
+	let letteringSessions = new Map();
+	function letteringSession(page) {
+		if (!letteringSessions.has(page.id)) letteringSessions.set(page.id, new LetteringSession(apiClient, page.id));
+		return letteringSessions.get(page.id);
+	}
 	let palette = [];
 	let finishVariant = 'painted';
 	let palettesByPage = {};
@@ -48,8 +49,8 @@
 	}
 	let creditUsage = { remaining_credits: 1000 };
 	let costQuotes = {};
-	function quoteLabel(stage) {
-		return formatCostQuote(costQuotes[stage]);
+	function quoteLabel(stage, quotes) {
+		return formatCostQuote(quotes[stage]);
 	}
 
 	let isJobActive = false;
@@ -83,16 +84,6 @@
 		if (pages[0]?.id === pageId) palette = newPalette;
 	}
 
-	const stageList = [
-		{ id: STAGES.SCRIPT, label: '1. Script' },
-		{ id: STAGES.CHARACTERS, label: '2. Characters' },
-		{ id: STAGES.CHAPTERS, label: '3. Outline' },
-		{ id: STAGES.PANELS, label: '4. Panels' },
-		{ id: STAGES.DRAFT, label: '5. Drafts' },
-		{ id: STAGES.LINE_ART, label: '6. Finish' },
-		{ id: STAGES.COLOUR, label: '7. Ink' },
-		{ id: STAGES.EXPORT, label: '8. Export' }
-	];
 
 	$: currentStage = stageList.find((stage) => stage.id === activeStage);
 	$: stageCompleted = {
@@ -136,6 +127,7 @@
 	let lastProjectId = null;
 	$: if (project && project.id && project.id !== lastProjectId) {
 		lastProjectId = project.id;
+		letteringSessions = new Map();
 		exportCompleted = false;
 		stageNavOpen = false;
 		reloadProjectData();
@@ -176,8 +168,7 @@
 				palettesByPage = {};
 				palette = [];
 			}
-			const stages = ['character_reference', 'draft_sketch', 'final_line_art', 'colour_suggestion'];
-			const quotes = await Promise.all(stages.map(async (stage) => {
+			const quotes = await Promise.all(quoteStages.map(async (stage) => {
 				try {
 					return [stage, await apiClient.estimateCost(project.id, stage, 1)];
 				} catch {
@@ -643,7 +634,7 @@
 
 						<div class="card-footer">
 							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)}>
-								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('character_reference')})
+								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('character_reference', costQuotes)})
 							</button>
 
 							{#if isApprovalStale(char.approved_at, char.updated_at)}
@@ -834,16 +825,20 @@
 								<span class="sample-tag">Sample</span>
 							{/if}
 						</div>
-						<div class="img-container">
+						<div class="img-container" class:overlay-preview={page.lettering_mode === 'overlay'}>
 							{#if page.draft_image_url && !failedImages.has(page.draft_image_url)}
-								<img src={page.draft_image_url} alt="Draft {page.page_number}" on:error={markImageFailed} />
+								{#if page.lettering_mode === 'overlay'}
+									<LetteringPreview session={letteringSession(page)} imageUrl={page.draft_image_url} imageAlt={`Draft ${page.page_number}`} onImageError={markImageFailed} />
+								{:else}
+									<img src={page.draft_image_url} alt="Draft {page.page_number}" on:error={markImageFailed} />
+								{/if}
 							{:else}
 								<div class="empty-img"><Icon name="draft" size={48} />Pending</div>
 							{/if}
 						</div>
 						<div class="card-footer">
 							<button class="secondary-btn" on:click={() => generateDraft(page.id)}>
-								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('draft_sketch')})
+								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('draft_sketch', costQuotes)})
 							</button>
 
 							{#if isApprovalStale(page.draft_approved_at, page.updated_at)}
@@ -912,16 +907,20 @@
 								<span class="sample-tag">Sample</span>
 							{/if}
 						</div>
-						<div class="img-container">
+						<div class="img-container" class:overlay-preview={page.lettering_mode === 'overlay'}>
 							{#if finishImageUrl(page) && !failedImages.has(finishImageUrl(page))}
-								<img src={finishImageUrl(page)} alt="Page {page.page_number}" on:error={markImageFailed} />
+								{#if page.lettering_mode === 'overlay' && finishVariant !== INK_VARIANT && !page.line_art_image_url && !page.line_art_url}
+									<LetteringPreview session={letteringSession(page)} imageUrl={finishImageUrl(page)} imageAlt={`Page ${page.page_number}`} onImageError={markImageFailed} />
+								{:else}
+									<img src={finishImageUrl(page)} alt="Page {page.page_number}" on:error={markImageFailed} />
+								{/if}
 							{:else}
 								<div class="empty-img"><Icon name="line_art" size={48} />Pending</div>
 							{/if}
 						</div>
 						<div class="card-footer">
 							<button class="secondary-btn" on:click={() => generateLineArt(page.id)} aria-label="Regenerate">
-								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('final_line_art')})
+								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('final_line_art', costQuotes)})
 							</button>
 
 							{#if isApprovalStale(finishApprovalAt(page), page.updated_at)}
@@ -966,7 +965,7 @@
 				<div class="page-colour-heading">
 					<h3>Page {page.page_number}</h3>
 					<button class="secondary-btn" on:click={() => suggestNewPalette(page.id)}>
-						<Icon name="colour" size={18} /> Suggest palette ({quoteLabel('colour_suggestion')})
+						<Icon name="colour" size={18} /> Suggest palette ({quoteLabel('colour_suggestion', costQuotes)})
 					</button>
 				</div>
 				<ColourEditor
