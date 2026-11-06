@@ -151,10 +151,8 @@
 
 	<header class="navbar">
 		<div class="brand">
-			<span class="logo"><Icon name="panels" size={30} /></span>
-			<div class="brand-text">
-				<h1>Icomic</h1>
-			</div>
+			<img class="brand-mark" src="/brand/mark.svg" alt="" />
+			<div class="brand-text"><h1>Icomic</h1></div>
 		</div>
 
 		<div class="nav-status">
@@ -283,7 +281,7 @@
 	<main class="main-container">
 		{#if isLoadingProjects}
 			<div class="loading-container" role="status">
-				<div class="spinner-large" aria-hidden="true"></div>
+				<img class="brand-loader" src="/brand/mark.svg" alt="" />
 				<p>Loading…</p>
 			</div>
 		{:else if activeProject}
@@ -294,7 +292,7 @@
 			/>
 		{:else}
 			<div class="empty-state-card">
-				<div class="empty-icon"><Icon name="panels" size={18} /></div>
+				<div class="empty-icon"><img src="/brand/mark.svg" alt="" /></div>
 				<button class="primary-btn large" on:click={openCreateModal}>
 					<Icon name="export" size={18} /> Create project
 				</button>
