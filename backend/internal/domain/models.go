@@ -129,6 +129,7 @@ type StageApproval struct {
 
 // GenerationJob represents an AI execution job (SPEC 9, ARCHITECTURE 5).
 type GenerationJob struct {
+	EntityID       string     `json:"entity_id,omitempty"`
 	ID             string     `json:"id"`
 	ProjectID      string     `json:"project_id"`
 	UserID         string     `json:"user_id"`

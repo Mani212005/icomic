@@ -339,6 +339,21 @@ class TestMigrationsStructural(unittest.TestCase):
             ["users.uuid is referenced by repository SQL but absent from migrations"],
         )
 
+    def test_repository_check_validates_every_job_lookup_column(self):
+        source = (REPO_ROOT / "backend/internal/db/postgres.go").read_text()
+        columns = migrated_columns(self.all_up_sql)
+        # Exercise the actual lookup SQL, including the cast/COALESCE around
+        # entity_id. A missing job column must never escape structural checks.
+        for column in columns["generation_jobs"]:
+            with self.subTest(column=column):
+                missing = {table: set(names) for table, names in columns.items()}
+                missing["generation_jobs"].remove(column)
+                errors = repository_column_errors(source, missing)
+                self.assertTrue(
+                    any(f"generation_jobs.{column} " in error for error in errors),
+                    errors,
+                )
+
     def test_panel_scene_upgrade_reverses_columns(self):
         upgraded = migrated_columns(self.all_up_sql)
         for column in ("character_actions", "camera_angle", "background"):

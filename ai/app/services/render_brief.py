@@ -13,7 +13,7 @@ from ..adapters.storage.port import StoragePort
 from ..gen.models import CharacterRenderIdentity, PanelTextItem
 from .image_prompts import IMAGE_ONLY_INSTRUCTIONS
 
-RENDER_BRIEF_VERSION = "page-render-brief-v4"
+RENDER_BRIEF_VERSION = "page-render-brief-v5"
 
 
 def build_page_render_request(
@@ -99,10 +99,13 @@ def build_page_render_request(
     brief = {
         "version": RENDER_BRIEF_VERSION,
         "page_number": page_number,
+        "panel_count": len(panel_records),
         "style": style_bible.style_id,
         "style_bible": style_bible.to_dict(),
         "reading_order": "Follow panels in array order, left to right then top to bottom. Do not reorder or omit panels.",
-        "identity_policy": "Match named characters to their indexed reference images. Preserve identity anchors across panels; expressions and poses may change with the story. Do not add every reference character to every panel.",
+        "identity_policy": "Match named characters to their indexed reference images. Preserve identity anchors across panels; expressions and poses may change with the story. Do not add every reference character to every panel. In each panel, show exactly ONE instance of each named character who appears, especially the protagonist. Never draw two copies of the same person in one frame, including continuous-action poses or background doubles, unless that panel's story explicitly requests multiple instances.",
+        "layout_policy": f"Draw exactly {len(panel_records)} separate bordered rectangular panels, exactly ONE frame per persisted panel in the ordered panels array. No extra sub-frames, nested frames, inset panels or montage subdivisions. Each panel is one continuous scene; do not squeeze several separately framed scenes into one panel.",
+        "prop_policy": "When the brass bird appears in a panel, draw exactly ONE bird. Put it either in a character's hand, in the apron pocket, on a shoulder or at the specified scene position, never in two places at once. If it is in the hand, the pocket must contain no bird. Character reference props are identity context, not instructions to duplicate the bird.",
         "dialogue_policy": "Dialogue values contain only the spoken words and may appear only inside speech bubbles in their own panels. Show who speaks using bubble tails and placement. Never write a speaker's name or a speaker label inside a bubble. Empty dialogue means no speech bubble. Narration is context, not a caption. Do not invent, paraphrase or duplicate text.",
         "lettering_policy": "Use large, bold, high-contrast speech lettering that remains clearly readable on an A4 printed page. Letter height must be at least 4 percent of its panel's height (about 24 pixels in a 600-pixel-tall panel). Use short lines with generous spacing and enlarge the bubble to fit; never shrink lettering to tiny text or clip words. Keep every bubble and its tail inside its own panel.",
         "annotation_policy": "No panel numbers, no page numbers, no captions outside bubbles, no headings, no notes and no speaker labels. Panel numbers in the structured data are reading-order metadata only; never draw them into the art.",

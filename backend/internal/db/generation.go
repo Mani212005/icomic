@@ -18,11 +18,11 @@ type GenerationOptions struct {
 	AllowDirectFromBrief bool
 }
 
-const jobColumns = `id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at`
+const jobColumns = `id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at, COALESCE(entity_id::text, '')`
 
 func scanJob(row Row) (*domain.GenerationJob, error) {
 	var j domain.GenerationJob
-	err := row.Scan(&j.ID, &j.ProjectID, &j.UserID, &j.JobType, &j.Stage, &j.ModelID, &j.Status, &j.IdempotencyKey, &j.EstimatedCost, &j.ActualCost, &j.HashedUserID, &j.ErrorMessage, &j.CreatedAt, &j.CompletedAt)
+	err := row.Scan(&j.ID, &j.ProjectID, &j.UserID, &j.JobType, &j.Stage, &j.ModelID, &j.Status, &j.IdempotencyKey, &j.EstimatedCost, &j.ActualCost, &j.HashedUserID, &j.ErrorMessage, &j.CreatedAt, &j.CompletedAt, &j.EntityID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -132,6 +132,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 		job.ID = uuid.NewString()
 	}
 	job.CreatedAt = now
+	job.EntityID = opts.EntityID
 	job.Status = "pending"
 	var inserted string
 	err = tx.QueryRowContext(ctx, `INSERT INTO generation_jobs (id,project_id,user_id,job_type,stage,model_id,status,idempotency_key,estimated_cost,hashed_user_id,created_at,entity_id)

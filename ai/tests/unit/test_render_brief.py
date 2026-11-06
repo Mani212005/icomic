@@ -41,9 +41,14 @@ def example_request():
     }
 
 
-def test_golden_shared_render_brief():
-    prompt, images = build_page_render_request(**example_request())
-    expected = Path(__file__).parents[1] / "fixtures/render_brief_v4.txt"
+@pytest.mark.parametrize("count", [1, 5])
+def test_golden_shared_render_brief(count):
+    request = example_request()
+    request["panels"] = [
+        request["panels"][0].model_copy(update={"panel_number": 9 + n}) for n in range(count)
+    ]
+    prompt, images = build_page_render_request(**request)
+    expected = Path(__file__).parents[1] / f"fixtures/render_brief_v5_{count}_panels.txt"
     assert prompt + "\n" == expected.read_text()
     assert images == [image_bytes("Nia reference pixels")]
 

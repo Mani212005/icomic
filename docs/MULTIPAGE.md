@@ -33,6 +33,22 @@ service, configured with the same run ID and budget. To explicitly retry one unc
 `--retry-uncertain-job-id <job-id>`; the runner creates a fresh key and reservation.
 For legacy image jobs marked failed by an older client, the explicit retry is accepted only when the matching provider ledger entry proves that same job is uncertain and unpriced.
 The job's project and image type are still checked; no historical job or quota row is rewritten.
+The job endpoint includes its durable `entity_id`, which identifies the exact page or
+character even when a failed request never saved an image job pointer on that entity.
+Before any approvals or provider work, the runner resolves the explicit retry to one
+missing image on that project. Unknown, completed or superseded targets are refused
+before spending. Older services remain compatible when the image job pointer exists;
+an unlinked legacy job requires an updated service that exposes its persisted target.
+A completed project can be exported by attaching without retry or repaint flags;
+export and approval perform no provider calls.
+
+Shared render brief v5 states the page's exact panel count and requires one separate
+bordered rectangle per persisted panel, with no inset or nested frames. Each named
+character appears at most once in a panel unless the scene explicitly requests
+multiple instances. A depicted brass bird occupies one place, never both a hand and
+an apron pocket. Large A4 lettering and no-number rules remain. These are generative
+instructions, not a guarantee: inspect the resulting pages for duplicates, subdivisions
+and lettering defects before accepting them.
 
 `--repaint-pages 1 6 8 9` explicitly replaces only those global comic page finishes with painted defaults during an attached resume.
 Every selected page must already have an approved draft and a completed prior finish.

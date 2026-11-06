@@ -266,6 +266,9 @@ func TestRealDBGenerationTransactionsAndRepositories(t *testing.T) {
 	}
 	stored, err := repo.GetJob(ctx, first.ID)
 	must(t, err)
+	if stored.EntityID != character.ID || first.EntityID != character.ID {
+		t.Fatalf("durable generation target lost: created=%+v stored=%+v", first, stored)
+	}
 	if stored.ID != first.ID {
 		t.Fatal("job lookup returned wrong row")
 	}
