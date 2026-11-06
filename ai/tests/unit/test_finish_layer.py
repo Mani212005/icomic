@@ -32,6 +32,15 @@ def test_seeded_output_is_byte_identical_and_page_seed_is_stable() -> None:
     assert page_seed("page-17") != page_seed("page-18")
 
 
+def test_plus_and_heavy_are_seeded_and_distinct_presets() -> None:
+    source = _encode(Image.new("RGB", (83, 117), (132, 87, 46)))
+    plus_a = finish_image(source, seed="page-17", strength=FinishStrength.PLUS)
+    plus_b = finish_image(source, seed="page-17", strength=FinishStrength.PLUS)
+    heavy = finish_image(source, seed="page-17", strength=FinishStrength.HEAVY)
+    assert plus_a == plus_b
+    assert heavy != plus_a
+
+
 def test_off_returns_exact_input_bytes() -> None:
     source = _encode(Image.new("RGB", (17, 21), (255, 255, 255)))
     assert finish_image(source, seed=1, strength=FinishStrength.OFF) == source

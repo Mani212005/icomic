@@ -28,18 +28,35 @@ same output bytes.
 
 | Treatment | What it does | Safeguards |
 | --- | --- | --- |
-| `paper` | Adds three scales of low-amplitude tooth and directional fibre variation, weighted more strongly in light regions. | Texture is under two percent at full strength and remains faint in shadows. |
+| `paper` | Adds three scales of tooth and directional fibre variation, weighted more strongly in light regions. | Shadows retain detail and receive less texture than paper highlights. |
 | `halftone` | Adds a 23-degree dot screen in shadows and flat regions. | A local edge mask suppresses the pattern around detailed contours and faces. |
-| `registration` | Moves color channels in a seeded, stable direction by a fraction of a pixel, up to 0.72 px at 1280 px width; adds slight dark contour spread. | The displacement scales with page width and is dialed down in the combined preset. |
+| `registration` | Moves color channels in a seeded, stable direction by a fraction of a pixel, capped at 0.95 px at 1280 px width; adds slight dark contour spread. | The displacement scales with page width and is dialed down in the combined presets. |
 | `matte` | Applies a gentle S curve, slight saturation compression, lifted blacks, and a warm paper white. | Highlight tint and shadow lift are intentionally restrained. |
-| `grain` | Adds fine seeded scan grain weighted by luminance. | Noise standard deviation is about 1.35 levels at full strength. |
-| `print` | Combines paper, halftone, registration/bleed, matte, and grain. | Each component is reduced relative to its standalone version to avoid an obvious filter. |
+| `grain` | Adds fine seeded scan grain weighted by luminance. | Grain is softer in shadows than highlights. |
+| `print` | Combines paper, halftone, registration/bleed, matte, and grain. | Tuned as the subtle, page-wide option. |
 
-`FinishStrength` has `off`, `light` (48 percent of the calibrated effect), and
-`print` (full calibrated effect). The manual comparison generator is
-`scripts/manual/finish_layer_sheet.py`; by default it reads the existing painted
-pages under `/home/mani/icomic-artifacts/long-run-final-2/images/` and writes
-the sheets and page variants to `/home/mani/icomic-artifacts/finish-layer/`.
+`FinishStrength` has five levels. `off` returns the original bytes; `light` uses
+48 percent of the current `print` component settings; `print` is the subtle
+baseline; `plus` starts at 1.75 times the baseline texture and raises screen
+visibility, ink compression, and grain; `heavy` starts at 2.5 times baseline
+and pushes those effects toward a zine or risograph look, including more visible
+registration. The combined preset caps registration at 0.95 px at 1280 px
+width. White is capped below pure white for combined and matte treatments. All
+levels remain deterministic for the same bytes, seed, and library versions.
+
+In the phase-one comparison, `plus` is the recommended candidate for review:
+the surface reads clearly at screen size and faces remain crisp. `heavy` is an
+upper bound for the visual experiment; its grain and color fringes start to
+compete with faces and fine outlines.
+
+The manual generator is `scripts/manual/finish_layer_sheet.py`; it reads the
+existing painted pages under `/home/mani/icomic-artifacts/long-run-final-2/images/`
+and writes into `/home/mani/icomic-artifacts/finish-layer/`. Its new
+`strength-ladder-comparison.jpg` lays out original, print, print-plus, and
+print-heavy at page scale with source-pixel crops. The
+`strength-ladder-screen-1280.jpg` is exactly 1280 px wide and includes native
+pixel detail crops. Pass `--refresh-phase-one` to regenerate the original
+component experiment sheets as well.
 
 ## What texture cannot fix
 
