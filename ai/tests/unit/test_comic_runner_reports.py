@@ -65,6 +65,16 @@ def test_runner_refuses_missing_ledger_before_any_api_request(tmp_path):
         guard.before_call("language")
 
 
+def test_new_project_title_uses_explicit_value_or_script_filename(tmp_path):
+    script = tmp_path / "the_tide-clock.txt"
+    script.write_text("THE TIDE CLOCK\nThe opening scene begins here.")
+    assert runner.resolve_project_title(script) == "The Tide Clock"
+    assert runner.resolve_project_title(script, "  User's Title  ") == "User's Title"
+    script.write_text("Nia watches the harbor clock.")
+    assert runner.resolve_project_title(script) == "The Tide Clock"
+    assert runner.resolve_project_title(None) == "Untitled Comic"
+
+
 def test_live_partial_failure_report_uses_durable_ledger_without_live_requests(
     monkeypatch, tmp_path
 ):

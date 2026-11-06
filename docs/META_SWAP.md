@@ -200,7 +200,7 @@ Network timeouts and disconnects after a POST are also unknown outcomes and must
 - C2PA provenance detection scans standard PNG chunks, JPEG APP11 segments for JUMBF boxes, and WebP RIFF containers for JUMBF boxes without altering bytes.
 - The `MetaImageAdapter` extracts and preserves the raw `provenance_metadata` dictionary returned in API responses and sets the detected `media_type`.
 - Downstream processing (canvas manipulation, thumbnailing, PDF compilation) must never strip, alter, or obscure provenance metadata or watermarks.
-- PDF export embeds JPEG bytes directly and renders PNG or WebP pixels using `/Filter /FlateDecode`. PNG and WebP originals are attached unchanged; their original provenance is preserved in those attachments, without asserting that a signature on the source image signs the rendered PDF pixels.
+- PDF export embeds JPEG bytes directly and encodes photographic PNG or WebP display pixels as quality-91 JPEG, while palette and flat images retain lossless pixels. A distinct raw source image is attached byte-exactly; when no separate raw source is supplied, a PNG or WebP display image is attached unchanged. This preserves source provenance without asserting that a signature on the source image signs the rendered PDF pixels.
 - The PDF export pipeline records `exports.provenance_metadata_preserved = true` in the database.
 
 ### 4.8 Contributor Tier Protection

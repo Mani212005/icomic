@@ -117,6 +117,43 @@ def parse_png_to_rgb(png_data: bytes) -> tuple[int, int, bytes]:
         return width, height, rgb.tobytes()
 
 
+def _display_image_payload(image_bytes: bytes) -> tuple[int, int, str, str, bytes]:
+    """Return a compact PDF image stream while leaving source bytes untouched."""
+    if image_bytes.startswith(b"\xff\xd8"):
+        width, height, colorspace = parse_jpeg_info(image_bytes)
+        return width, height, colorspace, "DCTDecode", image_bytes
+
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n") or (
+        image_bytes.startswith(b"RIFF") and len(image_bytes) >= 12 and image_bytes[8:12] == b"WEBP"
+    ):
+        with Image.open(BytesIO(image_bytes)) as source:
+            rgba = source.convert("RGBA")
+            rgb = Image.new("RGB", rgba.size, "white")
+            rgb.paste(rgba, mask=rgba.getchannel("A"))
+            width, height = rgb.size
+            # Palette art and small flat illustrations retain their exact pixels.
+            flat = source.mode in ("1", "P") or (rgb.getcolors(maxcolors=64) is not None)
+            if flat:
+                return width, height, "/DeviceRGB", "FlateDecode", zlib.compress(rgb.tobytes())
+            encoded = BytesIO()
+            rgb.save(encoded, format="JPEG", quality=91, optimize=True)
+            return width, height, "/DeviceRGB", "DCTDecode", encoded.getvalue()
+
+    raise UnsupportedImageMediaError("PDF export supports PNG, JPEG and WebP.")
+
+
+def _image_object(
+    width: int, height: int, colorspace: str, filter_name: str, payload: bytes
+) -> bytes:
+    return (
+        f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} "
+        f"/ColorSpace {colorspace} /BitsPerComponent 8 /Filter /{filter_name} "
+        f"/Length {len(payload)} >>\nstream\n".encode()
+        + payload
+        + b"\nendstream"
+    )
+
+
 def _generate_fallback_png(width: int = 64, height: int = 64) -> bytes:
     """Generate a minimal fallback test PNG for missing storage images."""
     raw_data = bytearray()
@@ -202,64 +239,90 @@ class PdfWriter:
         cover_page_id = self._reserve_id()
         cover_lines: list[bytes] = []
 
-        # Top Banner
-        cover_lines.append(b"0.12 0.18 0.32 rg")
-        cover_lines.append(f"0 {self.height - 100:.2f} {self.width:.2f} 100 re f".encode())
-
-        cover_lines.append(b"BT /F2 16 Tf 1.0 1.0 1.0 rg")
-        cover_lines.append(
-            f"50 {self.height - 55:.2f} Td (ICOMIC GRAPHIC NOVEL SERIES) Tj ET".encode()
+        # Compact masthead, illustration, disclosure, and provenance layout.
+        cover_lines.extend(
+            [
+                b"0.12 0.18 0.32 rg",
+                f"0 {self.height - 82:.2f} {self.width:.2f} 82 re f".encode(),
+                b"BT /F2 14 Tf 1.0 1.0 1.0 rg",
+                f"50 {self.height - 49:.2f} Td (ICOMIC GRAPHIC NOVEL SERIES) Tj ET".encode(),
+            ]
         )
-
-        # Main Title & Subtitle
         esc_title = escape_pdf_string(title)
         title_max_chars = max(18, int((self.width - 100) / 14))
         title_lines = _wrap_cover_title(title, title_max_chars)
-        title_extra = max(0, len(title_lines) - 1) * 31
+        title_y = self.height - 126
         for line_number, title_line in enumerate(title_lines):
-            esc_title_line = escape_pdf_string(title_line)
             cover_lines.append(b"BT /F2 26 Tf 0.1 0.1 0.15 rg")
-            title_y = self.height - 155 - line_number * 30
-            cover_lines.append(f"50 {title_y:.2f} Td ({esc_title_line}) Tj ET".encode())
-
-        cover_lines.append(b"BT /F3 13 Tf 0.35 0.35 0.4 rg")
-        cover_lines.append(
-            f"50 {self.height - 185 - title_extra:.2f} Td (AI-Generated Story & Artwork) Tj ET".encode()
-        )
-
-        # Mandatory AI Generation Disclosure Box
-        if include_ai_disclosure:
-            box_y = self.height - 345 - title_extra
-            box_h = 125
-            box_w = self.width - 100
-
-            cover_lines.append(b"0.94 0.96 0.98 rg 0.25 0.35 0.55 RG 1.5 w")
-            cover_lines.append(f"50 {box_y:.2f} {box_w:.2f} {box_h:.2f} re B".encode())
-
-            cover_lines.append(b"BT /F2 11 Tf 0.15 0.25 0.45 rg")
             cover_lines.append(
-                f"65 {box_y + box_h - 25:.2f} Td (MANDATORY AI-GENERATION DISCLOSURE) Tj ET".encode()
+                f"50 {title_y - line_number * 30:.2f} Td ({escape_pdf_string(title_line)}) Tj ET".encode()
+            )
+        subtitle_y = title_y - len(title_lines) * 30 - 3
+        cover_lines.append(b"BT /F3 12 Tf 0.35 0.35 0.4 rg")
+        cover_lines.append(f"50 {subtitle_y:.2f} Td (AI-Generated Story & Artwork) Tj ET".encode())
+
+        disclosure_y = 177
+        disclosure_h = 112 if include_ai_disclosure else 0
+        provenance_y = 153
+        image_top = subtitle_y - 19
+        image_bottom = disclosure_y + disclosure_h + 31
+        image_max_h = max(0, min(305, image_top - image_bottom))
+        cover_image = pages_data[0].get("image_bytes") if pages_data else None
+        if cover_image and image_max_h >= 72:
+            try:
+                img_w, img_h, colorspace, filter_name, payload = _display_image_payload(cover_image)
+            except (OSError, ValueError, struct.error, zlib.error):
+                cover_image = None
+            else:
+                cover_image_id = self._add_object(
+                    _image_object(img_w, img_h, colorspace, filter_name, payload)
+                )
+                scale = min((self.width - 150) / img_w, image_max_h / img_h)
+                display_w, display_h = img_w * scale, img_h * scale
+                image_x = (self.width - display_w) / 2
+                image_y = image_top - display_h
+                cover_lines.extend(
+                    [
+                        b"0.75 0.78 0.82 RG 0.8 w",
+                        f"{image_x - 1:.2f} {image_y - 1:.2f} {display_w + 2:.2f} {display_h + 2:.2f} re S".encode(),
+                        b"q",
+                        f"{display_w:.2f} 0 0 {display_h:.2f} {image_x:.2f} {image_y:.2f} cm /CoverIm Do Q".encode(),
+                    ]
+                )
+        if not cover_image or image_max_h < 72:
+            placeholder_y = max(image_bottom, image_top - 130)
+            cover_lines.extend(
+                [
+                    b"0.94 0.96 0.98 rg 0.78 0.81 0.85 RG 0.8 w",
+                    f"90 {placeholder_y:.2f} {self.width - 180:.2f} 110 re B".encode(),
+                    b"BT /F3 12 Tf 0.45 0.48 0.52 rg",
+                    f"{self.width / 2 - 72:.2f} {placeholder_y + 52:.2f} Td (Artwork preview unavailable) Tj ET".encode(),
+                ]
             )
 
+        if include_ai_disclosure:
+            box_w = self.width - 100
+            cover_lines.extend(
+                [
+                    b"0.94 0.96 0.98 rg 0.25 0.35 0.55 RG 1.2 w",
+                    f"50 {disclosure_y:.2f} {box_w:.2f} {disclosure_h:.2f} re B".encode(),
+                    b"BT /F2 10 Tf 0.15 0.25 0.45 rg",
+                    f"64 {disclosure_y + disclosure_h - 20:.2f} Td (MANDATORY AI-GENERATION DISCLOSURE) Tj ET".encode(),
+                ]
+            )
             disclosure_statements = [
                 "Notice: This comic book was created with Icomic AI using Meta generative models.",
                 "All visual artwork, character artwork, and panel compositions are AI-generated.",
                 "Meta C2PA provenance metadata and cryptographic signatures are preserved.",
                 "Cryptographic provenance records remain embedded for transparency and auditability.",
             ]
-            y_pos = box_y + box_h - 48
-            for statement in disclosure_statements:
-                esc_s = escape_pdf_string(statement)
+            for row, statement in enumerate(disclosure_statements):
                 cover_lines.append(
-                    f"BT /F1 9 Tf 0.2 0.2 0.25 rg 65 {y_pos:.2f} Td ({esc_s}) Tj ET".encode()
+                    f"BT /F1 7.5 Tf 0.2 0.2 0.25 rg 64 {disclosure_y + disclosure_h - 38 - row * 15:.2f} Td ({escape_pdf_string(statement)}) Tj ET".encode()
                 )
-                y_pos -= 18
 
-        # Project Specifications & Provenance Summary
-        spec_y = self.height - 425 - title_extra
-        cover_lines.append(b"BT /F2 11 Tf 0.15 0.15 0.2 rg")
-        cover_lines.append(f"50 {spec_y:.2f} Td (PROJECT & PROVENANCE RECORD) Tj ET".encode())
-
+        cover_lines.append(b"BT /F2 9 Tf 0.15 0.15 0.2 rg")
+        cover_lines.append(f"50 {provenance_y:.2f} Td (PROJECT & PROVENANCE RECORD) Tj ET".encode())
         spec_details = [
             f"Project Identifier: {project_id}",
             f"Total Comic Pages: {len(pages_data)}",
@@ -267,18 +330,15 @@ class PdfWriter:
             "Provenance Standard: Meta C2PA / Content Credentials preserved",
             f"Assembled: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%SZ')}",
         ]
-        curr_y = spec_y - 22
-        for detail in spec_details:
-            esc_d = escape_pdf_string(detail)
+        for row, detail in enumerate(spec_details):
             cover_lines.append(
-                f"BT /F1 9 Tf 0.3 0.3 0.3 rg 50 {curr_y:.2f} Td ({esc_d}) Tj ET".encode()
+                f"BT /F1 7 Tf 0.3 0.3 0.3 rg 50 {provenance_y - 14 - row * 12:.2f} Td ({escape_pdf_string(detail)}) Tj ET".encode()
             )
-            curr_y -= 16
 
         # Cover Footer
         cover_lines.append(b"BT /F1 8 Tf 0.5 0.5 0.5 rg")
         cover_lines.append(
-            b"50 35 Td (Icomic AI Publishing Pipeline | Powered by Meta AI Models | Cover Page) Tj ET"
+            b"50 25 Td (Icomic AI Publishing Pipeline | Powered by Meta AI Models | Cover Page) Tj ET"
         )
 
         cover_bytes = b"\n".join(cover_lines)
@@ -292,7 +352,9 @@ class PdfWriter:
         self._set_object(
             cover_page_id,
             f"<< /Type /Page /Parent {pages_root_id} 0 R /MediaBox [0 0 {self.width:.2f} {self.height:.2f}] "
-            f"/Resources << /Font {font_res_str} >> /Contents {cover_content_id} 0 R >>".encode(),
+            f"/Resources << /Font {font_res_str} /XObject << /CoverIm {cover_image_id} 0 R >> >> /Contents {cover_content_id} 0 R >>".encode()
+            if cover_image and image_max_h >= 72
+            else f"/Resources << /Font {font_res_str} >> /Contents {cover_content_id} 0 R >>".encode(),
         )
         page_ids.append(cover_page_id)
 
@@ -321,59 +383,30 @@ class PdfWriter:
             if not img_bytes:
                 img_bytes = _generate_fallback_png()
 
-            if img_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-                try:
-                    img_w, img_h, rgb_data = parse_png_to_rgb(img_bytes)
-                except (KeyError, ValueError, OSError, struct.error, zlib.error) as exc:
-                    raise UnsupportedImageMediaError(
-                        f"Invalid PNG image on page {p.get('page_number', idx)}."
-                    ) from exc
-
-                compressed_rgb = zlib.compress(rgb_data)
-                img_xobj_id = self._add_object(
-                    f"<< /Type /XObject /Subtype /Image /Width {img_w} /Height {img_h} "
-                    f"/ColorSpace /DeviceRGB /BitsPerComponent 8 "
-                    f"/Filter /FlateDecode /Length {len(compressed_rgb)} >>\nstream\n".encode()
-                    + compressed_rgb
-                    + b"\nendstream"
-                )
-            elif img_bytes.startswith(b"\xff\xd8"):
-                img_w, img_h, colorspace = parse_jpeg_info(img_bytes)
-                img_xobj_id = self._add_object(
-                    f"<< /Type /XObject /Subtype /Image /Width {img_w} /Height {img_h} "
-                    f"/ColorSpace {colorspace} /BitsPerComponent 8 "
-                    f"/Filter /DCTDecode /Length {len(img_bytes)} >>\nstream\n".encode()
-                    + img_bytes
-                    + b"\nendstream"
-                )
-            elif (
-                img_bytes.startswith(b"RIFF")
-                and len(img_bytes) >= 12
-                and img_bytes[8:12] == b"WEBP"
-            ):
-                # PDF has no native WebP filter. Render decoded pixels and attach
-                # the untouched source so any embedded provenance remains intact.
-                with Image.open(BytesIO(img_bytes)) as image:
-                    rgba = image.convert("RGBA")
-                    rgb = Image.new("RGB", rgba.size, "white")
-                    rgb.paste(rgba, mask=rgba.getchannel("A"))
-                    img_w, img_h = rgb.size
-                    compressed_rgb = zlib.compress(rgb.tobytes())
-                img_xobj_id = self._add_object(
-                    f"<< /Type /XObject /Subtype /Image /Width {img_w} /Height {img_h} "
-                    f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode "
-                    f"/Length {len(compressed_rgb)} >>\nstream\n".encode()
-                    + compressed_rgb
-                    + b"\nendstream"
-                )
-            else:
+            try:
+                img_w, img_h, colorspace, filter_name, payload = _display_image_payload(img_bytes)
+            except OSError as exc:
+                if img_bytes.startswith(b"RIFF") and img_bytes[8:12] == b"WEBP":
+                    raise
                 page_num = p.get("page_number", idx)
                 raise UnsupportedImageMediaError(
-                    f"Unsupported image format on page {page_num}. "
-                    "PDF export supports PNG, JPEG and WebP."
-                )
+                    f"Invalid or unsupported image on page {page_num}."
+                ) from exc
+            except (KeyError, ValueError, struct.error, zlib.error) as exc:
+                page_num = p.get("page_number", idx)
+                raise UnsupportedImageMediaError(
+                    f"Invalid or unsupported image on page {page_num}."
+                ) from exc
+            img_xobj_id = self._add_object(
+                _image_object(img_w, img_h, colorspace, filter_name, payload)
+            )
 
-            if not img_bytes.startswith(b"\xff\xd8"):
+            # A separate raw master is the provenance attachment for this page;
+            # avoid also retaining the larger display working copy verbatim.
+            has_distinct_original = (
+                p.get("original_image_bytes") and p.get("original_image_bytes") != img_bytes
+            )
+            if not img_bytes.startswith(b"\xff\xd8") and not has_distinct_original:
                 extension = "png" if img_bytes.startswith(b"\x89PNG") else "webp"
                 source_id = self._add_object(
                     f"<< /Type /EmbeddedFile /Subtype /image#2F{extension} /Length {len(img_bytes)} >>\nstream\n".encode()

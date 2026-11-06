@@ -1,12 +1,11 @@
 """Regression coverage using an actual provider page, without provider calls."""
 
 import re
-import zlib
 from io import BytesIO
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageChops, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageStat
 
 from app.adapters.image.port import ImageResult
 from app.adapters.storage.fake import FakeStorageAdapter
@@ -84,15 +83,15 @@ def test_real_provider_page_is_clean_before_storage_and_export(stage, monkeypatc
         [PageExportItem(page_number=1, image_url=url, provenance_metadata=provenance)],
     )
     pdf = storage.get(pdf_url)
-    streams = re.findall(rb"stream\n(.*?)\nendstream", pdf, re.DOTALL)
-    decoded = []
-    for stream in streams:
-        try:
-            decoded.append(zlib.decompress(stream))
-        except zlib.error:
-            pass
     assert count == 2
-    assert cleaned.tobytes() in decoded
+    assert storage.get(url) in pdf  # The source display PNG remains attached unchanged.
+    jpeg_streams = re.findall(
+        rb"/Filter /DCTDecode /Length \d+ >>\nstream\n(.*?)\nendstream", pdf, re.DOTALL
+    )
+    assert len(jpeg_streams) == 2  # Cover preview and comic page display.
+    encoded_display = Image.open(BytesIO(jpeg_streams[-1])).convert("RGB")
+    mean_difference = sum(ImageStat.Stat(ImageChops.difference(cleaned, encoded_display)).mean) / 3
+    assert mean_difference < 3
     assert cleanup_calls == [source]  # Export reads the working copy without cleaning again.
 
 
