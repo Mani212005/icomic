@@ -183,7 +183,7 @@
 	@font-face { font-family: 'Noto Lettering'; src: url('/fonts/noto-devanagari-v1.woff') format('woff'); font-display: swap; }
 	.lettering-preview { width: 100%; min-width: 0; }
 	.lettering-frame { position: relative; width: 100%; line-height: 0; isolation: isolate; }
-	.lettering-frame img { display: block; width: 100%; height: auto; box-shadow: 2px 4px 10px #4b454220; }
+	.lettering-frame img { display: block; width: 100%; height: auto; max-height: none; box-shadow: 2px 4px 10px #4b454220; }
 	.bubble-handle { position: absolute; background: transparent; border: 0; border-radius: 45%; padding: 0; cursor: grab; touch-action: none; min-height: 0; }
 	.bubble-handle::before { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 100%; height: 100%; min-width: 44px; min-height: 44px; }
 	.bubble-handle.selected { outline: 2px solid var(--focus); outline-offset: 3px; }
