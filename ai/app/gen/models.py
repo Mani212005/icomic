@@ -240,36 +240,6 @@ class ModeratePromptResponse(BaseModel):
     reason: str | None = None
 
 
-class PageExportItem(BaseModel):
-    page_number: int
-    image_url: str
-    original_image_url: str | None = Field(
-        None,
-        description="Original line art URL, retained when the exported image is a coloured derivative.",
-    )
-    panel_count: int | None = None
-    provenance_metadata: dict[str, Any] | None = None
-    panels: list[PanelTextItem] | None = None
-    dialogue_text: str | None = None
-
-
-class AssemblePdfRequest(BaseModel):
-    job_id: str
-    hashed_user_id: str
-    project_id: str
-    title: str
-    page_size: Literal["A4", "US_Letter", "Custom_Comic"] = "A4"
-    include_ai_disclosure: bool = True
-    pages: list[PageExportItem]
-
-
-class AssemblePdfResponse(BaseModel):
-    job_id: str
-    pdf_url: str
-    provenance_metadata_preserved: bool
-    page_count: int
-
-
 class JobStatusResponse(BaseModel):
     job_id: str
     status: Literal["pending", "running", "done", "failed", "uncertain", "cancelled"]
@@ -488,6 +458,10 @@ class LetteringLayout(BaseModel):
     version: Literal["lettering-layout-v1"]
     page_id: str
     page_aspect: float
+    source_digest: str | None = Field(
+        None,
+        description="SHA-256 of canonical effective input including placements and zones. Missing means stale for PDF export.",
+    )
     stroke_width: float = Field(
         0.0013, description="Relative to page height, about 2.5px at 1280px portrait width."
     )
@@ -564,6 +538,50 @@ class GeneratePaintedPageRequest(BaseModel):
         validate_default=True,
     )
     style_reference_image_url: str | None = None
+
+
+class PdfLetteringWarning(BaseModel):
+    page_number: int
+    code: Literal["stale_lettering", "lettering_review_required"]
+    message: str
+    flags: list[LetteringFlag] | None = None
+
+
+class PageExportItem(BaseModel):
+    page_number: int
+    image_url: str
+    original_image_url: str | None = Field(
+        None,
+        description="Original line art URL, retained when the exported image is a coloured derivative.",
+    )
+    lettering_mode: Literal["baked", "overlay"] = "baked"
+    lettering: PageLetteringState | None = None
+    lettering_stale: bool = Field(
+        False,
+        description="Stored input differs from the current source panels. Export must flag it without recomputing.",
+    )
+    panel_count: int | None = None
+    provenance_metadata: dict[str, Any] | None = None
+    panels: list[PanelTextItem] | None = None
+    dialogue_text: str | None = None
+
+
+class AssemblePdfRequest(BaseModel):
+    job_id: str
+    hashed_user_id: str
+    project_id: str
+    title: str
+    page_size: Literal["A4", "US_Letter", "Custom_Comic"] = "A4"
+    include_ai_disclosure: bool = True
+    pages: list[PageExportItem]
+
+
+class AssemblePdfResponse(BaseModel):
+    job_id: str
+    pdf_url: str
+    provenance_metadata_preserved: bool
+    page_count: int
+    warnings: list[PdfLetteringWarning] | None = None
 
 
 class PageLetteringResponse(BaseModel):

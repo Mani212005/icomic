@@ -452,7 +452,7 @@ def test_pdf_service_valid_multipage_and_structural_validation():
         ),
     ]
 
-    url, preserved, count = svc.assemble_pdf(
+    url, preserved, count, _ = svc.assemble_pdf(
         project_id="proj-comic-777",
         title="Shadows of Neo-Tokyo",
         page_size="A4",
@@ -528,7 +528,7 @@ def test_pdf_service_keeps_original_line_art_attached_for_coloured_page():
     line_art_url = storage.put("pages/page-1/line-art.png", original_line_art, "image/png")
     colour_url = storage.put("pages/page-1/colour.png", coloured_page, "image/png")
 
-    url, _, _ = service.assemble_pdf(
+    url, _, _, _ = service.assemble_pdf(
         project_id="project-colour-export",
         title="Colour Export",
         page_size="A4",
@@ -561,7 +561,7 @@ def test_pdf_service_page_sizes_and_fallback_image():
             dialogue_text="Stand back, hero!\nI will handle this.",
         )
     ]
-    url, preserved, count = svc.assemble_pdf(
+    url, preserved, count, _ = svc.assemble_pdf(
         project_id="proj-sizes",
         title="Letter Sized Comic",
         page_size="US_Letter",
@@ -943,7 +943,7 @@ def test_pdf_service_native_jpeg_embedding():
         )
     ]
 
-    url, preserved, count = svc.assemble_pdf(
+    url, preserved, count, _ = svc.assemble_pdf(
         project_id="proj-jpeg",
         title="JPEG Comic",
         page_size="A4",

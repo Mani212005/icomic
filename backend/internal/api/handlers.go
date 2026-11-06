@@ -2877,9 +2877,31 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 					imgURL = fmt.Sprintf("pages/%s.png", pg.ID)
 				}
 			}
+			mode := gen.PageExportItemLetteringModeBaked
+			var layer *gen.PageLetteringState
+			stale := false
+			if pg.LetteringMode == "overlay" && pg.LineArtImageURL == "" {
+				mode = gen.PageExportItemLetteringModeOverlay
+				layer, err = letteringState(pg)
+				if err != nil {
+					stale = true
+				} else {
+					current, sourceErr := s.sourceLetteringDocument(r.Context(), pg, nil, layer)
+					if sourceErr != nil {
+						writeLookupError(w, sourceErr, "Lettering source")
+						return
+					}
+					before, _ := json.Marshal(layer.Input)
+					after, _ := json.Marshal(current)
+					stale = !bytes.Equal(before, after)
+				}
+			}
 			panelCount := len(pg.PanelIDs)
 			provenance := map[string]interface{}{"c2pa": true}
 			exportPages = append(exportPages, gen.PageExportItem{
+				LetteringMode:      &mode,
+				Lettering:          layer,
+				LetteringStale:     &stale,
 				PageNumber:         len(exportPages) + 1,
 				ImageURL:           imgURL,
 				OriginalImageURL:   originalImageURL,
@@ -2954,7 +2976,7 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{"export": exp, "job_id": job.ID})
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{"export": exp, "job_id": job.ID, "warnings": pdfResp.Warnings})
 }
 
 // GetExport handles GET /api/v1/exports/{id}

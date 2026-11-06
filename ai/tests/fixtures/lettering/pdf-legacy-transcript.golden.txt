@@ -1,0 +1,22 @@
+BT /F2 10.00 Tf 0.2 0.2 0.2 rg
+50 801.89 Td (Lettering - Page 1) Tj ET
+0.7 0.7 0.7 RG 0.5 w
+50 795.89 m 545.28 795.89 l S
+0.75 0.75 0.75 RG 1 w
+75.48 157.00 444.33 627.89 re S
+q
+442.33 0 0 625.89 76.48 158.00 cm /Im1 Do Q
+BT /F2 10 Tf 0.15 0.2 0.35 rg
+50 134.00 Td (PANEL SCRIPT & DIALOGUE) Tj ET
+BT /F2 9 Tf 0.2 0.3 0.5 rg
+55 116.00 Td (Panel 1:) Tj ET
+BT /F3 9 Tf 0.3 0.3 0.3 rg
+65 103.00 Td ([Narration] Before sunrise.) Tj ET
+BT /F1 9 Tf 0.1 0.1 0.1 rg
+65 90.00 Td ("Where did you come from?") Tj ET
+0.8 0.8 0.8 RG 0.5 w
+50 42 m 545.28 42 l S
+BT /F1 8 Tf 0.4 0.4 0.4 rg
+50 28 Td (Icomic AI Graphic Novel) Tj ET
+BT /F1 8 Tf 0.4 0.4 0.4 rg
+475.28 28 Td (Page 2 of 2) Tj ET

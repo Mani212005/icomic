@@ -496,6 +496,10 @@
           "items": {
             "$ref": "#/$defs/LetteringIssue"
           }
+        },
+        "source_digest": {
+          "type": "string",
+          "description": "SHA-256 of canonical effective input including placements and zones. Missing means stale for PDF export."
         }
       },
       "description": "Serializable draw list, never append it to a previous result. All coordinates and bounds are page-normalized. Review issues are authoritative even when a bubble cannot be emitted. No renderer needs to wrap or place text again."

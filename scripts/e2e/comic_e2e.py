@@ -848,7 +848,7 @@ def run_flow(
             image_url = next(p for p in current if p["id"] == page_id)["painted_page_image_url"]
             before_hash = hashlib.sha256(fetch_line_art_image(image_url)).hexdigest()
             edited = json_request(endpoint + f"/utterances/{utterance['utterance_id']}/override", "PATCH", {
-                "override": {"center": {"x": 0.5, "y": 0.2}}
+                "override": {"center": {"x": 0.5, "y": 0.32}}
             })["lettering"]
             if utterance["utterance_id"] not in edited["overrides"] or edited["layout"] == state["layout"]:
                 raise E2EError("manual override did not replace stored layout")
@@ -894,11 +894,10 @@ def run_flow(
         )
     print(f"PASS painted default and explicit ink finish: {len(pages)} pages")
 
-    if guard.overlay_lettering:
-        print(f"PASS overlay lettering stored and source hashes preserved: {len(pages)} pages; PDF deferred")
-        return len(pages), project_id
     guard.current_stage = "export"
     exported = json_request(f"/api/v1/projects/{project_id}/export", "POST")
+    if guard.overlay_lettering and exported.get("warnings"):
+        raise E2EError(f"overlay export warnings: {exported['warnings']}")
     export = require(exported, "export", "export response has no export record")
     export_id = require(export, "id", "export response has no id")
     export_status = json_request(f"/api/v1/exports/{export_id}").get("export", {})
@@ -908,6 +907,10 @@ def run_flow(
     if not isinstance(pdf, bytes):
         raise E2EError("download endpoint did not return PDF bytes")
     guard.pdf_page_count = verify_pdf(pdf, len(pages))
+    if guard.overlay_lettering:
+        text = subprocess.run(["pdftotext", "-", "-"], input=pdf, capture_output=True, check=True).stdout.decode()
+        if "Follow the light!" not in " ".join(text.split()) or len(pdf) > 500_000 * len(pages):
+            raise E2EError("overlay PDF must contain extractable edited text and stay compact")
     artifact_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     staged = artifact_dir / f"latest-{timestamp}.pdf"
@@ -919,7 +922,7 @@ def run_flow(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--overlay-lettering", action="store_true", help="fake-only text-free art and stored lettering smoke, stops before PDF")
+    parser.add_argument("--overlay-lettering", action="store_true", help="fake-only text-free art, edited stored lettering and vector PDF smoke")
     parser.add_argument(
         "--script-file",
         type=Path,
@@ -1094,7 +1097,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     if args.overlay_lettering and args.live:
-        print("REFUSED: overlay lettering smoke is fake-only until editor/PDF stages land", file=sys.stderr)
+        print("REFUSED: overlay lettering smoke is fake-only; the live probe is a separate opt-in operation", file=sys.stderr)
         return 2
     if args.overlay_lettering:
         os.environ["LETTERING_OVERLAY_ENABLED"] = "true"
@@ -1319,7 +1322,7 @@ def main(argv: list[str] | None = None) -> int:
         "diagnostic_files": [
             str(p) for p in sorted(diagnostics_dir.glob("response-*.json"))
         ],
-        "pdf_path": str(args.artifact_dir / "latest.pdf") if not failure and not args.overlay_lettering else None,
+        "pdf_path": str(args.artifact_dir / "latest.pdf") if not failure else None,
         "lettering_mode": "overlay" if args.overlay_lettering else "baked",
         "generated_comic_pages": page_count,
         "generated_panels": guard.panel_count,
@@ -1330,7 +1333,7 @@ def main(argv: list[str] | None = None) -> int:
     (args.artifact_dir / f"cost-report-{run_id}.json").write_text(report_text)
     (args.artifact_dir / "cost-report.json").write_text(report_text)
     print(f"Cost report: {args.artifact_dir / 'cost-report.json'}")
-    if not failure and not args.overlay_lettering:
+    if not failure:
         print(str(args.artifact_dir / "latest.pdf"))
     return 1 if failure else 0
 

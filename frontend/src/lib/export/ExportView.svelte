@@ -12,6 +12,7 @@
 	let pageSize = PAGE_SIZES.A4;
 	let isExporting = false;
 	let exportError = null;
+	let exportWarnings = [];
 	let currentExport = null;
 	let downloadUrl = '';
 
@@ -19,6 +20,7 @@
 		if (!apiClient || !projectId) return;
 		isExporting = true;
 		exportError = '';
+		exportWarnings = [];
 		currentExport = null;
 		downloadUrl = '';
 
@@ -34,6 +36,8 @@
 					timeoutMs: 30000
 				});
 			}
+
+			exportWarnings = res.warnings || [];
 
 			if (res.export) {
 				currentExport = res.export;
@@ -55,7 +59,7 @@
 	</header>
 
 	<div class="compliance-notice">
-		<div class="badge"><Icon name="info" size={18} /> AI disclosure</div>
+		<div class="badge"><Icon name="info" size={18} /> Disclosure</div>
 			<p>AI-generated: Meta AI (muse-image-1.0, Llama); C2PA included.</p>
 	</div>
 
@@ -106,6 +110,17 @@
 				<strong>{exportError.title}</strong>
 				<p>{exportError.message}</p>
 				{#if exportError.action}<p class="error-action">Next: {exportError.action}</p>{/if}
+			</div>
+		</div>
+	{/if}
+
+	{#if exportWarnings.length}
+		<div class="error-banner" role="alert">
+			<Icon name="warning" size={18} />
+			<div>
+				{#each exportWarnings as warning}
+					<p>Page {warning.page_number}: {warning.message}</p>
+				{/each}
 			</div>
 		</div>
 	{/if}

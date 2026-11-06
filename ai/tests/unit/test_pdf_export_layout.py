@@ -77,7 +77,7 @@ def test_export_keeps_rgb_master_pixels_and_original_attachment_bytes():
     original_master = _generate_fallback_png(12, 10) + b"raw-master-metadata"
     art_url = storage.put("pages/current.png", current_art, "image/png")
     master_url = storage.put("pages/master.png", original_master, "image/png")
-    pdf_url, _, _ = PdfAssemblyService(storage).assemble_pdf(
+    pdf_url, _, _, _ = PdfAssemblyService(storage).assemble_pdf(
         project_id="master-integrity",
         title="Master integrity",
         page_size="A4",
