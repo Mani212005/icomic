@@ -969,3 +969,35 @@ func (p *PostgresRepository) SavePageLettering(ctx context.Context, id string, p
 	}
 	return nil
 }
+
+// Source text and vector state commit together; image state is never included.
+func (p *PostgresRepository) SaveLetteringText(ctx context.Context, pageID string, before, next *domain.Panel, previous, lettering json.RawMessage) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE pages SET lettering=$3::jsonb WHERE id=$1::uuid AND lettering_mode='overlay' AND lettering IS NOT DISTINCT FROM $2::jsonb`, pageID, nullableJSON(previous), nullableJSON(lettering))
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrConflict
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE panels SET dialogue=$2, narration=$3, updated_at=$4 WHERE id=$1::uuid AND dialogue IS NOT DISTINCT FROM $5 AND narration IS NOT DISTINCT FROM $6`, before.ID, next.Dialogue, next.Narration, next.UpdatedAt, before.Dialogue, before.Narration)
+	if err != nil {
+		return err
+	}
+	count, err = result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrConflict
+	}
+	return tx.Commit()
+}

@@ -217,6 +217,10 @@ func (s *Server) validatePublicRequest(w http.ResponseWriter, r *http.Request, p
 		writeError(w, 400, "override is required; use an empty object to clear")
 		return false
 	}
+	if pattern == "PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/text" && fields["text"] == nil {
+		writeError(w, 400, "text is required")
+		return false
+	}
 	allowed := s.publicFields(pattern)
 	for name, value := range fields {
 		kind, ok := allowed[name]
@@ -261,6 +265,8 @@ func (s *Server) publicFields(pattern string) map[string]string {
 		return map[string]string{"variant": "text"}
 	case "PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/override":
 		return map[string]string{"override": "object"}
+	case "PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/text":
+		return map[string]string{"text": "text"}
 	case "PATCH /api/v1/pages/{id}/lettering/zones":
 		return map[string]string{"panel_id": "text", "reserved_zones": "zones"}
 	case "PATCH /api/v1/pages/{id}/colour-palette":

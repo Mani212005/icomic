@@ -1,10 +1,9 @@
-# Deterministic lettering, stages 1 and 2
+# Deterministic lettering, stages 1 through 3
 
 `ai/app/services/lettering/` is a hermetic vector layout library. It accepts
 `LetteringDocument` and returns `LetteringLayout`; `layout_bytes` produces canonical
 UTF-8 JSON. Stage 2 connects it to new page generation and versioned page storage.
-The engine never accepts images, opens pixels, or calls a provider. Editor preview
-and PDF lettering remain stages 3 and 4; this change does not draw into either.
+The engine never accepts images, opens pixels, or calls a provider. The editor draws and edits this vector layer. PDF lettering remains stage 4.
 
 ## Enablement and legacy safety
 
@@ -83,6 +82,8 @@ Go/Python generated models share `contracts/openapi/ai-service.yaml`:
 - `PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/override` accepts
   `{"override":{"center":{"x":0.5,"y":0.2}}}`. Other fields are `rect`,
   `tail_anchor`, `size_scale`. An empty override object clears the manual edit.
+- `PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/text` edits source
+  text and recomputes the layer atomically without changing image approval.
 - `PATCH /api/v1/pages/{id}/lettering/zones` accepts `panel_id` and the complete
   `reserved_zones` array in panel-local coordinates. An empty array explicitly
   records missing-zone review issues.
@@ -285,6 +286,61 @@ left intact, and no new layer is placed over those panels. These are review copi
 not eligibility upgrades to the running book. Compare the new size to adjacent
 model lettering and inspect full resolution, especially tails and caption padding.
 
-Stage 3 will add editor preview/placement controls. Stage 4 will draw this same
-stored vector result in PDF, without reshaping or adding a second layer to legacy
-images. Both remain separate changes.
+## Editor preview and placement
+
+Overlay draft and painted previews use `LetteringPreview` and `LetteringLayer`.
+Baked/legacy/ink pages keep their original image preview, without lettering or
+controls. A frame follows the actual image bounds, and the SVG uses a physical
+page-height viewBox with `preserveAspectRatio="none"`: page-normalized coordinates
+scale to the same image pixels at every viewport width. Exact font glyph outlines
+are positioned from the stored glyph IDs/origins; no browser wrapping or shaping
+is involved. Speech bodies and sampled tails form one closed path with an open
+seam, and clipped strokes stay inside the serialized bounds.
+
+WOFFs and glyph paths are derived from the immutable engine TTFs. Both WOFF assets
+stay below 100 KB, with their complete OFL/copyright notices beside them. The
+Devanagari outline atlas loads only when needed. Inline editing uses bundled
+`@font-face` fonts; the preview itself uses exact outlines. Regenerate assets with:
+
+```bash
+uv run --project ai python scripts/bundle_lettering_fonts.py
+```
+
+Click/focus a bubble or choose an utterance to select it, including utterances
+that cannot emit a bubble. Drag the body or its tail handle using mouse/touch.
+Arrow keys nudge by 0.1% of the page (Shift: 1%); Enter opens inline text, Escape
+leaves editing or cancels an unfinished gesture. Size ranges from 0.875 to 3;
+the server still enforces its font floor and returns review flags. The toolbar
+provides size, edit, reset-to-auto, undo and redo. Flags include page issues without
+a bubble and expose readable accessible names. Focus rings remain visible and
+controls respect reduced motion.
+
+Placement previews are optimistic and debounced, with pointer capture for touch.
+The complete server layout replaces every provisional result, including automatic
+neighbours and review flags. Rejected writes restore the confirmed layer and
+refresh it before the next placement. Text debounces separately; pending text
+flushes when leaving a preview, even while a prior text write is in flight.
+Placement history survives switching between editor stages during the session.
+
+`PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/text` accepts
+`{"text":"Follow the light!"}`. It updates the corresponding source narration or
+dialogue line, preserving an existing speaker prefix and other source lines.
+Dialogue must remain one source line; narration can contain hard breaks. Empty
+source text can remove an utterance. The service computes before persisting, then
+compares the previous source text and vector state and commits both atomically.
+Layout or compare failures cannot leave half an edit. It never changes image
+columns, image approval timestamps or page freshness. The ordinary panel editor
+retains its existing art-staleness behavior.
+
+The offline mock returns baked for existing sample pages. Explicit overlay fixtures
+receive recorded layout geometry plus a local placement/text adapter, with simple
+Latin metrics for text demonstrations rather than production shaping. No clean
+eligible real-art sample is bundled, so the existing samples remain baked. The
+hermetic browser fixture at `/test-fixtures/lettering.html` (Vite development mode)
+shows a baked sample beside explicitly text-free test artwork. It is never part of
+the normal project seed and makes no provider requests. Component tests cover SVG
+snapshots, complex-script glyphs, pointer/tail edits, sizing, keyboard nudges,
+flags, reset, undo/redo, rejection, stage eligibility and session continuity.
+
+Stage 4 will draw the stored vector result in PDF without reshaping or adding a
+second layer to legacy images. The opt-in flag must remain off until that lands.

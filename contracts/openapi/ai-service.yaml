@@ -802,6 +802,14 @@ components:
         override:
           description: Empty object clears this utterance's manual placement.
           $ref: '#/components/schemas/LetteringOverride'
+    PatchLetteringTextRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          maxLength: 8000
     PatchLetteringZonesRequest:
       type: object
       additionalProperties: false

@@ -244,6 +244,22 @@ export class ApiClient {
 		return res && res.pages ? res.pages : res;
 	}
 
+	async getLettering(pageId) {
+		return this.request(`/api/v1/pages/${encodeURIComponent(pageId)}/lettering`);
+	}
+
+	async patchLetteringOverride(pageId, utteranceId, override) {
+		return this.request(`/api/v1/pages/${encodeURIComponent(pageId)}/lettering/utterances/${encodeURIComponent(utteranceId)}/override`, {
+			method: 'PATCH', body: JSON.stringify({ override })
+		});
+	}
+
+	async patchLetteringText(pageId, utteranceId, text) {
+		return this.request(`/api/v1/pages/${encodeURIComponent(pageId)}/lettering/utterances/${encodeURIComponent(utteranceId)}/text`, {
+			method: 'PATCH', body: JSON.stringify({ text })
+		});
+	}
+
 	async updatePage(id, data) {
 		const res = await this.request(`/api/v1/pages/${id}`, {
 			method: 'PATCH',

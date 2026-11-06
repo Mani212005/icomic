@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const css = readFileSync(join(root, 'src/lib/design/theme.css'), 'utf8');
@@ -54,4 +55,10 @@ test('paper reference stays below 250 KB and other visual assets stay below 100 
     }
   }
   visit(join(root, 'static'));
+});
+
+
+test('visible UI copy remains within the 534-word ceiling', () => {
+  const result = execFileSync('python3', [join(root, '../scripts/count_frontend_text.py'), join(root, 'src')], { encoding: 'utf8' });
+  assert.ok(Number(result.match(/copy_words=(\d+)/)[1]) <= 534, result);
 });

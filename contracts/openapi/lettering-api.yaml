@@ -44,6 +44,34 @@ paths:
           description: Page or utterance not found
         '409':
           description: Baked or ink art cannot receive an overlay
+  /api/v1/pages/{id}/lettering/utterances/{utterance_id}/text:
+    parameters:
+      - $ref: '#/components/parameters/PageID'
+      - name: utterance_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: patchLetteringText
+      description: Edit one source utterance and recompute the layer atomically, preserving its speaker. Dialogue must remain a single source line. Image bytes and image approval timestamps remain unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './ai-service.yaml#/components/schemas/PatchLetteringTextRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Lettering'
+        '400':
+          description: Invalid text or payload
+        '403':
+          description: Page belongs to another user
+        '404':
+          description: Page or utterance not found
+        '409':
+          description: Baked or ink art, or a concurrent source/layer edit
   /api/v1/pages/{id}/lettering/zones:
     parameters:
       - $ref: '#/components/parameters/PageID'

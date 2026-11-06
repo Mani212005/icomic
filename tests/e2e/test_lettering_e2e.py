@@ -8,7 +8,6 @@ import pytest
 from PIL import Image
 
 
-
 @pytest.mark.parametrize("go_api_server", [True], indirect=True)
 def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, ai_service):
     project = api_client.post(
@@ -92,6 +91,26 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     )
     assert updated["text"] == "Follow the light!" and updated["speaker"] == "Nia"
     assert utterance["utterance_id"] in state["overrides"]
+    # Editor-specific text/placement edits retain approval and source pixels.
+    assert api_client.post(f"/api/v1/pages/{page_id}/draft/approve").status_code == 200
+    assert api_client.post(f"/api/v1/pages/{page_id}/painted-page/approve").status_code == 200
+    approved = next(
+        p
+        for p in api_client.get(f"/api/v1/chapters/{chapter['id']}/pages").json()["pages"]
+        if p["id"] == page_id
+    )
+    text_url = endpoint + f"/utterances/{utterance['utterance_id']}/text"
+    text_edit = api_client.patch(text_url, json={"text": "Home at last!"})
+    assert text_edit.status_code == 200, text_edit.text
+    state = text_edit.json()["lettering"]
+    edited_utterance = next(
+        u
+        for u in state["input"]["panels"][0]["utterances"]
+        if u["utterance_id"] == utterance["utterance_id"]
+    )
+    assert edited_utterance["text"] == "Home at last!" and edited_utterance["speaker"] == "Nia"
+    assert state["overrides"][utterance["utterance_id"]]
+    assert any(line["text"] for b in state["layout"]["bubbles"] for line in b["lines"])
     zones = api_client.patch(
         endpoint + "/zones",
         json={
@@ -111,6 +130,14 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     pages = api_client.get(f"/api/v1/chapters/{chapter['id']}/pages").json()["pages"]
     saved = next(p for p in pages if p["id"] == page_id)
     assert saved["painted_page_image_url"] == image_url
+    for field in ["draft_approved_at", "painted_page_approved_at", "updated_at"]:
+        assert saved[field] == approved[field]
+    source_panel = next(
+        p
+        for p in api_client.get(f"/api/v1/chapters/{chapter['id']}/panels").json()["panels"]
+        if p["id"] == panel["panel_id"]
+    )
+    assert source_panel["dialogue"] == "Nia: Home at last!"
     assert saved["lettering"] == api_client.get(endpoint).json()["lettering"]
     # Explicit ink never consumes text-free art, and no PDF overlay exists yet.
     assert (

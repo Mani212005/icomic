@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"icomic/backend/internal/db"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"icomic/backend/gen"
 	"icomic/backend/internal/domain"
@@ -40,6 +43,10 @@ func letteringDocument(pg *domain.Page) *gen.LetteringDocument {
 // columns, with a full-width final odd panel; one/two panels use a single column.
 // Faces/action must be staged below the upper reserved band, not detected later.
 func (s *Server) refreshLettering(ctx context.Context, pg *domain.Page) error {
+	return s.refreshLetteringWithPanel(ctx, pg, nil)
+}
+
+func (s *Server) refreshLetteringWithPanel(ctx context.Context, pg *domain.Page, replacement *domain.Panel) error {
 	if pg.LetteringMode != "overlay" {
 		return nil
 	}
@@ -57,6 +64,9 @@ func (s *Server) refreshLettering(ctx context.Context, pg *domain.Page) error {
 		p, err := s.Repo.GetPanel(ctx, id)
 		if err != nil {
 			return err
+		}
+		if replacement != nil && replacement.ID == id {
+			p = replacement
 		}
 		row, column := i/columns, i%columns
 		width := (0.94 - float64(columns-1)*0.015) / float64(columns)
@@ -337,4 +347,95 @@ func (s *Server) ensureLettering(w http.ResponseWriter, r *http.Request, pg *dom
 		return false
 	}
 	return s.saveLettering(w, r, pg, previous)
+}
+
+// PatchLetteringText edits a source utterance without invalidating text-free art.
+// Compute before writing; persist source and layer in one compare-and-save.
+func (s *Server) PatchLetteringText(w http.ResponseWriter, r *http.Request) {
+	pg := s.ownedLetteringPage(w, r)
+	if pg == nil {
+		return
+	}
+	if pg.LetteringMode != "overlay" || pg.LineArtImageURL != "" {
+		writeError(w, 409, "Baked art cannot receive lettering")
+		return
+	}
+	var patch gen.PatchLetteringTextRequest
+	if !decodeLetteringPatch(w, r, &patch) {
+		return
+	}
+	if utf8.RuneCountInString(patch.Text) > 8000 {
+		writeError(w, 400, "Text is too long")
+		return
+	}
+	if !s.ensureLettering(w, r, pg) {
+		return
+	}
+	state, err := letteringState(pg)
+	if err != nil {
+		writeError(w, 500, "Invalid lettering state")
+		return
+	}
+	id := r.PathValue("utterance_id")
+	for _, panel := range state.Input.Panels {
+		// A cleared narration is absent from the draw list but its source slot
+		// remains editable while the inline editor is still open.
+		if id == panel.PanelID+"-narration" {
+			found := false
+			for _, u := range panel.Utterances {
+				found = found || u.UtteranceID == id
+			}
+			if !found {
+				panel.Utterances = append(panel.Utterances, gen.LetteringUtterance{UtteranceID: id, Kind: "narration"})
+			}
+		}
+		for _, utterance := range panel.Utterances {
+			if utterance.UtteranceID != id {
+				continue
+			}
+			original, err := s.Repo.GetPanel(r.Context(), panel.PanelID)
+			if err != nil {
+				writeLookupError(w, err, "Panel")
+				return
+			}
+			next := *original
+			if utterance.Kind == "narration" {
+				next.Narration = patch.Text
+			} else {
+				if strings.ContainsAny(patch.Text, "\r\n") {
+					writeError(w, 400, "Dialogue must be one line")
+					return
+				}
+				index, err := strconv.Atoi(strings.TrimPrefix(id, panel.PanelID+"-dialogue-"))
+				lines := strings.Split(next.Dialogue, "\n")
+				if err != nil || index < 0 || index >= len(lines) {
+					writeError(w, 409, "Source text changed")
+					return
+				}
+				lines[index] = patch.Text
+				if utterance.Speaker != nil {
+					lines[index] = *utterance.Speaker + ": " + patch.Text
+				}
+				next.Dialogue = strings.Join(lines, "\n")
+			}
+			next.UpdatedAt = time.Now().UTC()
+			previous := append(json.RawMessage(nil), pg.Lettering...)
+			if err := s.refreshLetteringWithPanel(r.Context(), pg, &next); err != nil {
+				writeError(w, 502, "Failed to compute lettering")
+				return
+			}
+			if err := s.Repo.SaveLetteringText(r.Context(), pg.ID, original, &next, previous, pg.Lettering); err != nil {
+				if errors.Is(err, db.ErrConflict) {
+					writeError(w, 409, "Lettering changed; reload and retry")
+				} else {
+					writeError(w, 500, "Failed to save lettering")
+				}
+				return
+			}
+			result, _ := letteringState(pg) // Computed and validated before the atomic commit.
+			writeJSON(w, 200, gen.PageLetteringResponse{LetteringMode: "overlay", Lettering: result})
+			return
+		}
+	}
+	writeError(w, 404, "Utterance not found")
 }
