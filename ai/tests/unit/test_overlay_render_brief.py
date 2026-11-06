@@ -36,6 +36,9 @@ def test_overlay_brief_keeps_text_out_of_model_and_has_geometry():
     assert "page-render-brief-v5-overlay" in prompt
     assert "reserved_lettering_zones" in prompt and "page_geometry" in prompt
     assert "TEXT-FREE" in prompt and "no signs with readable text" in prompt
+    assert "Draw exactly 1 separate bordered rectangular panels" in prompt
+    assert "Never draw two copies of the same person" in prompt
+    assert "draw exactly ONE bird" in prompt
     assert "SECRET" not in prompt
     assert request["panels"][0].dialogue not in prompt
     assert request["panels"][0].narration not in prompt

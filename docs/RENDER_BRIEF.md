@@ -54,7 +54,7 @@ metadata or provenance verification.
 
 New projects/pages allocated with `LETTERING_OVERLAY_ENABLED=true` persist overlay
 eligibility and a versioned lettering document. Existing projects/pages and ink
-stay baked. Baked v1/v4 prompt fixtures remain unchanged. Overlay draft and painted
+stay baked. Baked v1/v4/v5 prompt fixtures remain unchanged. Overlay draft and painted
 requests supply `lettering_document`; `page-render-brief-v5-overlay` contains an
 explicit 2:3 page aspect, exact normalized panel rectangles and reserved zones.
 Dialogue/narration, ordered utterance kinds and speaker labels are layout inputs

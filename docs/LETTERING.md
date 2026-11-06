@@ -26,7 +26,7 @@ must leave the setting off. The fake overlay smoke deliberately stops before PDF
 
 ## Composition and text-free rendering
 
-The baked render brief and its v1/v4 fixtures are unchanged. Overlay requests use
+The baked render brief and its v1/v4/v5 fixtures are unchanged. Overlay requests use
 `page-render-brief-v5-overlay` with an explicit portrait 2:3 aspect, page-normalized
 panel rectangles, and panel-local safe zones. One/two panels use a column; larger
 pages use two columns in array order, with the last odd panel spanning both.
