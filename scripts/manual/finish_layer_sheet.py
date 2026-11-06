@@ -179,25 +179,148 @@ def make_candidate_sheet(source_dir: Path, output: Path) -> None:
     canvas.save(output, quality=92)
 
 
+def _ladder_variants(source: bytes, filename: str) -> list[tuple[str, Image.Image]]:
+    original = _open(source)
+    return [
+        ("ORIGINAL", original),
+        (
+            "PRINT · CURRENT",
+            _finish(source, filename, FinishStrength.PRINT, FinishTreatment.PRINT),
+        ),
+        (
+            "PRINT-PLUS",
+            _finish(source, filename, FinishStrength.PLUS, FinishTreatment.PRINT),
+        ),
+        (
+            "PRINT-HEAVY",
+            _finish(source, filename, FinishStrength.HEAVY, FinishTreatment.PRINT),
+        ),
+    ]
+
+
+def make_strength_ladder_sheet(source_dir: Path, output: Path) -> None:
+    selected = ["face", "storm"]
+    margin, page_size, crop_size = 28, (320, 480), (360, 360)
+    gap, section_height = 22, 900
+    column_width = page_size[0] + gap + crop_size[0] + 26
+    width = margin * 2 + 4 * column_width
+    canvas = Image.new(
+        "RGB", (width, margin * 2 + len(selected) * section_height), "#e9e3d8"
+    )
+    draw = ImageDraw.Draw(canvas)
+    title_font, label_font = _load_font(26), _load_font(18)
+
+    for page_index, scene in enumerate(selected):
+        filename, crop_box = PAGES[scene]
+        source = (source_dir / filename).read_bytes()
+        y = margin + page_index * section_height
+        draw.text(
+            (margin, y),
+            f"{scene.upper()} · {filename}",
+            fill="#211d19",
+            font=title_font,
+        )
+        variants = _ladder_variants(source, filename)
+        for index, (label, image) in enumerate(variants):
+            x = margin + index * column_width
+            draw.text((x, y + 40), label, fill="#211d19", font=label_font)
+            draw.text((x, y + 68), "FULL PAGE", fill="#50483f", font=label_font)
+            canvas.paste(_fit(image, page_size), (x, y + 96))
+            draw.text(
+                (x + page_size[0] + gap, y + 68),
+                "100% CROP",
+                fill="#50483f",
+                font=label_font,
+            )
+            canvas.paste(image.crop(crop_box), (x + page_size[0] + gap, y + 96))
+    canvas.save(output, quality=94)
+
+
+def make_screen_size_sheet(source_dir: Path, output: Path) -> None:
+    """Create an exactly 1280px-wide review sheet with unscaled detail crops."""
+    selected = ["face", "storm"]
+    width, margin, column_width = 1280, 20, 295
+    gap = 7
+    section_height = 860
+    canvas = Image.new("RGB", (width, 44 + len(selected) * section_height), "#e9e3d8")
+    draw = ImageDraw.Draw(canvas)
+    title_font, label_font = _load_font(23), _load_font(16)
+    for page_index, scene in enumerate(selected):
+        filename, crop_box = PAGES[scene]
+        source = (source_dir / filename).read_bytes()
+        variants = _ladder_variants(source, filename)
+        top = 44 + page_index * section_height
+        draw.text(
+            (margin, top),
+            f"{scene.upper()} · SCREEN REVIEW · 1280 PX WIDE",
+            fill="#211d19",
+            font=title_font,
+        )
+        for index, (label, image) in enumerate(variants):
+            x = margin + index * (column_width + gap)
+            draw.text((x, top + 35), label, fill="#211d19", font=label_font)
+            draw.text((x, top + 59), "PAGE PREVIEW", fill="#50483f", font=label_font)
+            canvas.paste(_fit(image, (column_width, 443)), (x, top + 83))
+            draw.text(
+                (x, top + 535),
+                "100% DETAIL · SOURCE PIXELS",
+                fill="#50483f",
+                font=label_font,
+            )
+            detail = image.crop(crop_box)
+            left = (detail.width - column_width) // 2
+            upper = (detail.height - column_width) // 2
+            canvas.paste(
+                detail.crop((left, upper, left + column_width, upper + column_width)),
+                (x, top + 559),
+            )
+    canvas.save(output, quality=94)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-dir", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--refresh-phase-one",
+        action="store_true",
+        help="regenerate the original component sheets too",
+    )
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    make_exploration_sheet(
-        args.source_dir, args.output_dir / "treatment-comparison.jpg"
+    if args.refresh_phase_one:
+        make_exploration_sheet(
+            args.source_dir, args.output_dir / "treatment-comparison.jpg"
+        )
+        make_candidate_sheet(
+            args.source_dir, args.output_dir / "candidate-comparison.jpg"
+        )
+    make_strength_ladder_sheet(
+        args.source_dir, args.output_dir / "strength-ladder-comparison.jpg"
     )
-    make_candidate_sheet(args.source_dir, args.output_dir / "candidate-comparison.jpg")
-    for filename, _ in PAGES.values():
+    make_screen_size_sheet(
+        args.source_dir, args.output_dir / "strength-ladder-screen-1280.jpg"
+    )
+    for scene in ("face", "storm"):
+        filename, _ = PAGES[scene]
         source = (args.source_dir / filename).read_bytes()
         stem = Path(filename).stem
-        (args.output_dir / f"{stem}-original.png").write_bytes(source)
-        for strength in (FinishStrength.LIGHT, FinishStrength.PRINT):
-            finished = finish_image(source, seed=page_seed(filename), strength=strength)
-            (args.output_dir / f"{stem}-print-{strength.value}.png").write_bytes(
-                finished
-            )
+        for strength in (
+            FinishStrength.PRINT,
+            FinishStrength.PLUS,
+            FinishStrength.HEAVY,
+        ):
+            target = args.output_dir / f"{stem}-print-{strength.value}.png"
+            if (
+                strength in (FinishStrength.PLUS, FinishStrength.HEAVY)
+                or not target.exists()
+            ):
+                target.write_bytes(
+                    finish_image(source, seed=page_seed(filename), strength=strength)
+                )
+        original_target = args.output_dir / f"{stem}-original.png"
+        if not original_target.exists():
+            original_target.write_bytes(source)
     print(args.output_dir)
 
 

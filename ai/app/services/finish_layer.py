@@ -20,6 +20,8 @@ class FinishStrength(str, Enum):
     OFF = "off"
     LIGHT = "light"
     PRINT = "print"
+    PLUS = "plus"
+    HEAVY = "heavy"
 
 
 class FinishTreatment(str, Enum):
@@ -31,7 +33,12 @@ class FinishTreatment(str, Enum):
     PRINT = "print"
 
 
-_STRENGTH: Final = {FinishStrength.LIGHT: 0.48, FinishStrength.PRINT: 1.0}
+_STRENGTH: Final = {
+    FinishStrength.LIGHT: 0.48,
+    FinishStrength.PRINT: 1.0,
+    FinishStrength.PLUS: 1.75,
+    FinishStrength.HEAVY: 2.5,
+}
 _PAPER_TINT: Final = np.array([248.0, 244.0, 232.0], dtype=np.float32)
 
 
@@ -78,11 +85,10 @@ def finish_image(
             if mask.getextrema() == (0, 0):
                 return image_bytes
 
-    amount = _STRENGTH[strength]
     rgb = original.convert("RGB")
     array = np.asarray(rgb, dtype=np.float32)
     rng = np.random.default_rng(_seed_value(seed))
-    result = _apply(array, rng, amount, treatment)
+    result = _apply(array, rng, strength, treatment)
     finished = Image.fromarray(np.clip(np.rint(result), 0, 255).astype(np.uint8), "RGB")
 
     if mask is not None:
@@ -109,22 +115,64 @@ def _seed_value(seed: int | str) -> int:
 def _apply(
     source: np.ndarray,
     rng: np.random.Generator,
-    strength: float,
+    strength: FinishStrength,
     treatment: FinishTreatment,
 ) -> np.ndarray:
+    amount = _STRENGTH[strength]
     image = source.copy()
     if treatment in (FinishTreatment.PAPER, FinishTreatment.PRINT):
-        image = _paper(image, rng, strength * (0.80 if treatment is FinishTreatment.PRINT else 1.0))
+        paper_strength = {
+            FinishStrength.LIGHT: 0.80,
+            FinishStrength.PRINT: 0.80,
+            FinishStrength.PLUS: 1.08,
+            FinishStrength.HEAVY: 1.28,
+        }[strength]
+        image = _paper(
+            image, rng, amount * (paper_strength if treatment is FinishTreatment.PRINT else 1.0)
+        )
     if treatment in (FinishTreatment.HALFTONE, FinishTreatment.PRINT):
-        image = _halftone(image, strength * (0.38 if treatment is FinishTreatment.PRINT else 1.0))
+        halftone_strength = {
+            FinishStrength.LIGHT: 0.38,
+            FinishStrength.PRINT: 0.38,
+            FinishStrength.PLUS: 0.80,
+            FinishStrength.HEAVY: 1.12,
+        }[strength]
+        image = _halftone(
+            image, amount * (halftone_strength if treatment is FinishTreatment.PRINT else 1.0)
+        )
     if treatment in (FinishTreatment.REGISTRATION, FinishTreatment.PRINT):
+        registration_strength = {
+            FinishStrength.LIGHT: 0.10,
+            FinishStrength.PRINT: 0.10,
+            FinishStrength.PLUS: 0.34,
+            FinishStrength.HEAVY: 0.72,
+        }[strength]
         image = _registration_and_bleed(
-            image, rng, strength * (0.10 if treatment is FinishTreatment.PRINT else 1.0)
+            image,
+            rng,
+            amount * (registration_strength if treatment is FinishTreatment.PRINT else 1.0),
         )
     if treatment in (FinishTreatment.MATTE, FinishTreatment.PRINT):
-        image = _matte(image, strength * (0.58 if treatment is FinishTreatment.PRINT else 1.0))
+        matte_strength = {
+            FinishStrength.LIGHT: 0.58,
+            FinishStrength.PRINT: 0.58,
+            FinishStrength.PLUS: 0.82,
+            FinishStrength.HEAVY: 1.0,
+        }[strength]
+        image = _matte(
+            image,
+            amount * (matte_strength if treatment is FinishTreatment.PRINT else 1.0),
+        )
     if treatment in (FinishTreatment.GRAIN, FinishTreatment.PRINT):
-        image = _grain(image, rng, strength * (0.42 if treatment is FinishTreatment.PRINT else 1.0))
+        grain_strength = {
+            FinishStrength.LIGHT: 0.42,
+            FinishStrength.PRINT: 0.42,
+            FinishStrength.PLUS: 0.78,
+            FinishStrength.HEAVY: 1.1,
+        }[strength]
+        image = _grain(
+            image, rng, amount * (grain_strength if treatment is FinishTreatment.PRINT else 1.0)
+        )
     if treatment in (FinishTreatment.MATTE, FinishTreatment.PRINT):
         image = np.minimum(image, 254.0)
     return image
@@ -183,7 +231,7 @@ def _registration_and_bleed(
     height, width, _ = image.shape
     # Displacements are specified at the 1280px working width and scale with it.
     scale = width / 1280.0
-    max_shift = 0.72 * scale * amount
+    max_shift = min(0.95 * scale, 0.72 * scale * amount)
     angle = rng.uniform(0.0, 2.0 * np.pi)
     shifts = [
         (0.0, 0.0),
@@ -217,18 +265,20 @@ def _registration_and_bleed(
 
 
 def _matte(image: np.ndarray, amount: float) -> np.ndarray:
+    amount = min(2.0, max(0.0, amount))
+    blend = min(1.0, amount)
     luma = image @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
     contrast = (image - 127.5) * 1.035 + 127.5
     # A restrained S curve and lifted shadows; paper tint is strongest in highlights.
     normalized = np.clip((contrast - 128.0) / 128.0, -1.0, 1.0)
     curved = 128.0 + normalized * (1.0 + 0.12 * (1.0 - normalized**2)) * 128.0
-    lifted = curved * 0.982 + 4.2
+    lifted = curved * 0.982 + 4.2 * amount
     saturation = 1.0 - 0.055 * amount
     gray = luma[..., None]
     matte = gray + (lifted - gray) * saturation
     highlight = np.clip((luma - 155.0) / 100.0, 0.0, 1.0)[..., None]
     matte = matte * (1.0 - 0.026 * amount * highlight) + _PAPER_TINT * (0.026 * amount * highlight)
-    return image * (1.0 - amount) + matte * amount
+    return image * (1.0 - blend) + matte * blend
 
 
 def _grain(image: np.ndarray, rng: np.random.Generator, amount: float) -> np.ndarray:
