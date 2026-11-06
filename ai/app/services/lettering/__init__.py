@@ -3,6 +3,7 @@
 import json
 import math
 from dataclasses import dataclass
+from hashlib import sha256
 
 from ...gen.models import (
     LetteringBubble,
@@ -349,6 +350,19 @@ def _layout_panel(
         )
 
 
+def source_digest(document: LetteringDocument) -> str:
+    """Fingerprint the effective source, independent of transport ordering/defaults."""
+    data = document.model_dump(mode="json", exclude_none=True)
+    data["panels"].sort(key=lambda p: p["order"])
+    for panel in data["panels"]:
+        panel["utterances"].sort(key=lambda u: u["order"])
+    return sha256(
+        json.dumps(
+            data, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+    ).hexdigest()
+
+
 def layout_page(document: LetteringDocument, config: LayoutConfig | None = None) -> LetteringLayout:
     """Compute a fresh draw list without mutating the input.
 
@@ -361,6 +375,7 @@ def layout_page(document: LetteringDocument, config: LayoutConfig | None = None)
     result = LetteringLayout(
         version="lettering-layout-v1",
         page_id=document.page_id,
+        source_digest=source_digest(document),
         page_aspect=document.page_aspect,
         minimum_font_size=config.minimum_font_size,
         bubbles=[],

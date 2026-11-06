@@ -208,3 +208,41 @@ func TestLetteringTextPreservesImageApprovalAndRejectsFailedLayout(t *testing.T)
 		t.Fatal(r.Code, r.Body.String())
 	}
 }
+
+func TestExportUsesStoredLetteringAndFlagsChangedSourceWithoutLayout(t *testing.T) {
+	server, handler, repo, _, pageID := paintedPageFixture(t)
+	ctx := context.Background()
+	pg, _ := repo.GetPage(ctx, pageID)
+	chapter, _ := repo.GetChapter(ctx, pg.ChapterID)
+	pg.LetteringMode = "overlay"
+	pg.LineArtImageURL = ""
+	pg.PaintedPageImageURL = "http://storage/text-free.png"
+	pg.Lettering = json.RawMessage(`{"version":"page-lettering-v1","input":{"version":"lettering-v1","art_mode":"text_free","page_id":"old-source","page_aspect":0.6666666666666666,"panels":[]},"overrides":{},"zone_overrides":{},"layout":{"version":"lettering-layout-v1","page_id":"old-source","bubbles":[],"issues":[]}}`)
+	if err := repo.CreatePage(ctx, pg); err != nil {
+		t.Fatal(err)
+	}
+	fake := server.AIClient.(*gen.FakeAIServiceClient)
+	fake.LayoutLetteringFunc = func(context.Context, gen.LetteringDocument) (*gen.LetteringLayout, error) {
+		t.Fatal("export must not refresh the stored layout")
+		return nil, nil
+	}
+	fake.AssemblePdfFunc = func(_ context.Context, req gen.AssemblePdfRequest) (*gen.AssemblePdfResponse, error) {
+		item := req.Pages[0]
+		if item.Lettering == nil || item.Lettering.Input.PageID != "old-source" || item.LetteringStale == nil || !*item.LetteringStale || item.LetteringMode == nil || *item.LetteringMode != gen.PageExportItemLetteringModeOverlay {
+			t.Fatalf("stored layer and stale source must be forwarded: %+v", item)
+		}
+		warnings := []gen.PdfLetteringWarning{{PageNumber: 1, Code: gen.StaleLettering, Message: "Review stale lettering"}}
+		return &gen.AssemblePdfResponse{PdfURL: "http://storage/review.pdf", Warnings: &warnings}, nil
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+chapter.ProjectID+"/export", nil)
+	req.Header.Set("X-User-ID", "owner")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"code":"stale_lettering"`) {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	after, _ := repo.GetPage(ctx, pageID)
+	if string(after.Lettering) != string(pg.Lettering) {
+		t.Fatal("export changed the stored layout")
+	}
+}

@@ -54,6 +54,30 @@ func (s *Server) refreshLetteringWithPanel(ctx context.Context, pg *domain.Page,
 		return fmt.Errorf("ink art cannot receive lettering")
 	}
 	old, _ := letteringState(pg)
+	doc, err := s.sourceLetteringDocument(ctx, pg, replacement, old)
+	if err != nil {
+		return err
+	}
+	overrides := map[string]gen.LetteringOverride{}
+	if old != nil {
+		overrides = old.Overrides
+	}
+	zones := map[string][]gen.LetteringUnitRect{}
+	if old != nil {
+		zones = old.ZoneOverrides
+	}
+	if old != nil {
+		before, _ := json.Marshal(old.Input)
+		after, _ := json.Marshal(doc)
+		if bytes.Equal(before, after) {
+			return nil
+		}
+	}
+	return s.computeLettering(ctx, pg, doc, overrides, zones)
+}
+
+// sourceLetteringDocument reads current text/zones without invoking layout.
+func (s *Server) sourceLetteringDocument(ctx context.Context, pg *domain.Page, replacement *domain.Panel, old *gen.PageLetteringState) (gen.LetteringDocument, error) {
 	doc := gen.LetteringDocument{Version: "lettering-v1", ArtMode: "text_free", PageID: pg.ID, PageAspect: 2.0 / 3, Panels: []gen.LetteringPanel{}}
 	columns := 2
 	if len(pg.PanelIDs) <= 2 {
@@ -63,7 +87,7 @@ func (s *Server) refreshLetteringWithPanel(ctx context.Context, pg *domain.Page,
 	for i, id := range pg.PanelIDs {
 		p, err := s.Repo.GetPanel(ctx, id)
 		if err != nil {
-			return err
+			return gen.LetteringDocument{}, err
 		}
 		if replacement != nil && replacement.ID == id {
 			p = replacement
@@ -114,22 +138,7 @@ func (s *Server) refreshLetteringWithPanel(ctx context.Context, pg *domain.Page,
 		}
 		doc.Panels = append(doc.Panels, panel)
 	}
-	overrides := map[string]gen.LetteringOverride{}
-	if old != nil {
-		overrides = old.Overrides
-	}
-	zones := map[string][]gen.LetteringUnitRect{}
-	if old != nil {
-		zones = old.ZoneOverrides
-	}
-	if old != nil {
-		before, _ := json.Marshal(old.Input)
-		after, _ := json.Marshal(doc)
-		if bytes.Equal(before, after) {
-			return nil
-		}
-	}
-	return s.computeLettering(ctx, pg, doc, overrides, zones)
+	return doc, nil
 }
 
 func (s *Server) computeLettering(ctx context.Context, pg *domain.Page, doc gen.LetteringDocument, overrides map[string]gen.LetteringOverride, zoneOverrides map[string][]gen.LetteringUnitRect) error {

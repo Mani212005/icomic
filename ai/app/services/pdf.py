@@ -7,6 +7,7 @@ and preserved Meta C2PA provenance metadata.
 
 import json
 import struct
+import textwrap
 import zlib
 from datetime import datetime, timezone
 from io import BytesIO
@@ -17,7 +18,8 @@ from xml.sax.saxutils import escape
 from PIL import Image
 
 from ..adapters.storage.port import StoragePort
-from ..gen.models import PageExportItem
+from ..gen.models import PageExportItem, PdfLetteringWarning
+from .lettering.pdf import PdfLettering, eligibility
 
 
 class UnsupportedImageMediaError(ValueError):
@@ -215,6 +217,8 @@ class PdfWriter:
         pages_data: list[dict[str, Any]],
     ) -> bytes:
         """Assemble all document pages, embedded images, metadata, and cross-reference table."""
+        checked = [eligibility(page) for page in pages_data]
+        self.warnings = [warning for _, warning in checked if warning]
         catalog_id = self._reserve_id()
         pages_root_id = self._reserve_id()
 
@@ -363,7 +367,10 @@ class PdfWriter:
         # -----------------------------------------------------------------
         total_pdf_pages = len(pages_data) + 1
 
+        lettering = PdfLettering(self._add_object, [layout for layout, _ in checked if layout])
         for idx, p in enumerate(pages_data, start=1):
+            layout, warning = checked[idx - 1]
+            overlay = p.get("lettering_mode") == "overlay"
             page_id = self._reserve_id()
             page_lines: list[bytes] = []
 
@@ -447,8 +454,8 @@ class PdfWriter:
                 )
                 source_files.append(f"({original_filename}) {original_file_id} 0 R")
 
-            panels = p.get("panels", [])
-            dialogue_text = p.get("dialogue_text")
+            panels = [] if overlay else p.get("panels", [])
+            dialogue_text = None if overlay else p.get("dialogue_text")
             script_rows = 0
             panel_gaps = 0
             if panels:
@@ -465,6 +472,11 @@ class PdfWriter:
 
             has_script = bool(script_rows)
             script_height = 55 + script_rows * 13 + panel_gaps * 4 if has_script else 0
+            note_lines = []
+            if warning:
+                note = f"LETTERING NOT EXPORTED - {warning.code}: {warning.message}"
+                note_lines = textwrap.wrap(note, width=max(18, int((self.width - 100) / 4.8)))
+                script_height = max(45, len(note_lines) * 10 + 15)
 
             # Fit artwork into the page area left by the actual transcript and footer.
             avail_w = self.width - 80
@@ -486,6 +498,22 @@ class PdfWriter:
             page_lines.append(
                 f"{display_w:.2f} 0 0 {display_h:.2f} {img_x:.2f} {img_y:.2f} cm /Im1 Do Q".encode()
             )
+
+            if layout:
+                page_lines.append(
+                    lettering.draw(
+                        layout,
+                        round(img_x, 2),
+                        round(img_y, 2),
+                        round(display_w, 2),
+                        round(display_h, 2),
+                    )
+                )
+            if warning:
+                for row, line in enumerate(note_lines):
+                    page_lines.append(
+                        f"BT /F2 8 Tf 0.65 0.1 0.1 rg 50 {img_y - 13 - row * 10:.2f} Td ({escape_pdf_string(line)}) Tj ET".encode()
+                    )
 
             # 3. Panel Dialogue and Narration Section
             text_start_y = img_y - 24
@@ -561,7 +589,10 @@ class PdfWriter:
                 + b"\nendstream"
             )
 
-            res_dict = f"<< /Font {font_res_str} /XObject << /Im1 {img_xobj_id} 0 R >> >>"
+            page_fonts = font_res_str
+            if layout:
+                page_fonts = font_res_str[:-2] + lettering.resources + " >>"
+            res_dict = f"<< /Font {page_fonts} /XObject << /Im1 {img_xobj_id} 0 R >> >>"
             self._set_object(
                 page_id,
                 f"<< /Type /Page /Parent {pages_root_id} 0 R /MediaBox [0 0 {self.width:.2f} {self.height:.2f}] "
@@ -676,7 +707,7 @@ class PdfAssemblyService:
         page_size: str,
         include_ai_disclosure: bool,
         pages: list[PageExportItem],
-    ) -> tuple[str, bool, int]:
+    ) -> tuple[str, bool, int, list[PdfLetteringWarning]]:
         """Assemble pages into PDF blob, upload to storage, and return download URL."""
         if not pages:
             raise ValueError("Cannot assemble PDF with zero pages.")
@@ -708,6 +739,9 @@ class PdfAssemblyService:
 
             pages_data.append(
                 {
+                    "lettering_mode": p.lettering_mode,
+                    "lettering": p.lettering.model_dump(mode="json") if p.lettering else None,
+                    "lettering_stale": p.lettering_stale,
                     "page_number": p.page_number,
                     "image_url": p.image_url,
                     "image_bytes": img_bytes,
@@ -732,4 +766,4 @@ class PdfAssemblyService:
 
         key = f"exports/{project_id}/{uuid4().hex}/comic.pdf"
         url = self.storage_adapter.put(key, pdf_content, "application/pdf")
-        return url, True, total_page_count
+        return url, True, total_page_count, writer.warnings

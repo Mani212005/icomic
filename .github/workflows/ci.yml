@@ -220,6 +220,9 @@ jobs:
           uv run --frozen ruff check .
           uv run --frozen ruff format --check .
 
+      - name: Install PDF verification tools
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
       - name: Run Hermetic Unit & Contract Tests
         run: |
           cd ai
@@ -286,6 +289,9 @@ jobs:
         run: |
           cd ai
           uv sync --locked
+
+      - name: Install PDF verification tools
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
 
       - name: Run End-to-End Suite
         run: make test-e2e

@@ -430,7 +430,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     )
     @queued("pdf")
     def assemble_pdf(req: AssemblePdfRequest):
-        url, preserved, count = pdf_service.assemble_pdf(
+        url, preserved, count, warnings = pdf_service.assemble_pdf(
             project_id=str(req.project_id),
             title=req.title,
             page_size=req.page_size,
@@ -442,6 +442,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             pdf_url=url,
             provenance_metadata_preserved=preserved,
             page_count=count,
+            warnings=warnings,
         )
 
     @app.get(

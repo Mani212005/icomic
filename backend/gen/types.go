@@ -285,18 +285,36 @@ func (e LetteringUtteranceKind) Valid() bool {
 	}
 }
 
+// Defines values for PageExportItemLetteringMode.
+const (
+	PageExportItemLetteringModeBaked   PageExportItemLetteringMode = "baked"
+	PageExportItemLetteringModeOverlay PageExportItemLetteringMode = "overlay"
+)
+
+// Valid indicates whether the value is a known member of the PageExportItemLetteringMode enum.
+func (e PageExportItemLetteringMode) Valid() bool {
+	switch e {
+	case PageExportItemLetteringModeBaked:
+		return true
+	case PageExportItemLetteringModeOverlay:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PageLetteringResponseLetteringMode.
 const (
-	Baked   PageLetteringResponseLetteringMode = "baked"
-	Overlay PageLetteringResponseLetteringMode = "overlay"
+	PageLetteringResponseLetteringModeBaked   PageLetteringResponseLetteringMode = "baked"
+	PageLetteringResponseLetteringModeOverlay PageLetteringResponseLetteringMode = "overlay"
 )
 
 // Valid indicates whether the value is a known member of the PageLetteringResponseLetteringMode enum.
 func (e PageLetteringResponseLetteringMode) Valid() bool {
 	switch e {
-	case Baked:
+	case PageLetteringResponseLetteringModeBaked:
 		return true
-	case Overlay:
+	case PageLetteringResponseLetteringModeOverlay:
 		return true
 	default:
 		return false
@@ -312,6 +330,24 @@ const (
 func (e PageLetteringStateVersion) Valid() bool {
 	switch e {
 	case PageLetteringV1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PdfLetteringWarningCode.
+const (
+	LetteringReviewRequired PdfLetteringWarningCode = "lettering_review_required"
+	StaleLettering          PdfLetteringWarningCode = "stale_lettering"
+)
+
+// Valid indicates whether the value is a known member of the PdfLetteringWarningCode enum.
+func (e PdfLetteringWarningCode) Valid() bool {
+	switch e {
+	case LetteringReviewRequired:
+		return true
+	case StaleLettering:
 		return true
 	default:
 		return false
@@ -370,10 +406,11 @@ type AssemblePdfRequestPageSize string
 
 // AssemblePdfResponse defines model for AssemblePdfResponse.
 type AssemblePdfResponse struct {
-	JobID                       string `json:"job_id"`
-	PageCount                   int    `json:"page_count"`
-	PdfURL                      string `json:"pdf_url"`
-	ProvenanceMetadataPreserved bool   `json:"provenance_metadata_preserved"`
+	JobID                       string                 `json:"job_id"`
+	PageCount                   int                    `json:"page_count"`
+	PdfURL                      string                 `json:"pdf_url"`
+	ProvenanceMetadataPreserved bool                   `json:"provenance_metadata_preserved"`
+	Warnings                    *[]PdfLetteringWarning `json:"warnings,omitempty"`
 }
 
 // ChapterOutlineItem defines model for ChapterOutlineItem.
@@ -662,6 +699,9 @@ type LetteringLayout struct {
 	PageAspect      float64           `json:"page_aspect"`
 	PageID          string            `json:"page_id"`
 
+	// SourceDigest SHA-256 of canonical effective input including placements and zones. Missing means stale for PDF export.
+	SourceDigest *string `json:"source_digest,omitempty"`
+
 	// StrokeWidth Relative to page height, about 2.5px at 1280px portrait width.
 	StrokeWidth *float64               `json:"stroke_width,omitempty"`
 	Version     LetteringLayoutVersion `json:"version"`
@@ -771,8 +811,13 @@ type ModeratePromptResponse struct {
 
 // PageExportItem defines model for PageExportItem.
 type PageExportItem struct {
-	DialogueText *string `json:"dialogue_text,omitempty"`
-	ImageURL     string  `json:"image_url"`
+	DialogueText  *string                      `json:"dialogue_text,omitempty"`
+	ImageURL      string                       `json:"image_url"`
+	Lettering     *PageLetteringState          `json:"lettering,omitempty"`
+	LetteringMode *PageExportItemLetteringMode `json:"lettering_mode,omitempty"`
+
+	// LetteringStale Stored input differs from the current source panels. Export must flag it without recomputing.
+	LetteringStale *bool `json:"lettering_stale,omitempty"`
 
 	// OriginalImageURL Original line art URL, retained when the exported image is a coloured derivative.
 	OriginalImageURL   *string                 `json:"original_image_url,omitempty"`
@@ -781,6 +826,9 @@ type PageExportItem struct {
 	Panels             *[]PanelTextItem        `json:"panels,omitempty"`
 	ProvenanceMetadata *map[string]interface{} `json:"provenance_metadata,omitempty"`
 }
+
+// PageExportItemLetteringMode defines model for PageExportItem.LetteringMode.
+type PageExportItemLetteringMode string
 
 // PageLetteringResponse defines model for PageLetteringResponse.
 type PageLetteringResponse struct {
@@ -834,6 +882,17 @@ type PatchLetteringZonesRequest struct {
 	PanelID       string              `json:"panel_id"`
 	ReservedZones []LetteringUnitRect `json:"reserved_zones"`
 }
+
+// PdfLetteringWarning defines model for PdfLetteringWarning.
+type PdfLetteringWarning struct {
+	Code       PdfLetteringWarningCode `json:"code"`
+	Flags      *[]LetteringFlag        `json:"flags,omitempty"`
+	Message    string                  `json:"message"`
+	PageNumber int                     `json:"page_number"`
+}
+
+// PdfLetteringWarningCode defines model for PdfLetteringWarning.Code.
+type PdfLetteringWarningCode string
 
 // StoreColourImageRequest defines model for StoreColourImageRequest.
 type StoreColourImageRequest struct {

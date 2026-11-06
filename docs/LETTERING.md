@@ -1,14 +1,14 @@
-# Deterministic lettering, stages 1 through 3
+# Deterministic lettering, stages 1 through 4
 
 `ai/app/services/lettering/` is a hermetic vector layout library. It accepts
 `LetteringDocument` and returns `LetteringLayout`; `layout_bytes` produces canonical
 UTF-8 JSON. Stage 2 connects it to new page generation and versioned page storage.
-The engine never accepts images, opens pixels, or calls a provider. The editor draws and edits this vector layer. PDF lettering remains stage 4.
+The engine never accepts images, opens pixels, or calls a provider. The editor draws and edits this vector layer. PDF export draws the same stored vector layer.
 
 ## Enablement and legacy safety
 
 `LETTERING_OVERLAY_ENABLED=true` on the Go API is the **single opt-in setting**.
-It defaults to false, including in Compose, until the editor and PDF stages land.
+It defaults to false, including in Compose, and remains opt-in after all four stages.
 When enabled, newly created projects and their newly allocated pages record
 `lettering_mode: overlay`. Everything else is `baked`. Mode is fixed at creation,
 not inferred from prompts or image content. Turning the setting on does not upgrade
@@ -20,8 +20,8 @@ Overlay drafts and painted pages use a `text_free` document. Ink pages always st
 baked: requesting ink for an overlay page returns 409 rather than consuming a
 text-free draft through the legacy lettering prompt. GET on legacy/ink pages
 returns baked with no layer; PATCH returns 409. There is no client mode toggle.
-Exports are unchanged and do not draw this layer yet, which is why production
-must leave the setting off. The fake overlay smoke deliberately stops before PDF.
+Exports draw eligible overlay layouts over the unchanged image. Baked/ink pages
+keep their existing comic content streams. The flag remains off by default.
 
 ## Composition and text-free rendering
 
@@ -269,7 +269,8 @@ up/down and page state round trips. Cost inventory tests remain unchanged.
 
 The standalone fake runner also supports `make e2e-comic E2E_ARGS="--overlay-lettering"`.
 It enables the setting for its isolated Compose stack, saves per-page JSON layouts,
-checks an override and source-image hashes, and stops before PDF. It refuses live
+checks an override and source-image hashes, exports a PDF and verifies extractable
+text, page count and size. It refuses live
 mode. The ordinary baked runner retains ink/colour/PDF coverage.
 
 For review-only real-art samples, use the AI environment:
@@ -342,5 +343,46 @@ the normal project seed and makes no provider requests. Component tests cover SV
 snapshots, complex-script glyphs, pointer/tail edits, sizing, keyboard nudges,
 flags, reset, undo/redo, rejection, stage eligibility and session continuity.
 
-Stage 4 will draw the stored vector result in PDF without reshaping or adding a
-second layer to legacy images. The opt-in flag must remain off until that lands.
+PDF draws the stored vector result without reshaping. Legacy images retain their
+existing export behavior, and the opt-in flag remains off by default.
+
+## Vector PDF export and review guard
+
+The Go export route passes `lettering_mode`, the complete stored `PageLetteringState`
+and a source-staleness signal to the AI service. Export reads current panel text and
+zones but never refreshes or writes the layout. The latest stored override result is
+the draw list; image approval/provenance and source/attachment bytes are untouched.
+
+Each newly computed layout includes `source_digest`, a SHA-256 of the effective
+input including text, zones and manual placements. Canonical serialization uses
+Pydantic defaults, no nulls, sorted object keys, panel/utterance reading order,
+UTF-8 and compact JSON. PDF verifies this digest without wrapping or shaping again.
+Layouts written before this field existed are stale for export; clear/reapply an
+override in the editor to compute a reviewed replacement.
+
+Eligible comic pages use white vector silhouettes with inward black strokes, the
+same joined speech-tail boundary as SVG, and positioned PDF text glyphs from the
+exact bundled fonts. The exporter subsets each font once across the document,
+embeds TrueType outlines, maps CIDs to glyph IDs and includes a ToUnicode map.
+Per-line ActualText preserves logical Unicode order for Devanagari conjuncts and
+reordered vowel signs. Text stays selectable/searchable in supporting PDF readers.
+There is no raster lettering layer and no image recompression caused by lettering.
+The cover remains an art-only preview; the comic page contains the lettering.
+
+Missing/stale layouts or any unresolved review issue (including overflow, collision,
+out-of-panel, missing zones, unsupported scripts and minimum-size violations) omit
+the invalid lettering layer. The export POST result includes typed `warnings` with
+`page_number`, `code` (`stale_lettering` or `lettering_review_required`), `message`
+and review `flags`. The export screen shows these messages. The PDF places a
+visible `LETTERING NOT EXPORTED` note under the art, so a downloaded review copy
+cannot silently pass as publishable. Other eligible pages still export normally.
+The existing export-record GET shape is unchanged; warnings are retained in the PDF.
+
+`ai/tests/unit/test_pdf_lettering.py` locks vector operators, checks subset font
+structure and Latin/Devanagari extraction using `pdftotext`, compares `pdftoppm`
+renders to the independent serialized-layout raster (mean channel error below
+14/255 and fewer than 7% of channels differing by 80/255 in lettering regions),
+limits synthetic overlay overhead to 30 KB and checks mixed/legacy page streams.
+The legacy content golden was captured from the pre-stage-4 writer. All earlier
+layout golden geometry is unchanged; only source fingerprints were added.
+Install `poppler-utils` locally for PDF tests; CI installs it explicitly.

@@ -1,6 +1,7 @@
 """Overlay generation and replacement vector storage through both real services."""
 
 import hashlib
+import subprocess
 from io import BytesIO
 
 import httpx
@@ -9,7 +10,7 @@ from PIL import Image
 
 
 @pytest.mark.parametrize("go_api_server", [True], indirect=True)
-def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, ai_service):
+def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, ai_service, tmp_path):
     project = api_client.post(
         "/api/v1/projects",
         json={
@@ -139,7 +140,29 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     )
     assert source_panel["dialogue"] == "Nia: Home at last!"
     assert saved["lettering"] == api_client.get(endpoint).json()["lettering"]
-    # Explicit ink never consumes text-free art, and no PDF overlay exists yet.
+    exported = api_client.post(f"/api/v1/projects/{project_id}/export")
+    assert exported.status_code == 202, exported.text
+    pdf_url = exported.json()["export"]["file_url"]
+    pdf = httpx.get(ai_service["base_url"] + httpx.URL(pdf_url).path).content
+    output = tmp_path / "overlay.pdf"
+    output.write_bytes(pdf)
+    text = subprocess.check_output(["pdftotext", str(output), "-"], text=True)
+    assert "Home at last!" in " ".join(text.split())
+    assert not exported.json().get("warnings")
+    assert len(pdf) < 500_000
+    assert pdf.count(b"/Type /Page /Parent") == len(pages) + 1
+    invalid = api_client.patch(override_url, json={"override": {"center": {"x": -0.5, "y": -0.5}}})
+    assert invalid.status_code == 200, invalid.text
+    flagged = api_client.post(f"/api/v1/projects/{project_id}/export")
+    assert flagged.status_code == 202, flagged.text
+    warnings = flagged.json()["warnings"]
+    assert warnings[0]["code"] == "lettering_review_required"
+    assert "out_of_panel" in warnings[0]["flags"]
+    note_url = flagged.json()["export"]["file_url"]
+    review = httpx.get(ai_service["base_url"] + httpx.URL(note_url).path).content
+    note = subprocess.run(["pdftotext", "-", "-"], input=review, capture_output=True, check=True).stdout.decode()
+    assert "LETTERING NOT EXPORTED" in note and "out_of_panel" in note
+    # Explicit ink never consumes text-free art.
     assert (
         api_client.post(f"/api/v1/pages/{page_id}/line-art", json={"variant": "ink"}).status_code
         == 409
@@ -147,7 +170,7 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
 
 
 @pytest.mark.parametrize("go_api_server", [True], indirect=True)
-def test_standalone_fake_runner_overlay_flow_stops_before_pdf(
+def test_standalone_fake_runner_overlay_flow_exports_pdf(
     monkeypatch, go_api_server, ai_service, tmp_path
 ):
     from scripts.e2e import comic_e2e as runner
@@ -162,5 +185,5 @@ def test_standalone_fake_runner_overlay_flow_stops_before_pdf(
     count, project_id = runner.run_flow(guard, tmp_path)
     assert project_id and count > 0
     assert len(list(tmp_path.glob("lettering-*.json"))) == count
-    assert guard.pdf_page_count == 0
-    assert not list(tmp_path.glob("*.pdf"))
+    assert guard.pdf_page_count == count + 1
+    assert (tmp_path / "latest.pdf").read_bytes().startswith(b"%PDF")

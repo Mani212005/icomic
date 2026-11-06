@@ -1147,6 +1147,22 @@ components:
           type: string
           nullable: true
 
+    PdfLetteringWarning:
+      type: object
+      required: [page_number, code, message]
+      properties:
+        page_number:
+          type: integer
+        code:
+          type: string
+          enum: [stale_lettering, lettering_review_required]
+        message:
+          type: string
+        flags:
+          type: array
+          items:
+            $ref: '#/components/schemas/LetteringFlag'
+
     PageExportItem:
       type: object
       required:
@@ -1160,6 +1176,16 @@ components:
         original_image_url:
           type: string
           description: Original line art URL, retained when the exported image is a coloured derivative.
+        lettering_mode:
+          type: string
+          enum: [baked, overlay]
+          default: baked
+        lettering:
+          $ref: '#/components/schemas/PageLetteringState'
+        lettering_stale:
+          type: boolean
+          default: false
+          description: Stored input differs from the current source panels. Export must flag it without recomputing.
         panel_count:
           type: integer
         provenance_metadata:
@@ -1222,6 +1248,10 @@ components:
           type: boolean
         page_count:
           type: integer
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PdfLetteringWarning'
 
     JobStatusResponse:
       type: object
@@ -1605,6 +1635,9 @@ components:
           type: string
         page_aspect:
           type: number
+        source_digest:
+          type: string
+          description: SHA-256 of canonical effective input including placements and zones. Missing means stale for PDF export.
         stroke_width:
           type: number
           default: 0.0013

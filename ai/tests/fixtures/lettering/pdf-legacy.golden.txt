@@ -1,0 +1,14 @@
+BT /F2 10.00 Tf 0.2 0.2 0.2 rg
+50 801.89 Td (Lettering - Page 1) Tj ET
+0.7 0.7 0.7 RG 0.5 w
+50 795.89 m 545.28 795.89 l S
+0.75 0.75 0.75 RG 1 w
+40.85 59.00 513.58 725.89 re S
+q
+511.58 0 0 723.89 41.85 60.00 cm /Im1 Do Q
+0.8 0.8 0.8 RG 0.5 w
+50 42 m 545.28 42 l S
+BT /F1 8 Tf 0.4 0.4 0.4 rg
+50 28 Td (Icomic AI Graphic Novel) Tj ET
+BT /F1 8 Tf 0.4 0.4 0.4 rg
+475.28 28 Td (Page 2 of 2) Tj ET

@@ -230,3 +230,13 @@ Use `E2E_ARGS="--artifact-dir /tmp/comic-e2e"` to isolate PDF and report output.
 Use `E2E_ARGS="--script-file tests/fixtures/the_tide_clock.txt --artifact-dir /tmp/comic-long"` for the original 3,130-word fixture: 51 panels, twelve comic pages and thirteen PDF pages. The runner verifies generated/persisted counts and exact PDF count. See [multipage pacing and call inventory](MULTIPAGE.md).
 Use `make e2e-comic E2E_ARGS="--skip-services"` when the local Compose services are already running.
 The runner supports an explicitly gated live mode for later manual use; CI and hermetic tests exercise only the refusal guards and never start live adapters.
+
+
+Vector PDF lettering checks require local `pdftoppm` and `pdftotext` from
+`poppler-utils` (installed explicitly in the AI and E2E CI jobs). `make test-ai`
+checks serialized geometry, independent raster comparison, Unicode extraction,
+subset-font overhead, review notes and legacy streams. `make test-e2e` exercises
+both the unchanged baked flow and the opt-in overlay flow through stored manual
+placement, PDF export and selectable text. Set `TEST_DATABASE_URL` to a migrated,
+seeded loopback PostgreSQL instance to repeat the fake E2E with durable storage.
+No PDF test invokes a live provider.
