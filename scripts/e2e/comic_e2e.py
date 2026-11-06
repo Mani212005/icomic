@@ -103,6 +103,7 @@ class CostGuard:
         self.script_file: Path | None = None
         self.panel_count = 0
         self.pdf_page_count = 0
+        self.overlay_lettering = False
         self.reserve_tokens = reserve_tokens if live else 0
         self.third_check_reserve = (
             calculate_checklist_worst_case(self.reserve_tokens) if live else 0.0
@@ -800,6 +801,12 @@ def run_flow(
 
     for page_index, page in enumerate(pages):
         page_id = page["id"]
+        if guard.overlay_lettering:
+            if page.get("lettering_mode") != "overlay":
+                raise E2EError("overlay smoke requires newly created overlay pages")
+            json_request(f"/api/v1/panels/{page['panel_ids'][0]}", "PATCH", {
+                "dialogue": "Maya: Follow the light!", "narration": "Before dawn."
+            })
         if not page.get("draft_image_url"):
             generate_missing_image(
                 f"/api/v1/pages/{page_id}/draft", page.get("draft_image_job_id")
@@ -809,7 +816,10 @@ def run_flow(
         # other page exercises the normal painted default with one finish call.
         repaint = page_index + 1 in repaint_pages
         ink_variant = (
-            page_index == 0 and not repaint and not page.get("painted_page_image_url")
+            page_index == 0
+            and not repaint
+            and not page.get("painted_page_image_url")
+            and not guard.overlay_lettering
         )
         variant_query = "?variant=ink" if ink_variant else ""
         finish_path = f"/api/v1/pages/{page_id}/line-art{variant_query}"
@@ -828,6 +838,23 @@ def run_flow(
         elif not finish_image_url:
             generate_missing_image(finish_path, finish_job_id)
         json_request(f"/api/v1/pages/{page_id}/line-art/approve{variant_query}", "POST")
+        if guard.overlay_lettering:
+            endpoint = f"/api/v1/pages/{page_id}/lettering"
+            state = json_request(endpoint)["lettering"]
+            if not state["layout"]["bubbles"]:
+                raise E2EError("overlay layout was not stored")
+            utterance = next(u for u in state["input"]["panels"][0]["utterances"] if u["kind"] == "speech")
+            current = json_request(f"/api/v1/chapters/{page_chapter_ids[page_id]}/pages")["pages"]
+            image_url = next(p for p in current if p["id"] == page_id)["painted_page_image_url"]
+            before_hash = hashlib.sha256(fetch_line_art_image(image_url)).hexdigest()
+            edited = json_request(endpoint + f"/utterances/{utterance['utterance_id']}/override", "PATCH", {
+                "override": {"center": {"x": 0.5, "y": 0.2}}
+            })["lettering"]
+            if utterance["utterance_id"] not in edited["overrides"] or edited["layout"] == state["layout"]:
+                raise E2EError("manual override did not replace stored layout")
+            if hashlib.sha256(fetch_line_art_image(image_url)).hexdigest() != before_hash:
+                raise E2EError("lettering edit changed source image bytes")
+            (artifact_dir / f"lettering-{page_index+1:02d}.json").write_text(json.dumps(edited, indent=2) + "\n")
         if not ink_variant:
             continue
         if page.get("colour_image_url"):
@@ -867,6 +894,9 @@ def run_flow(
         )
     print(f"PASS painted default and explicit ink finish: {len(pages)} pages")
 
+    if guard.overlay_lettering:
+        print(f"PASS overlay lettering stored and source hashes preserved: {len(pages)} pages; PDF deferred")
+        return len(pages), project_id
     guard.current_stage = "export"
     exported = json_request(f"/api/v1/projects/{project_id}/export", "POST")
     export = require(exported, "export", "export response has no export record")
@@ -889,6 +919,7 @@ def run_flow(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--overlay-lettering", action="store_true", help="fake-only text-free art and stored lettering smoke, stops before PDF")
     parser.add_argument(
         "--script-file",
         type=Path,
@@ -1062,6 +1093,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
+    if args.overlay_lettering and args.live:
+        print("REFUSED: overlay lettering smoke is fake-only until editor/PDF stages land", file=sys.stderr)
+        return 2
+    if args.overlay_lettering:
+        os.environ["LETTERING_OVERLAY_ENABLED"] = "true"
     live = bool(args.live)
     if (
         not math.isfinite(args.prior_spend_usd)
@@ -1188,6 +1224,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     guard.script_file = args.script_file
     guard.project_title = args.title
+    guard.overlay_lettering = args.overlay_lettering
     project_id = None
     page_count = 0
     failure = None
@@ -1282,7 +1319,8 @@ def main(argv: list[str] | None = None) -> int:
         "diagnostic_files": [
             str(p) for p in sorted(diagnostics_dir.glob("response-*.json"))
         ],
-        "pdf_path": str(args.artifact_dir / "latest.pdf") if not failure else None,
+        "pdf_path": str(args.artifact_dir / "latest.pdf") if not failure and not args.overlay_lettering else None,
+        "lettering_mode": "overlay" if args.overlay_lettering else "baked",
         "generated_comic_pages": page_count,
         "generated_panels": guard.panel_count,
         "pdf_pages": guard.pdf_page_count,
@@ -1292,7 +1330,7 @@ def main(argv: list[str] | None = None) -> int:
     (args.artifact_dir / f"cost-report-{run_id}.json").write_text(report_text)
     (args.artifact_dir / "cost-report.json").write_text(report_text)
     print(f"Cost report: {args.artifact_dir / 'cost-report.json'}")
-    if not failure:
+    if not failure and not args.overlay_lettering:
         print(str(args.artifact_dir / "latest.pdf"))
     return 1 if failure else 0
 

@@ -9,6 +9,23 @@ servers:
     description: Local development AI service
 
 paths:
+  /internal/v1/layout-lettering:
+    post:
+      summary: Deterministic local lettering layout, no provider call
+      operationId: layoutLettering
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LetteringDocument'
+      responses:
+        '200':
+          description: Replacement vector layout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LetteringLayout'
   /healthz:
     get:
       summary: Health check
@@ -746,6 +763,56 @@ components:
         reference_image_url:
           type: string
 
+    PageLetteringResponse:
+      type: object
+      required: [lettering_mode]
+      properties:
+        lettering_mode:
+          type: string
+          enum: [baked, overlay]
+        lettering:
+          $ref: '#/components/schemas/PageLetteringState'
+    PageLetteringState:
+      type: object
+      additionalProperties: false
+      required: [version, input, overrides, zone_overrides, layout]
+      properties:
+        version:
+          type: string
+          enum: [page-lettering-v1]
+        input:
+          $ref: '#/components/schemas/LetteringDocument'
+        zone_overrides:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: '#/components/schemas/LetteringUnitRect'
+        overrides:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/LetteringOverride'
+        layout:
+          $ref: '#/components/schemas/LetteringLayout'
+    PatchLetteringOverrideRequest:
+      type: object
+      additionalProperties: false
+      required: [override]
+      properties:
+        override:
+          description: Empty object clears this utterance's manual placement.
+          $ref: '#/components/schemas/LetteringOverride'
+    PatchLetteringZonesRequest:
+      type: object
+      additionalProperties: false
+      required: [panel_id, reserved_zones]
+      properties:
+        panel_id:
+          type: string
+        reserved_zones:
+          type: array
+          items:
+            $ref: '#/components/schemas/LetteringUnitRect'
     GenerateDraftSketchRequest:
       type: object
       required:
@@ -757,6 +824,8 @@ components:
         - panels
         - style
       properties:
+        lettering_document:
+          $ref: '#/components/schemas/LetteringDocument'
         job_id:
           type: string
           format: uuid
@@ -883,6 +952,8 @@ components:
         - style
         - variant
       properties:
+        lettering_document:
+          $ref: '#/components/schemas/LetteringDocument'
         job_id:
           type: string
           format: uuid
@@ -1526,6 +1597,10 @@ components:
           type: string
         page_aspect:
           type: number
+        stroke_width:
+          type: number
+          default: 0.0013
+          description: Relative to page height, about 2.5px at 1280px portrait width.
         minimum_font_size:
           type: number
         bubbles:

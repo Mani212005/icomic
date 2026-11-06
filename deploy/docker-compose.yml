@@ -108,6 +108,7 @@ services:
     environment:
       PORT: "8080"
       PYTHON_AI_URL: "http://ai:8000"
+      LETTERING_OVERLAY_ENABLED: "${LETTERING_OVERLAY_ENABLED:-false}"
       DATABASE_URL: "postgres://icomic:icomic@postgres:5432/icomic?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
       DEV_AUTH_ENABLED: "true"

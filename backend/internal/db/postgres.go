@@ -155,20 +155,23 @@ func (p *PostgresRepository) CreateProject(ctx context.Context, proj *domain.Pro
 		proj.CreatedAt = now
 	}
 	proj.UpdatedAt = now
+	if proj.LetteringMode == "" {
+		proj.LetteringMode = "baked"
+	}
 
 	query := `
-		INSERT INTO projects (id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO projects (id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
-	_, err := p.db.ExecContext(ctx, query, proj.ID, proj.UserID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.CreatedAt, proj.UpdatedAt)
+	_, err := p.db.ExecContext(ctx, query, proj.ID, proj.UserID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.CreatedAt, proj.UpdatedAt, proj.LetteringMode)
 	return err
 }
 
 func (p *PostgresRepository) GetProject(ctx context.Context, id string) (*domain.Project, error) {
-	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at FROM projects WHERE id = $1`
+	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode FROM projects WHERE id = $1`
 	var proj domain.Project
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt,
+		&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt, &proj.LetteringMode,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -180,7 +183,7 @@ func (p *PostgresRepository) GetProject(ctx context.Context, id string) (*domain
 }
 
 func (p *PostgresRepository) ListProjects(ctx context.Context, userID string) ([]*domain.Project, error) {
-	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at FROM projects WHERE user_id = $1 ORDER BY created_at DESC`
+	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode FROM projects WHERE user_id = $1 ORDER BY created_at DESC`
 	rows, err := p.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
@@ -190,7 +193,7 @@ func (p *PostgresRepository) ListProjects(ctx context.Context, userID string) ([
 	var res []*domain.Project
 	for rows.Next() {
 		var proj domain.Project
-		if err := rows.Scan(&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt); err != nil {
+		if err := rows.Scan(&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt, &proj.LetteringMode); err != nil {
 			return nil, err
 		}
 		res = append(res, &proj)
@@ -467,17 +470,17 @@ func (p *PostgresRepository) CreatePage(ctx context.Context, pg *domain.Page) er
 	}
 	pidsBytes, _ := json.Marshal(pg.PanelIDs)
 	query := `
-		INSERT INTO pages (id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at, colour_image_url, colour_image_uploaded_at, painted_page_image_url, painted_page_image_job_id, painted_page_approved_at, painted_page_variant)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		INSERT INTO pages (id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at, colour_image_url, colour_image_uploaded_at, painted_page_image_url, painted_page_image_job_id, painted_page_approved_at, painted_page_variant, lettering_mode, lettering)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 	`
-	_, err := p.db.ExecContext(ctx, query, pg.ID, pg.ChapterID, pg.PageNumber, pidsBytes, pg.DraftImageURL, pg.DraftImageJobID, pg.DraftApprovedAt, pg.LineArtImageURL, pg.LineArtImageJobID, pg.LineArtApprovedAt, pg.ColourImageURL, pg.ColourImageUploadedAt, pg.PaintedPageImageURL, pg.PaintedPageImageJobID, pg.PaintedPageApprovedAt, pg.PaintedPageVariant)
+	_, err := p.db.ExecContext(ctx, query, pg.ID, pg.ChapterID, pg.PageNumber, pidsBytes, pg.DraftImageURL, pg.DraftImageJobID, pg.DraftApprovedAt, pg.LineArtImageURL, pg.LineArtImageJobID, pg.LineArtApprovedAt, pg.ColourImageURL, pg.ColourImageUploadedAt, pg.PaintedPageImageURL, pg.PaintedPageImageJobID, pg.PaintedPageApprovedAt, pg.PaintedPageVariant, pageLetteringMode(pg), nullableJSON(pg.Lettering))
 	return err
 }
 
 func (p *PostgresRepository) GetPage(ctx context.Context, id string) (*domain.Page, error) {
-	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at, colour_image_url, colour_image_uploaded_at, painted_page_image_url, painted_page_image_job_id, painted_page_approved_at, painted_page_variant, updated_at FROM pages WHERE id = $1`
+	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at, colour_image_url, colour_image_uploaded_at, painted_page_image_url, painted_page_image_job_id, painted_page_approved_at, painted_page_variant, lettering_mode, lettering, updated_at FROM pages WHERE id = $1`
 	var pg domain.Page
-	var pidsBytes []byte
+	var pidsBytes, letteringBytes []byte
 	var draftURL sql.NullString
 	var draftJobID sql.NullString
 	var lineURL sql.NullString
@@ -487,7 +490,7 @@ func (p *PostgresRepository) GetPage(ctx context.Context, id string) (*domain.Pa
 	var paintedJobID sql.NullString
 	var paintedVariant sql.NullString
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt, &colourURL, &pg.ColourImageUploadedAt, &paintedURL, &paintedJobID, &pg.PaintedPageApprovedAt, &paintedVariant, &pg.UpdatedAt,
+		&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt, &colourURL, &pg.ColourImageUploadedAt, &paintedURL, &paintedJobID, &pg.PaintedPageApprovedAt, &paintedVariant, &pg.LetteringMode, &letteringBytes, &pg.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -495,6 +498,7 @@ func (p *PostgresRepository) GetPage(ctx context.Context, id string) (*domain.Pa
 	if err != nil {
 		return nil, err
 	}
+	pg.Lettering = letteringBytes
 	if draftURL.Valid {
 		pg.DraftImageURL = draftURL.String
 	}
@@ -529,7 +533,7 @@ func (p *PostgresRepository) GetPage(ctx context.Context, id string) (*domain.Pa
 }
 
 func (p *PostgresRepository) ListPages(ctx context.Context, chapterID string) ([]*domain.Page, error) {
-	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at, colour_image_url, colour_image_uploaded_at, painted_page_image_url, painted_page_image_job_id, painted_page_approved_at, painted_page_variant, updated_at FROM pages WHERE chapter_id = $1 ORDER BY page_number ASC`
+	query := `SELECT id, chapter_id, page_number, panel_ids, draft_image_url, draft_image_job_id, draft_approved_at, line_art_image_url, line_art_image_job_id, line_art_approved_at, colour_image_url, colour_image_uploaded_at, painted_page_image_url, painted_page_image_job_id, painted_page_approved_at, painted_page_variant, lettering_mode, lettering, updated_at FROM pages WHERE chapter_id = $1 ORDER BY page_number ASC`
 	rows, err := p.db.QueryContext(ctx, query, chapterID)
 	if err != nil {
 		return nil, err
@@ -539,7 +543,7 @@ func (p *PostgresRepository) ListPages(ctx context.Context, chapterID string) ([
 	var res []*domain.Page
 	for rows.Next() {
 		var pg domain.Page
-		var pidsBytes []byte
+		var pidsBytes, letteringBytes []byte
 		var draftURL sql.NullString
 		var draftJobID sql.NullString
 		var lineURL sql.NullString
@@ -548,9 +552,10 @@ func (p *PostgresRepository) ListPages(ctx context.Context, chapterID string) ([
 		var paintedURL sql.NullString
 		var paintedJobID sql.NullString
 		var paintedVariant sql.NullString
-		if err := rows.Scan(&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt, &colourURL, &pg.ColourImageUploadedAt, &paintedURL, &paintedJobID, &pg.PaintedPageApprovedAt, &paintedVariant, &pg.UpdatedAt); err != nil {
+		if err := rows.Scan(&pg.ID, &pg.ChapterID, &pg.PageNumber, &pidsBytes, &draftURL, &draftJobID, &pg.DraftApprovedAt, &lineURL, &lineJobID, &pg.LineArtApprovedAt, &colourURL, &pg.ColourImageUploadedAt, &paintedURL, &paintedJobID, &pg.PaintedPageApprovedAt, &paintedVariant, &pg.LetteringMode, &letteringBytes, &pg.UpdatedAt); err != nil {
 			return nil, err
 		}
+		pg.Lettering = letteringBytes
 		if draftURL.Valid {
 			pg.DraftImageURL = draftURL.String
 		}
@@ -931,6 +936,36 @@ func (p *PostgresRepository) UpdateExport(ctx context.Context, exp *domain.Expor
 	}
 	if n == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+func pageLetteringMode(pg *domain.Page) string {
+	if pg.LetteringMode == "overlay" {
+		return "overlay"
+	}
+	return "baked"
+}
+func nullableJSON(data json.RawMessage) interface{} {
+	if len(data) == 0 {
+		return nil
+	}
+	return []byte(data)
+}
+
+// Deliberately excludes all image columns and timestamps. Concurrent placement
+// edits must retry against the latest complete replacement layer.
+func (p *PostgresRepository) SavePageLettering(ctx context.Context, id string, previous, next json.RawMessage) error {
+	result, err := p.db.ExecContext(ctx, `UPDATE pages SET lettering=$3::jsonb WHERE id=$1::uuid AND lettering_mode='overlay' AND lettering IS NOT DISTINCT FROM $2::jsonb`, id, nullableJSON(previous), nullableJSON(next))
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrConflict
 	}
 	return nil
 }

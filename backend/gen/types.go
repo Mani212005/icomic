@@ -285,6 +285,39 @@ func (e LetteringUtteranceKind) Valid() bool {
 	}
 }
 
+// Defines values for PageLetteringResponseLetteringMode.
+const (
+	Baked   PageLetteringResponseLetteringMode = "baked"
+	Overlay PageLetteringResponseLetteringMode = "overlay"
+)
+
+// Valid indicates whether the value is a known member of the PageLetteringResponseLetteringMode enum.
+func (e PageLetteringResponseLetteringMode) Valid() bool {
+	switch e {
+	case Baked:
+		return true
+	case Overlay:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PageLetteringStateVersion.
+const (
+	PageLetteringV1 PageLetteringStateVersion = "page-lettering-v1"
+)
+
+// Valid indicates whether the value is a known member of the PageLetteringStateVersion enum.
+func (e PageLetteringStateVersion) Valid() bool {
+	switch e {
+	case PageLetteringV1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StoreColourImageRequestMediaType.
 const (
 	ImagePng  StoreColourImageRequestMediaType = "image/png"
@@ -433,11 +466,14 @@ type GenerateDraftSketchRequest struct {
 	CharacterReferenceImageURLs *[]string                  `json:"character_reference_image_urls,omitempty"`
 	HashedUserID                string                     `json:"hashed_user_id"`
 	JobID                       string                     `json:"job_id"`
-	PageID                      string                     `json:"page_id"`
-	PageNumber                  int                        `json:"page_number"`
-	Panels                      []PanelTextItem            `json:"panels"`
-	ProjectID                   string                     `json:"project_id"`
-	Style                       string                     `json:"style"`
+
+	// LetteringDocument Standalone opt-in lettering input. Existing page art is baked_in and must never receive a second lettering layer. No image pixels or image URLs are accepted.
+	LetteringDocument *LetteringDocument `json:"lettering_document,omitempty"`
+	PageID            string             `json:"page_id"`
+	PageNumber        int                `json:"page_number"`
+	Panels            []PanelTextItem    `json:"panels"`
+	ProjectID         string             `json:"project_id"`
+	Style             string             `json:"style"`
 }
 
 // GenerateDraftSketchResponse defines model for GenerateDraftSketchResponse.
@@ -478,15 +514,18 @@ type GeneratePaintedPageRequest struct {
 	CharacterReferenceImageURLs *[]string                  `json:"character_reference_image_urls,omitempty"`
 
 	// DraftImageURL Approved draft sketch composition URL for draft-conditioned variant
-	DraftImageURL          *string         `json:"draft_image_url,omitempty"`
-	HashedUserID           string          `json:"hashed_user_id"`
-	JobID                  string          `json:"job_id"`
-	PageID                 string          `json:"page_id"`
-	PageNumber             int             `json:"page_number"`
-	Panels                 []PanelTextItem `json:"panels"`
-	ProjectID              string          `json:"project_id"`
-	Style                  string          `json:"style"`
-	StyleReferenceImageURL *string         `json:"style_reference_image_url,omitempty"`
+	DraftImageURL *string `json:"draft_image_url,omitempty"`
+	HashedUserID  string  `json:"hashed_user_id"`
+	JobID         string  `json:"job_id"`
+
+	// LetteringDocument Standalone opt-in lettering input. Existing page art is baked_in and must never receive a second lettering layer. No image pixels or image URLs are accepted.
+	LetteringDocument      *LetteringDocument `json:"lettering_document,omitempty"`
+	PageID                 string             `json:"page_id"`
+	PageNumber             int                `json:"page_number"`
+	Panels                 []PanelTextItem    `json:"panels"`
+	ProjectID              string             `json:"project_id"`
+	Style                  string             `json:"style"`
+	StyleReferenceImageURL *string            `json:"style_reference_image_url,omitempty"`
 
 	// Variant Finished painted page variant (composition-conditioned or direct-from-brief)
 	Variant GeneratePaintedPageRequestVariant `json:"variant"`
@@ -617,12 +656,15 @@ type LetteringIssue struct {
 
 // LetteringLayout Serializable draw list, never append it to a previous result. All coordinates and bounds are page-normalized. Review issues are authoritative even when a bubble cannot be emitted. No renderer needs to wrap or place text again.
 type LetteringLayout struct {
-	Bubbles         []LetteringBubble      `json:"bubbles"`
-	Issues          []LetteringIssue       `json:"issues"`
-	MinimumFontSize float64                `json:"minimum_font_size"`
-	PageAspect      float64                `json:"page_aspect"`
-	PageID          string                 `json:"page_id"`
-	Version         LetteringLayoutVersion `json:"version"`
+	Bubbles         []LetteringBubble `json:"bubbles"`
+	Issues          []LetteringIssue  `json:"issues"`
+	MinimumFontSize float64           `json:"minimum_font_size"`
+	PageAspect      float64           `json:"page_aspect"`
+	PageID          string            `json:"page_id"`
+
+	// StrokeWidth Relative to page height, about 2.5px at 1280px portrait width.
+	StrokeWidth *float64               `json:"stroke_width,omitempty"`
+	Version     LetteringLayoutVersion `json:"version"`
 }
 
 // LetteringLayoutVersion defines model for LetteringLayout.Version.
@@ -740,6 +782,30 @@ type PageExportItem struct {
 	ProvenanceMetadata *map[string]interface{} `json:"provenance_metadata,omitempty"`
 }
 
+// PageLetteringResponse defines model for PageLetteringResponse.
+type PageLetteringResponse struct {
+	Lettering     *PageLetteringState                `json:"lettering,omitempty"`
+	LetteringMode PageLetteringResponseLetteringMode `json:"lettering_mode"`
+}
+
+// PageLetteringResponseLetteringMode defines model for PageLetteringResponse.LetteringMode.
+type PageLetteringResponseLetteringMode string
+
+// PageLetteringState defines model for PageLetteringState.
+type PageLetteringState struct {
+	// Input Standalone opt-in lettering input. Existing page art is baked_in and must never receive a second lettering layer. No image pixels or image URLs are accepted.
+	Input LetteringDocument `json:"input"`
+
+	// Layout Serializable draw list, never append it to a previous result. All coordinates and bounds are page-normalized. Review issues are authoritative even when a bubble cannot be emitted. No renderer needs to wrap or place text again.
+	Layout        LetteringLayout                `json:"layout"`
+	Overrides     map[string]LetteringOverride   `json:"overrides"`
+	Version       PageLetteringStateVersion      `json:"version"`
+	ZoneOverrides map[string][]LetteringUnitRect `json:"zone_overrides"`
+}
+
+// PageLetteringStateVersion defines model for PageLetteringState.Version.
+type PageLetteringStateVersion string
+
 // PanelTextItem defines model for PanelTextItem.
 type PanelTextItem struct {
 	Background       string `json:"background"`
@@ -750,6 +816,18 @@ type PanelTextItem struct {
 	Narration        string `json:"narration"`
 	PanelNumber      int    `json:"panel_number"`
 	SceneDescription string `json:"scene_description"`
+}
+
+// PatchLetteringOverrideRequest defines model for PatchLetteringOverrideRequest.
+type PatchLetteringOverrideRequest struct {
+	// Override Panel-local normalized coordinates; rect takes precedence over center. Exact overrides may be outside the panel and are flagged, never clamped. Scale changes font size, never below the configured print minimum.
+	Override LetteringOverride `json:"override"`
+}
+
+// PatchLetteringZonesRequest defines model for PatchLetteringZonesRequest.
+type PatchLetteringZonesRequest struct {
+	PanelID       string              `json:"panel_id"`
+	ReservedZones []LetteringUnitRect `json:"reserved_zones"`
 }
 
 // StoreColourImageRequest defines model for StoreColourImageRequest.
@@ -837,6 +915,9 @@ type GeneratePaintedPageJSONRequestBody = GeneratePaintedPageRequest
 
 // GeneratePanelTextJSONRequestBody defines body for GeneratePanelText for application/json ContentType.
 type GeneratePanelTextJSONRequestBody = GeneratePanelTextRequest
+
+// LayoutLetteringJSONRequestBody defines body for LayoutLettering for application/json ContentType.
+type LayoutLetteringJSONRequestBody = LetteringDocument
 
 // ModeratePromptJSONRequestBody defines body for ModeratePrompt for application/json ContentType.
 type ModeratePromptJSONRequestBody = ModeratePromptRequest

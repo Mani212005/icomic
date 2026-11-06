@@ -211,6 +211,7 @@ def ai_service(temp_test_dir: Path) -> Generator[dict[str, Any], None, None]:
 
 @pytest.fixture(scope="session")
 def go_api_server(
+    request: pytest.FixtureRequest,
     compiled_go_server: Path,
     ai_service: dict[str, Any],
     temp_test_dir: Path,
@@ -226,6 +227,7 @@ def go_api_server(
     env["DEV_AUTH_ENABLED"] = "true"
     env["MEDIA_DIR"] = str(media_dir)
     env["KILL_SWITCH"] = "false"
+    env["LETTERING_OVERLAY_ENABLED"] = "true" if getattr(request, "param", False) else "false"
 
     # Wire real PostgreSQL if TEST_DATABASE_URL is provided, otherwise default to in-memory fake
     if "TEST_DATABASE_URL" in os.environ and os.environ["TEST_DATABASE_URL"]:

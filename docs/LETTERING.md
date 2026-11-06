@@ -1,10 +1,99 @@
-# Deterministic lettering, stage 1
+# Deterministic lettering, stages 1 and 2
 
-`ai/app/services/lettering/` is a standalone, hermetic layout library. It accepts
+`ai/app/services/lettering/` is a hermetic vector layout library. It accepts
 `LetteringDocument` and returns `LetteringLayout`; `layout_bytes` produces canonical
-UTF-8 JSON. It has no HTTP endpoint, image input, storage adapter, UI, PDF hook,
-provider call, or persistence. No migration is needed in this stage. Existing
-`PanelTextItem`, backend panel/page records, prompts and exports are unchanged.
+UTF-8 JSON. Stage 2 connects it to new page generation and versioned page storage.
+The engine never accepts images, opens pixels, or calls a provider. Editor preview
+and PDF lettering remain stages 3 and 4; this change does not draw into either.
+
+## Enablement and legacy safety
+
+`LETTERING_OVERLAY_ENABLED=true` on the Go API is the **single opt-in setting**.
+It defaults to false, including in Compose, until the editor and PDF stages land.
+When enabled, newly created projects and their newly allocated pages record
+`lettering_mode: overlay`. Everything else is `baked`. Mode is fixed at creation,
+not inferred from prompts or image content. Turning the setting on does not upgrade
+existing projects or pages. Even future allocations in the existing running book
+stay baked. Migration `000009` only adds columns, defaulting existing rows to baked;
+it never updates, downloads, relabels or overwrites existing images.
+
+Overlay drafts and painted pages use a `text_free` document. Ink pages always stay
+baked: requesting ink for an overlay page returns 409 rather than consuming a
+text-free draft through the legacy lettering prompt. GET on legacy/ink pages
+returns baked with no layer; PATCH returns 409. There is no client mode toggle.
+Exports are unchanged and do not draw this layer yet, which is why production
+must leave the setting off. The fake overlay smoke deliberately stops before PDF.
+
+## Composition and text-free rendering
+
+The baked render brief and its v1/v4/v5 fixtures are unchanged. Overlay requests use
+`page-render-brief-v5-overlay` with an explicit portrait 2:3 aspect, page-normalized
+panel rectangles, and panel-local safe zones. One/two panels use a column; larger
+pages use two columns in array order, with the last odd panel spanning both.
+Page margins are 3% horizontal/2% vertical, gutters 1.5% horizontal/1% vertical.
+
+Each nonempty panel initially reserves an upper band at `(0.04, 0.04)` with width
+`0.92`. Its height is `min(0.55, 0.34 + max(0, characters-50)*0.001 +
+max(0, utterances-1)*0.06)`. Counts include narration and speech. The art prompt
+requires faces, heads, hands and key action below these bands, with sky, wall or
+empty background inside them. This is a composition rule, not a face detector.
+Unrenderable/crowded text keeps review issues; the system never shrinks below
+14 pt to hide a mismatch. Editorial zone edits can instead reserve an empty side.
+
+Source narration becomes one narration utterance first. Nonempty explicit dialogue
+lines follow in source order as speech. A leading `Speaker:` is stored separately
+from the spoken words; otherwise speech is anonymous. IDs use the persistent panel
+ID plus `-narration` or `-dialogue-<source-line-index>`, so text and speaker edits
+keep overrides, while removing a line removes its unused override. The schema also
+supports thought/caption inputs for future structured editing.
+
+The ordered utterances, kinds and speakers are sent only to the deterministic
+layout endpoint. The image brief removes dialogue/narration fields and contains
+only geometry/zones plus visual story inputs. Its policy explicitly requests
+**TEXT-FREE art: no speech bubbles, no captions, no lettering, no numbers, no signs
+with readable text**. Draft and painted stages use the same geometry; legacy ink
+never receives an overlay document. No image options or extra provider calls are
+added. The fake image adapter returns a portrait 256x384 text-free stand-in for
+this mode; baked fake output is unchanged.
+
+## Page storage and API
+
+`pages.lettering` is JSONB, alongside a persisted `lettering_mode`. Its generated
+`PageLetteringState` model contains `version: page-lettering-v1`, `input` (the
+`lettering-v1` document with no manual placement), `overrides` keyed by utterance
+ID, `zone_overrides` keyed by panel ID, and the computed `lettering-layout-v1`
+`layout`. Source zones and manual placements remain separate from the draw list.
+
+Layout is computed at allocation, after source panel text edits and page allocation
+edits, and after zone/utterance override PATCH. Automatic zones follow changed text
+demand; manually edited zones persist across text edits. Geometry is validated by
+the shared layout service. Source images, URLs, provenance and image approval
+timestamps are not changed by a lettering-only PATCH. The image hash e2e test
+covers both source text edits and manual placement edits. Lettering-only writes
+compare the previous layer and update only JSONB, so concurrent edits return 409
+for reload/retry without overwriting images or another placement. Ordinary image
+writes cannot change lettering mode/state. Reads and generation reconcile changed
+source input after an interrupted text update, recomputing only when it differs.
+
+The public contract is `contracts/openapi/lettering-api.yaml`; payload schemas and
+Go/Python generated models share `contracts/openapi/ai-service.yaml`:
+
+- `GET /api/v1/pages/{id}/lettering` returns `lettering_mode` and, only for eligible
+  pages, the complete versioned `lettering` state.
+- `PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/override` accepts
+  `{"override":{"center":{"x":0.5,"y":0.2}}}`. Other fields are `rect`,
+  `tail_anchor`, `size_scale`. An empty override object clears the manual edit.
+- `PATCH /api/v1/pages/{id}/lettering/zones` accepts `panel_id` and the complete
+  `reserved_zones` array in panel-local coordinates. An empty array explicitly
+  records missing-zone review issues.
+
+All routes use page/chapter/project ownership checks and public request bounds.
+Unknown IDs return 404, another owner returns 403, invalid payloads return 400,
+and baked art edits return 409. Out-of-bounds **manual placements** remain exact
+and are flagged rather than clamped; reserved zones must fit their panels.
+`POST /internal/v1/layout-lettering` is a local deterministic operation, outside
+provider queues/jobs/billing. It returns 422 for invalid documents. Recompute
+replaces the complete vector layer, never appends another copy.
 
 The source contract is `contracts/openapi/ai-service.yaml`. The standalone
 `contracts/schemas/lettering.schema.json` describes both input and output; contract
@@ -42,7 +131,7 @@ bubble: the library never guesses that key art is safe to cover.
 `baked_in`; this mode always returns an empty draw list and `baked_in_art`, even if
 utterances are present. Only explicitly `text_free` artwork is eligible. A result
 is a complete replacement layer for its page, never an increment to append to an
-older layer. Stage 1 cannot apply overlays at all. The engine never reads or writes
+older layer. This integration stores vectors only; it cannot apply an image overlay. The engine never reads or writes
 image pixels, and the source-image hash regression test enforces that boundary.
 
 ## Coordinates and renderer contract
@@ -64,8 +153,8 @@ page-height units so a circle stays circular on a nonsquare page. A renderer sca
 output X by its page width and output Y by its page height. The output font size
 must be multiplied by page height, not panel height.
 
-The draw list contains rounded rectangles (speech and captions), ellipses
-(thought), triangular tail polygons, thought-tail ellipses, positioned text lines,
+The draw list contains rounded rectangles (captions/narration), ellipses
+(speech/thought), sampled curved tail polygons, thought-tail ellipses, positioned text lines,
 font IDs, exact shaped glyph IDs/origins/advances and text bounds. Glyph cluster
 indices are Unicode codepoint offsets within the output line. The baseline is
 explicit and all glyph Y offsets have already been converted to downward Y.
@@ -74,7 +163,7 @@ those positioned glyphs; they must not rewrap, reshape, substitute fonts or run
 layout again. This also avoids differences between browser and PDF shaping.
 
 Version 1 uses solid white bubble/tail fills, black text and black outlines at
-`0.001 * page height`. Draw the union of a speech body and its tail with one outer outline, then
+`stroke_width * page height` (default `0.0013`, about 2.5 px at 1280 px portrait width). Draw the union of a speech body and its tail with one outer outline, then
 the glyphs, so the tail has an open seam at its base. Thought circles are
 separate ellipses. Bounds describe geometry/ink before stroke;
 a renderer should keep the outline stroke inside the described bounds at panel
@@ -82,8 +171,8 @@ edges. Empty line bounds have a tiny positive extent for serializability.
 
 ## Layout and review flags
 
-The default font size is 14 pt at A4 height. `LayoutConfig.minimum_font_size` is
-`12 / 841.89` of page height, equivalent to 12 pt on A4 (297 mm). Configurations
+The default font size is 16 pt at A4 height. `LayoutConfig.minimum_font_size` is
+`14 / 841.89` of page height, equivalent to 14 pt on A4 (297 mm). Configurations
 cannot lower that floor. Size scaling below it is clamped to the minimum and
 flagged `below_minimum`. Layout never hides overflow by shrinking lettering.
 Other paper heights scale proportionately; physical print-size requirements for
@@ -92,9 +181,10 @@ other formats must be selected explicitly by their future integration.
 Greedy wrapping uses actual shaped advances and preserves hard line breaks.
 Whitespace within a paragraph becomes single spaces; source text is unchanged.
 Long words and shaping clusters are never split. A target physical bubble aspect
-sets the starting wrap width. Bubbles fit the resulting text and padding; thought
-ellipses expand by sqrt(2) so text corners fit. Captions/narration span the widest
-reserved zone and anchor to its top (default) or bottom (`caption_edge`).
+sets the starting wrap width. Bubbles fit the resulting text and padding; speech/thought
+ellipses expand by sqrt(2) so text corners fit. Captions/narration wrap at at most
+60% of panel width, then trim to their shaped text width plus padding. They anchor
+to the zone top (default) or bottom (`caption_edge`).
 
 Manual rect takes precedence over manual center. Both remain exact, including
 invalid placements. Scale affects lettering size, not an explicit rect. Overrides
@@ -103,24 +193,23 @@ center override derives the bubble size normally and centers it on that point.
 Manual rectangles reserve space before automatic placement, even when their
 utterances occur later in reading order.
 
-Automatic placement visits candidate origins in top-to-bottom, left-to-right
-order. Collisions push candidates right or down to previous bubble boundaries
+Automatic placement prefers the centered, inset position in the earliest reserved
+zone row, then follows reading order. Collisions push candidates right or down to previous bubble boundaries
 plus a gap; candidates must fit wholly inside a reserved zone. The search is finite
 and deterministic, without a pixel grid, randomness or mutable document state.
 This is a greedy layout heuristic, not a global packing optimizer. Unresolved
 packing returns explicit `overflow`/`collision` flags for editorial review. Exact
 manual overrides may intentionally violate automatic reading order.
 
-Tails point at the manual tail anchor, then speaker anchor, then the nearest
-panel edge. The engine tries body attachment edges in distance order and checks
-the entire tail polygon against every text box, including later utterances.
-Thought-tail circles are checked too; the final circle is tangent to the exact
-anchor. If no safe attachment exists, the tail is
-omitted with `tail_crosses_text`; a conflicting manual anchor is never silently
-moved. Body collisions remain visible and flagged, never silently repositioned
-when pinned. `out_of_panel` includes text, bodies and tails; `outside_reserved_zone`
-checks bubble bodies. Tails may leave the safe lettering zone to reach the speaker
-but must remain inside the panel.
+Tails attach to the actual bubble silhouette facing the manual/speaker anchor.
+Automatic speech tails use a broad base and sampled quadratic sides for a short,
+tapered, slightly curved shape, at most 2.5% of page height. Unknown speakers get
+a short downward cue. Automatic tails may shorten further to avoid text; explicit
+manual tail anchors stay exact. Thought trails are short decreasing circles.
+If no safe tail exists it is omitted with `tail_crosses_text`. Text checks include
+later utterances. Body collisions and invalid manual geometry stay visible and
+flagged. `out_of_panel` includes text, bodies and tails; `outside_reserved_zone`
+checks bodies. A tail may leave a safe zone while staying inside its panel.
 
 Empty/whitespace text emits no bubble and `empty_text`. Unsupported text emits no
 bubble and `unsupported_glyph` or `unsupported_direction`. Other flags attach to
@@ -171,11 +260,31 @@ tails, source-image hash preservation and seeded properties for bounds,
 non-overlap, reading order and determinism. Everything runs in default hermetic
 pytest and contract validation, with no key or paid call.
 
-The remaining stages are separate changes:
+The fake process e2e test covers allocation through text-free draft/painted art,
+layout storage/readback, text/zone/override changes, and byte-identical source art.
+Run `make test-e2e`; to exercise durable storage, supply a local migrated/seeded
+`TEST_DATABASE_URL` as described in docs/CI.md. Tagged `realdb` tests cover migration
+up/down and page state round trips. Cost inventory tests remain unchanged.
 
-1. Stage 2: allocate explicit panel geometry/safe zones and ordered utterances in
-   the render brief; opt new art into text-free generation, retaining legacy art.
-2. Stage 3: editor preview draws the vector result and persists editable placement
-   overrides with versioned page-layer state.
-3. Stage 4: PDF draws the same serialized vector layer over eligible source art
-   without re-running layout or adding a second layer to legacy images.
+The standalone fake runner also supports `make e2e-comic E2E_ARGS="--overlay-lettering"`.
+It enables the setting for its isolated Compose stack, saves per-page JSON layouts,
+checks an override and source-image hashes, and stops before PDF. It refuses live
+mode. The ordinary baked runner retains ink/colour/PDF coverage.
+
+For review-only real-art samples, use the AI environment:
+
+```bash
+uv run --project ai python scripts/render_lettering_sample.py source.png layout.json review.png
+```
+
+The Pillow renderer consumes serialized body/tail geometry and exact bundled glyph
+IDs/origins, with a single union outline, and writes a separate image. It does not
+reshape or rewrap. Real-art samples linked in the PR use text-free panels/areas in
+`long-run-final/images/comic-01.png` and `comic-12.png`. Existing model bubbles are
+left intact, and no new layer is placed over those panels. These are review copies,
+not eligibility upgrades to the running book. Compare the new size to adjacent
+model lettering and inspect full resolution, especially tails and caption padding.
+
+Stage 3 will add editor preview/placement controls. Stage 4 will draw this same
+stored vector result in PDF, without reshaping or adding a second layer to legacy
+images. Both remain separate changes.

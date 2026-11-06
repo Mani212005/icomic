@@ -23,17 +23,17 @@ from .typography import Run, select_font, shape, wrap
 
 @dataclass(frozen=True)
 class LayoutConfig:
-    # 12pt / 841.89pt A4 height. Never shrink below a print-readable minimum.
-    minimum_font_size: float = 12 / 841.89
-    font_size: float = 14 / 841.89
+    # 14pt / 841.89pt A4 height. Never shrink below a print-readable minimum.
+    minimum_font_size: float = 14 / 841.89
+    font_size: float = 16 / 841.89
     padding: float = 0.006
-    gap: float = 0.006
+    gap: float = 0.012
 
     def __post_init__(self):
         values = (self.minimum_font_size, self.font_size, self.padding, self.gap)
         if (
             not all(math.isfinite(v) and v > 0 for v in values)
-            or self.minimum_font_size < 12 / 841.89
+            or self.minimum_font_size < 14 / 841.89
             or self.font_size < self.minimum_font_size
         ):
             raise ValueError("Invalid print size, padding or gap")
@@ -100,7 +100,7 @@ def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfi
     size = max(cfg.minimum_font_size, requested)
     if requested < cfg.minimum_font_size:
         flags.append("below_minimum")
-    ellipse = u.kind == "thought"
+    ellipse = u.kind in {"speech", "thought"}
     factor = math.sqrt(2) if ellipse else 1
     widest = max((z.width for z in zones), default=panel.width)
     width = min(
@@ -109,7 +109,7 @@ def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfi
         + cfg.padding * 2,
     )
     if u.kind in {"narration", "caption"}:
-        width = widest
+        width = min(widest, panel.width * 0.6)
     if u.placement and u.placement.rect:
         width = u.placement.rect.width * panel.width
     available = max(size, width / factor - 2 * cfg.padding)
@@ -118,6 +118,8 @@ def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfi
     top = min(r.ink.y + i * step for i, (_, r) in enumerate(runs))
     bottom = max(r.ink.bottom + i * step for i, (_, r) in enumerate(runs))
     height = (bottom - top + 2 * cfg.padding) * factor
+    if u.kind in {"narration", "caption"} and not (u.placement and u.placement.rect):
+        width = min(width, max(r.ink.width for _, r in runs) + 2 * cfg.padding)
     box = Box(0, 0, width, height)
     if u.placement:
         if u.placement.rect:
@@ -168,43 +170,88 @@ def _tail(d: Draft, panel: Box, texts: list[Box]) -> tuple[list[tuple[float, flo
     anchor = (
         u.placement.tail_anchor if u.placement and u.placement.tail_anchor else u.speaker_anchor
     )
-    cx, cy = b.center
-    edges = [(b.x, cy), (b.right, cy), (cx, b.y), (cx, b.bottom)]
+    cx, _cy = b.center
     if anchor:
         ax, ay = _local_point(anchor, panel)
     else:
-        ax, ay = min(
-            [(panel.x, cy), (panel.right, cy), (cx, panel.y), (cx, panel.bottom)],
-            key=lambda p: ((p[0] - cx) ** 2 + (p[1] - cy) ** 2, p[1], p[0]),
+        # Unknown speakers get a short downward cue, never a needle to the frame.
+        ax, ay = cx + b.width * 0.15, min(panel.bottom, b.bottom + 0.025)
+    edges = [
+        (b.x, min(b.bottom - b.height / 4, max(b.y + b.height / 4, ay))),
+        (b.right, min(b.bottom - b.height / 4, max(b.y + b.height / 4, ay))),
+        (min(b.right - b.width / 4, max(b.x + b.width / 4, ax)), b.y),
+        (min(b.right - b.width / 4, max(b.x + b.width / 4, ax)), b.bottom),
+    ]
+    index = min(range(4), key=lambda i: ((edges[i][0] - ax) ** 2 + (edges[i][1] - ay) ** 2, i))
+    ex, ey = edges[index]
+    distance = math.hypot(ax - ex, ay - ey)
+    if b.x <= ax <= b.right and b.y <= ay <= b.bottom:
+        return [], []
+    if u.kind in {"speech", "thought"}:
+        cy = b.center[1]
+        direction_x, direction_y = ax - cx, ay - cy
+        divisor = math.hypot(direction_x / (b.width / 2), direction_y / (b.height / 2))
+        ex, ey = cx + direction_x / divisor, cy + direction_y / divisor
+        distance = math.hypot(ax - ex, ay - ey)
+    manual = u.placement and u.placement.tail_anchor
+    if distance > 0.025 and not manual:
+        ax, ay = ex + (ax - ex) * 0.025 / distance, ey + (ay - ey) * 0.025 / distance
+    half = min(0.008, (b.height if index < 2 else b.width) / 5)
+    nx, ny = (0, half) if index < 2 else (half, 0)
+    if u.kind in {"speech", "thought"}:
+        angle = math.atan2((ey - b.center[1]) / (b.height / 2), (ex - cx) / (b.width / 2))
+        tangent_length = math.hypot(b.width / 2 * math.sin(angle), b.height / 2 * math.cos(angle))
+        delta = half / tangent_length
+        base_a = (
+            cx + b.width / 2 * math.cos(angle - delta),
+            b.center[1] + b.height / 2 * math.sin(angle - delta),
         )
-    for index in sorted(
-        range(4), key=lambda i: ((edges[i][0] - ax) ** 2 + (edges[i][1] - ay) ** 2, i)
-    ):
-        ex, ey = edges[index]
-        half = min(0.004, (b.height if index < 2 else b.width) / 8)
-        triangle = (
-            [(ex, ey - half), (ax, ay), (ex, ey + half)]
-            if index < 2
-            else [(ex - half, ey), (ax, ay), (ex + half, ey)]
+        base_b = (
+            cx + b.width / 2 * math.cos(angle + delta),
+            b.center[1] + b.height / 2 * math.sin(angle + delta),
         )
-        if any(polygon_hits_box(triangle, box) for box in texts):
-            continue
-        if u.kind == "thought":
-            circles = []
-            distance = math.hypot(ax - ex, ay - ey)
-            for fraction, radius in [(0.25, 0.003), (0.55, 0.002), (1.0, 0.001)]:
-                x, y = ex + (ax - ex) * fraction, ey + (ay - ey) * fraction
-                if fraction == 1 and distance:
-                    # The final circle is tangent to the exact requested anchor.
-                    x -= (ax - ex) / distance * radius
-                    y -= (ay - ey) / distance * radius
-                circles.append(Box(x - radius, y - radius, radius * 2, radius * 2))
-            if any(c.overlaps(t) for c in circles for t in texts):
-                continue
-            return [], circles
-        return triangle, []
-    d.flags.append("tail_crosses_text")
-    return [], []
+    else:
+        base_a, base_b = (ex - nx, ey - ny), (ex + nx, ey + ny)
+    # Sample two quadratic edges into the existing vector polygon contract.
+    # A wide base and gently bent spine make a short tapered comic tail.
+    dx, dy = ax - ex, ay - ey
+    bend = min(0.004, math.hypot(dx, dy) * 0.15)
+    length = math.hypot(dx, dy) or 1
+    qx, qy = (ex + ax) / 2 - dy / length * bend, (ey + ay) / 2 + dx / length * bend
+
+    for scale in [1] if manual else [1, 0.7, 0.4]:
+        tip_x, tip_y = ex + dx * scale, ey + dy * scale
+        control_x, control_y = ex + (qx - ex) * scale, ey + (qy - ey) * scale
+
+        def curve(sx, sy, t, tx=tip_x, ty=tip_y, qx=control_x, qy=control_y):
+            return (
+                (1 - t) ** 2 * sx + 2 * (1 - t) * t * qx + t * t * tx,
+                (1 - t) ** 2 * sy + 2 * (1 - t) * t * qy + t * t * ty,
+            )
+
+        triangle = [curve(*base_a, t) for t in (0, 0.25, 0.5, 0.75, 1)]
+        triangle += [curve(*base_b, t) for t in (0.75, 0.5, 0.25, 0)]
+        if not any(polygon_hits_box(triangle, box) for box in texts):
+            ax, ay = tip_x, tip_y
+            break
+    else:
+        d.flags.append("tail_crosses_text")
+        return [], []
+    if u.kind == "thought":
+        circles = []
+        distance = math.hypot(ax - ex, ay - ey)
+        for fraction, radius in [(0.25, 0.003), (0.55, 0.002), (1.0, 0.001)]:
+            x, y = ex + (ax - ex) * fraction, ey + (ay - ey) * fraction
+            if fraction == 1 and distance:
+                # The final circle is tangent to the exact requested anchor.
+                x -= (ax - ex) / distance * radius
+                y -= (ay - ey) / distance * radius
+            circles.append(Box(x - radius, y - radius, radius * 2, radius * 2))
+        if any(c.overlaps(t) for c in circles for t in texts):
+            d.flags.append("tail_crosses_text")
+            return [], []
+        return [], circles
+    return triangle, []
 
 
 def _layout_panel(
@@ -262,7 +309,8 @@ def _layout_panel(
             max(1e-9, d.box.height - 2 * cfg.padding),
         )
         if any(not inner.contains(t) for t in texts) or (
-            d.utterance.kind == "thought" and any(not ellipse_contains(d.box, t) for t in texts)
+            d.utterance.kind in {"speech", "thought"}
+            and any(not ellipse_contains(d.box, t) for t in texts)
         ):
             d.flags.append("overflow")
         if any(d.box.overlaps(other.box) for j, other in enumerate(drafts) if i != j):
@@ -279,9 +327,13 @@ def _layout_panel(
             order=d.utterance.order,
             kind=d.utterance.kind,
             shape=LetteringShape(
-                kind="ellipse" if d.utterance.kind == "thought" else "rounded_rect",
+                kind="ellipse" if d.utterance.kind in {"speech", "thought"} else "rounded_rect",
                 bounds=_rect(d.box, aspect),
-                radius=cfg.padding,
+                radius=(
+                    min(d.box.width, d.box.height) * 0.45
+                    if d.utterance.kind == "speech"
+                    else cfg.padding
+                ),
             ),
             tail=[_point(x, y, aspect) for x, y in tail],
             thought_tail=[

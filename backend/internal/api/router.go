@@ -111,6 +111,9 @@ func (s *Server) NewRouter() http.Handler {
 	handle("PATCH /api/v1/pages/{id}", s.UpdatePage)
 
 	// Draft Sketch
+	handle("GET /api/v1/pages/{id}/lettering", s.GetLettering)
+	handle("PATCH /api/v1/pages/{id}/lettering/utterances/{utterance_id}/override", s.PatchLetteringOverride)
+	handle("PATCH /api/v1/pages/{id}/lettering/zones", s.PatchLetteringZones)
 	handle("POST /api/v1/pages/{id}/draft", s.GenerateDraft)
 	handle("POST /api/v1/pages/{id}/draft/approve", s.ApproveDraft)
 

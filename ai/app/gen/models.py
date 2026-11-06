@@ -146,22 +146,6 @@ class CharacterRenderIdentity(BaseModel):
     reference_image_url: str
 
 
-class GenerateDraftSketchRequest(BaseModel):
-    job_id: str
-    hashed_user_id: str
-    project_id: str
-    page_id: str
-    page_number: int
-    panels: list[PanelTextItem]
-    style: str
-    character_reference_image_urls: list[str] = []
-    character_identities: list[CharacterRenderIdentity] = Field(
-        [],
-        description="Stable ordered identities; reference images precede legacy URL-only references.",
-        validate_default=True,
-    )
-
-
 class GenerateDraftSketchResponse(BaseModel):
     job_id: str
     image_url: str
@@ -191,30 +175,6 @@ class GenerateLineArtResponse(BaseModel):
     image_url: str
     model_id: str
     provenance_metadata: dict[str, Any]
-
-
-class GeneratePaintedPageRequest(BaseModel):
-    job_id: str
-    hashed_user_id: str
-    project_id: str
-    page_id: str
-    page_number: int
-    draft_image_url: str | None = Field(
-        None, description="Approved draft sketch composition URL for draft-conditioned variant"
-    )
-    panels: list[PanelTextItem]
-    style: str
-    variant: Literal["draft-conditioned", "direct-from-brief"] = Field(
-        ...,
-        description="Finished painted page variant (composition-conditioned or direct-from-brief)",
-    )
-    character_reference_image_urls: list[str] = []
-    character_identities: list[CharacterRenderIdentity] = Field(
-        [],
-        description="Stable ordered identities; reference images precede legacy URL-only references.",
-        validate_default=True,
-    )
-    style_reference_image_url: str | None = None
 
 
 class GeneratePaintedPageResponse(BaseModel):
@@ -521,6 +481,84 @@ class LetteringLayout(BaseModel):
     version: Literal["lettering-layout-v1"]
     page_id: str
     page_aspect: float
+    stroke_width: float = Field(
+        0.0013, description="Relative to page height, about 2.5px at 1280px portrait width."
+    )
     minimum_font_size: float
     bubbles: list[LetteringBubble]
     issues: list[LetteringIssue]
+
+
+class PageLetteringState(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    version: Literal["page-lettering-v1"]
+    input: LetteringDocument
+    zone_overrides: dict[str, list[LetteringUnitRect]]
+    overrides: dict[str, LetteringOverride]
+    layout: LetteringLayout
+
+
+class PatchLetteringOverrideRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    override: LetteringOverride = Field(
+        ..., description="Empty object clears this utterance's manual placement."
+    )
+
+
+class PatchLetteringZonesRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    panel_id: str
+    reserved_zones: list[LetteringUnitRect]
+
+
+class GenerateDraftSketchRequest(BaseModel):
+    lettering_document: LetteringDocument | None = None
+    job_id: str
+    hashed_user_id: str
+    project_id: str
+    page_id: str
+    page_number: int
+    panels: list[PanelTextItem]
+    style: str
+    character_reference_image_urls: list[str] = []
+    character_identities: list[CharacterRenderIdentity] = Field(
+        [],
+        description="Stable ordered identities; reference images precede legacy URL-only references.",
+        validate_default=True,
+    )
+
+
+class GeneratePaintedPageRequest(BaseModel):
+    lettering_document: LetteringDocument | None = None
+    job_id: str
+    hashed_user_id: str
+    project_id: str
+    page_id: str
+    page_number: int
+    draft_image_url: str | None = Field(
+        None, description="Approved draft sketch composition URL for draft-conditioned variant"
+    )
+    panels: list[PanelTextItem]
+    style: str
+    variant: Literal["draft-conditioned", "direct-from-brief"] = Field(
+        ...,
+        description="Finished painted page variant (composition-conditioned or direct-from-brief)",
+    )
+    character_reference_image_urls: list[str] = []
+    character_identities: list[CharacterRenderIdentity] = Field(
+        [],
+        description="Stable ordered identities; reference images precede legacy URL-only references.",
+        validate_default=True,
+    )
+    style_reference_image_url: str | None = None
+
+
+class PageLetteringResponse(BaseModel):
+    lettering_mode: Literal["baked", "overlay"]
+    lettering: PageLetteringState | None = None

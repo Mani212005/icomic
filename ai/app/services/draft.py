@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
-from ..gen.models import CharacterRenderIdentity, PanelTextItem
+from ..gen.models import CharacterRenderIdentity, LetteringDocument, PanelTextItem
 from .image_prompts import DRAFT_PROMPT_VERSION
 from .images import store_page_image
 from .render_brief import build_page_render_request
@@ -27,6 +27,7 @@ class DraftService:
         hashed_user_id: str,
         character_reference_image_urls: list[str] | None = None,
         character_identities: list[CharacterRenderIdentity] | None = None,
+        lettering_document: LetteringDocument | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
         """Generate one rough draft sketch per page for composition review."""
         from .style_bible import resolve_style_bible
@@ -34,6 +35,7 @@ class DraftService:
         style_bible = resolve_style_bible(style)
         brief, reference_images = build_page_render_request(
             page_number=page_number,
+            lettering_document=lettering_document,
             panels=panels,
             style=style_bible.style_id,
             storage=self.storage_adapter,

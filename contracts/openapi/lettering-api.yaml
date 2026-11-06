@@ -1,0 +1,85 @@
+openapi: 3.1.0
+info:
+  title: Icomic Page Lettering API
+  version: 1.0.0
+  description: Public Go API. Shared payload models are generated from ai-service.yaml.
+paths:
+  /api/v1/pages/{id}/lettering:
+    parameters:
+      - $ref: '#/components/parameters/PageID'
+    get:
+      operationId: getPageLettering
+      responses:
+        '200':
+          $ref: '#/components/responses/Lettering'
+        '403':
+          description: Page belongs to another user
+        '404':
+          description: Page does not exist
+  /api/v1/pages/{id}/lettering/utterances/{utterance_id}/override:
+    parameters:
+      - $ref: '#/components/parameters/PageID'
+      - name: utterance_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: patchLetteringOverride
+      description: Replace one utterance override, recompute and store the whole layout. Empty override clears it. Image bytes and image approval timestamps remain unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './ai-service.yaml#/components/schemas/PatchLetteringOverrideRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Lettering'
+        '400':
+          description: Invalid geometry, scale or payload
+        '403':
+          description: Page belongs to another user
+        '404':
+          description: Page or utterance not found
+        '409':
+          description: Baked or ink art cannot receive an overlay
+  /api/v1/pages/{id}/lettering/zones:
+    parameters:
+      - $ref: '#/components/parameters/PageID'
+    patch:
+      operationId: patchLetteringZones
+      description: Replace a panel's explicitly reserved zones and recompute layout. Empty array records missing_zone review issues.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './ai-service.yaml#/components/schemas/PatchLetteringZonesRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Lettering'
+        '400':
+          description: Invalid panel-local zones
+        '403':
+          description: Page belongs to another user
+        '404':
+          description: Page or panel not found
+        '409':
+          description: Baked or ink art cannot receive an overlay
+components:
+  parameters:
+    PageID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Lettering:
+      description: A replacement page layer. Baked pages omit lettering.
+      content:
+        application/json:
+          schema:
+            $ref: './ai-service.yaml#/components/schemas/PageLetteringResponse'

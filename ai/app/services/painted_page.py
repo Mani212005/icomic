@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from ..adapters.image.port import ImagePort
 from ..adapters.storage.port import StoragePort
-from ..gen.models import CharacterRenderIdentity, PanelTextItem
+from ..gen.models import CharacterRenderIdentity, LetteringDocument, PanelTextItem
 from .images import store_page_image
 from .render_brief import build_page_render_request
 
@@ -32,6 +32,7 @@ class PaintedPageService:
         character_reference_image_urls: list[str] | None = None,
         character_identities: list[CharacterRenderIdentity] | None = None,
         style_reference_image_url: str | None = None,
+        lettering_document: LetteringDocument | None = None,
     ) -> tuple[str, str, dict[str, Any], str]:
         """Generate finished painted page under chosen variant (composition-conditioned or direct)."""
         chosen_variant = variant
@@ -44,6 +45,7 @@ class PaintedPageService:
 
         brief, reference_images = build_page_render_request(
             page_number=page_number,
+            lettering_document=lettering_document,
             panels=panels,
             style=style,
             storage=self.storage_adapter,

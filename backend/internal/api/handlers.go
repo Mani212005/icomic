@@ -292,6 +292,10 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:      time.Now().UTC(),
 	}
 
+	proj.LetteringMode = "baked"
+	if s.LetteringOverlayEnabled {
+		proj.LetteringMode = "overlay"
+	}
 	if err := s.Repo.CreateProject(r.Context(), proj); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1244,6 +1248,14 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 			PanelIDs:   pids[i:end],
 			UpdatedAt:  now,
 		}
+		pg.LetteringMode = "baked"
+		if s.LetteringOverlayEnabled && proj.LetteringMode == "overlay" {
+			pg.LetteringMode = "overlay"
+			if err := s.refreshLettering(r.Context(), pg); err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to prepare lettering")
+				return
+			}
+		}
 		if err := s.Repo.CreatePage(r.Context(), pg); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to save page")
 			return
@@ -1374,11 +1386,21 @@ func (s *Server) UpdatePanel(w http.ResponseWriter, r *http.Request) {
 	for _, pg := range pages {
 		for _, pid := range pg.PanelIDs {
 			if pid == p.ID {
+				previous := append(json.RawMessage(nil), pg.Lettering...)
 				domain.StaleDraftOnPanelEdit(pg, now)
+				layoutErr := s.refreshLettering(r.Context(), pg)
 				if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-					writeError(w, http.StatusInternalServerError, "Failed to save page")
+					writeError(w, 500, "Failed to save page")
 					return
 				}
+				if layoutErr != nil {
+					writeError(w, 502, "Failed to refresh lettering")
+					return
+				}
+				if !s.saveLettering(w, r, pg, previous) {
+					return
+				}
+
 				break
 			}
 		}
@@ -1462,10 +1484,29 @@ func (s *Server) UpdatePage(w http.ResponseWriter, r *http.Request) {
 		pg.PanelIDs = body.PanelIDs
 	}
 
+	for _, id := range pg.PanelIDs {
+		panel, err := s.Repo.GetPanel(r.Context(), id)
+		if err != nil {
+			writeLookupError(w, err, "Panel")
+			return
+		}
+		if panel.ChapterID != pg.ChapterID {
+			writeError(w, 400, "Panels must belong to this chapter")
+			return
+		}
+	}
+	previous := append(json.RawMessage(nil), pg.Lettering...)
+	if err := s.refreshLettering(r.Context(), pg); err != nil {
+		writeError(w, 500, "Failed to refresh lettering")
+		return
+	}
 	// Editing page allocation makes draft approval stale (SPEC 3.5.1, 3.6)
 	pg.UpdatedAt = time.Now().UTC()
 	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to save page")
+		return
+	}
+	if !s.saveLettering(w, r, pg, previous) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"page": pg})
@@ -1499,6 +1540,10 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	if proj.UserID != userID {
 		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	if !s.ensureLettering(w, r, pg) {
 		return
 	}
 
@@ -1626,6 +1671,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 			ProjectID:           proj.ID,
 			PageID:              pg.ID,
 			PageNumber:          pg.PageNumber,
+			LetteringDocument:   letteringDocument(pg),
 			Panels:              panelItems,
 			Style:               draftStyle,
 			CharacterIdentities: characterRenderIdentities(chars),
@@ -1741,6 +1787,11 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 	pg, err := s.Repo.GetPage(r.Context(), pageID)
 	if err != nil {
 		writeLookupError(w, err, "Page")
+		return
+	}
+
+	if pg.LetteringMode == "overlay" {
+		writeError(w, http.StatusConflict, "Overlay pages require painted finish; ink remains baked")
 		return
 	}
 
@@ -1978,6 +2029,10 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.ensureLettering(w, r, pg) {
+		return
+	}
+
 	// Kill switch and quota check (SPEC 5.5)
 	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
 		writeGenerationError(w, err)
@@ -2144,6 +2199,7 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 			ProjectID:           proj.ID,
 			PageID:              pg.ID,
 			PageNumber:          pg.PageNumber,
+			LetteringDocument:   letteringDocument(pg),
 			DraftImageURL:       draftURL,
 			Panels:              panelItems,
 			Style:               artStyle,

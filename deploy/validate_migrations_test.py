@@ -227,7 +227,7 @@ def repository_column_errors(source: str, columns: dict[str, set[str]]) -> list[
         if not re.match(r"\s*(SELECT|INSERT|UPDATE|DELETE)\b", sql, re.I):
             continue
         sql = re.sub(r"'([^']|'')*'", "", sql.lower())
-        sql = re.sub(r"::\s*(?:uuid|timestamptz|varchar|numeric|text)\b", "", sql)
+        sql = re.sub(r"::\s*(?:uuid|timestamptz|varchar|numeric|text|jsonb)\b", "", sql)
         table_names = set(re.findall(r"(?:from|into|update)\s+(\w+)", sql)) - {"set"}
         if len(table_names) != 1:
             errors.append(f"Add structural coverage for query: {sql}")
@@ -332,6 +332,10 @@ class TestMigrationsStructural(unittest.TestCase):
                 "`SELECT id FROM users WHERE id=$1::uuid AND created_at>=$2::timestamptz`",
                 columns,
             ),
+            [],
+        )
+        self.assertEqual(
+            repository_column_errors("`UPDATE pages SET lettering=$3::jsonb WHERE id=$1::uuid AND lettering IS NOT DISTINCT FROM $2::jsonb`", columns),
             [],
         )
         self.assertEqual(

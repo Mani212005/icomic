@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type Plan struct {
 
 // Project represents a user comic book creation project (SPEC 9).
 type Project struct {
+	LetteringMode  string    `json:"lettering_mode"`
 	ID             string    `json:"id"`
 	UserID         string    `json:"user_id"`
 	Title          string    `json:"title"`
@@ -77,24 +79,27 @@ type Panel struct {
 
 // Page represents a partitioned page containing ordered panels (SPEC 3.5.1, 9).
 type Page struct {
-	ID                    string     `json:"id"`
-	ChapterID             string     `json:"chapter_id"`
-	PageNumber            int        `json:"page_number"`
-	PanelIDs              []string   `json:"panel_ids"`
-	DraftImageURL         string     `json:"draft_image_url,omitempty"`
-	DraftImageJobID       *string    `json:"draft_image_job_id,omitempty"`
-	DraftApprovedAt       *time.Time `json:"draft_approved_at,omitempty"`
-	LineArtImageURL       string     `json:"line_art_image_url,omitempty"`
-	LineArtImageJobID     *string    `json:"line_art_image_job_id,omitempty"`
-	LineArtApprovedAt     *time.Time `json:"line_art_approved_at,omitempty"`
-	ColourImageURL        string     `json:"colour_image_url,omitempty"`
-	ColourImageUploadedAt *time.Time `json:"colour_image_uploaded_at,omitempty"`
-	ColourApprovedAt      *time.Time `json:"colour_approved_at,omitempty"`
-	PaintedPageImageURL   string     `json:"painted_page_image_url,omitempty"`
-	PaintedPageImageJobID *string    `json:"painted_page_image_job_id,omitempty"`
-	PaintedPageApprovedAt *time.Time `json:"painted_page_approved_at,omitempty"`
-	PaintedPageVariant    string     `json:"painted_page_variant,omitempty"`
-	UpdatedAt             time.Time  `json:"updated_at"`
+	// Mode is fixed at creation; empty old in-memory records also mean baked.
+	LetteringMode         string          `json:"lettering_mode"`
+	Lettering             json.RawMessage `json:"lettering,omitempty"`
+	ID                    string          `json:"id"`
+	ChapterID             string          `json:"chapter_id"`
+	PageNumber            int             `json:"page_number"`
+	PanelIDs              []string        `json:"panel_ids"`
+	DraftImageURL         string          `json:"draft_image_url,omitempty"`
+	DraftImageJobID       *string         `json:"draft_image_job_id,omitempty"`
+	DraftApprovedAt       *time.Time      `json:"draft_approved_at,omitempty"`
+	LineArtImageURL       string          `json:"line_art_image_url,omitempty"`
+	LineArtImageJobID     *string         `json:"line_art_image_job_id,omitempty"`
+	LineArtApprovedAt     *time.Time      `json:"line_art_approved_at,omitempty"`
+	ColourImageURL        string          `json:"colour_image_url,omitempty"`
+	ColourImageUploadedAt *time.Time      `json:"colour_image_uploaded_at,omitempty"`
+	ColourApprovedAt      *time.Time      `json:"colour_approved_at,omitempty"`
+	PaintedPageImageURL   string          `json:"painted_page_image_url,omitempty"`
+	PaintedPageImageJobID *string         `json:"painted_page_image_job_id,omitempty"`
+	PaintedPageApprovedAt *time.Time      `json:"painted_page_approved_at,omitempty"`
+	PaintedPageVariant    string          `json:"painted_page_variant,omitempty"`
+	UpdatedAt             time.Time       `json:"updated_at"`
 }
 
 // ColourPalette represents AI suggested and user modified page colors (SPEC 9).

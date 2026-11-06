@@ -74,8 +74,15 @@ def place(
     """
     candidates = []
     for zone in zones:
-        xs = sorted({zone.x, *(b.right + gap for b in occupied)})
-        ys = sorted({zone.y, *(b.bottom + gap for b in occupied)})
+        xs = sorted(
+            {zone.x, zone.x + (zone.width - size.width) / 2, *(b.right + gap for b in occupied)}
+        )
+        ys = sorted(
+            {
+                zone.y + min(gap, max(0, (zone.height - size.height) / 2)),
+                *(b.bottom + gap for b in occupied),
+            }
+        )
         if edge:
             ys = [zone.y if edge == "top" else zone.bottom - size.height]
         for y in ys:
@@ -87,7 +94,14 @@ def place(
                     and not any(candidate.overlaps(b, gap) for b in occupied)
                 ):
                     candidates.append(candidate)
-    return min(candidates, key=lambda b: (b.y, b.x)) if candidates else None
+    if not candidates:
+        return None
+    # Prefer a centered inset in the earliest available row. Frontier candidates
+    # still permit dense packing when the preferred placement is occupied.
+    return min(
+        candidates,
+        key=lambda b: (b.y, round(min(abs(b.center[0] - z.center[0]) for z in zones), 12), b.x),
+    )
 
 
 def ellipse_contains(ellipse: Box, rect: Box) -> bool:
