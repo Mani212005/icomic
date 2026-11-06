@@ -24,6 +24,30 @@ func (e AssemblePdfRequestPageSize) Valid() bool {
 	}
 }
 
+// Defines values for FinishPreset.
+const (
+	Off        FinishPreset = "off"
+	Print      FinishPreset = "print"
+	PrintHeavy FinishPreset = "print-heavy"
+	PrintPlus  FinishPreset = "print-plus"
+)
+
+// Valid indicates whether the value is a known member of the FinishPreset enum.
+func (e FinishPreset) Valid() bool {
+	switch e {
+	case Off:
+		return true
+	case Print:
+		return true
+	case PrintHeavy:
+		return true
+	case PrintPlus:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GeneratePaintedPageRequestVariant.
 const (
 	GeneratePaintedPageRequestVariantDirectFromBrief  GeneratePaintedPageRequestVariant = "direct-from-brief"
@@ -392,13 +416,16 @@ type AnalyzeScriptResponse struct {
 
 // AssemblePdfRequest defines model for AssemblePdfRequest.
 type AssemblePdfRequest struct {
-	HashedUserID        string                     `json:"hashed_user_id"`
-	IncludeAIDisclosure bool                       `json:"include_ai_disclosure"`
-	JobID               string                     `json:"job_id"`
-	PageSize            AssemblePdfRequestPageSize `json:"page_size"`
-	Pages               []PageExportItem           `json:"pages"`
-	ProjectID           string                     `json:"project_id"`
-	Title               string                     `json:"title"`
+	// FinishPreset Print finish preset applied to art. Baked lettering pages are skipped until the project preset is explicitly selected.
+	FinishPreset         *FinishPreset              `json:"finish_preset,omitempty"`
+	FinishPresetExplicit *bool                      `json:"finish_preset_explicit,omitempty"`
+	HashedUserID         string                     `json:"hashed_user_id"`
+	IncludeAIDisclosure  bool                       `json:"include_ai_disclosure"`
+	JobID                string                     `json:"job_id"`
+	PageSize             AssemblePdfRequestPageSize `json:"page_size"`
+	Pages                []PageExportItem           `json:"pages"`
+	ProjectID            string                     `json:"project_id"`
+	Title                string                     `json:"title"`
 }
 
 // AssemblePdfRequestPageSize defines model for AssemblePdfRequest.PageSize.
@@ -459,6 +486,22 @@ type ErrorResponse struct {
 	RetryAfterSeconds *float64                `json:"retry_after_seconds,omitempty"`
 	Retryable         *bool                   `json:"retryable,omitempty"`
 }
+
+// FinishPageImageRequest defines model for FinishPageImageRequest.
+type FinishPageImageRequest struct {
+	// FinishPreset Print finish preset applied to art. Baked lettering pages are skipped until the project preset is explicitly selected.
+	FinishPreset FinishPreset `json:"finish_preset"`
+	ImageURL     string       `json:"image_url"`
+	PageID       string       `json:"page_id"`
+}
+
+// FinishPageImageResponse defines model for FinishPageImageResponse.
+type FinishPageImageResponse struct {
+	ImageURL string `json:"image_url"`
+}
+
+// FinishPreset Print finish preset applied to art. Baked lettering pages are skipped until the project preset is explicitly selected.
+type FinishPreset string
 
 // GenerateChapterOutlineRequest defines model for GenerateChapterOutlineRequest.
 type GenerateChapterOutlineRequest struct {
@@ -811,16 +854,23 @@ type ModeratePromptResponse struct {
 
 // PageExportItem defines model for PageExportItem.
 type PageExportItem struct {
-	DialogueText  *string                      `json:"dialogue_text,omitempty"`
-	ImageURL      string                       `json:"image_url"`
-	Lettering     *PageLetteringState          `json:"lettering,omitempty"`
-	LetteringMode *PageExportItemLetteringMode `json:"lettering_mode,omitempty"`
+	DialogueText *string `json:"dialogue_text,omitempty"`
+
+	// FinishPreset Print finish preset applied to art. Baked lettering pages are skipped until the project preset is explicitly selected.
+	FinishPreset         *FinishPreset                `json:"finish_preset,omitempty"`
+	FinishPresetExplicit *bool                        `json:"finish_preset_explicit,omitempty"`
+	ImageURL             string                       `json:"image_url"`
+	Lettering            *PageLetteringState          `json:"lettering,omitempty"`
+	LetteringMode        *PageExportItemLetteringMode `json:"lettering_mode,omitempty"`
 
 	// LetteringStale Stored input differs from the current source panels. Export must flag it without recomputing.
 	LetteringStale *bool `json:"lettering_stale,omitempty"`
 
 	// OriginalImageURL Original line art URL, retained when the exported image is a coloured derivative.
-	OriginalImageURL   *string                 `json:"original_image_url,omitempty"`
+	OriginalImageURL *string `json:"original_image_url,omitempty"`
+
+	// PageID Stable page identifier used to seed print finishing deterministically.
+	PageID             *string                 `json:"page_id,omitempty"`
 	PageNumber         int                     `json:"page_number"`
 	PanelCount         *int                    `json:"panel_count,omitempty"`
 	Panels             *[]PanelTextItem        `json:"panels,omitempty"`
@@ -961,6 +1011,9 @@ type AnalyzeScriptJSONRequestBody = AnalyzeScriptRequest
 
 // AssemblePdfJSONRequestBody defines body for AssemblePdf for application/json ContentType.
 type AssemblePdfJSONRequestBody = AssemblePdfRequest
+
+// FinishPageImageJSONRequestBody defines body for FinishPageImage for application/json ContentType.
+type FinishPageImageJSONRequestBody = FinishPageImageRequest
 
 // GenerateChapterOutlineJSONRequestBody defines body for GenerateChapterOutline for application/json ContentType.
 type GenerateChapterOutlineJSONRequestBody = GenerateChapterOutlineRequest

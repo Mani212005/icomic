@@ -27,6 +27,7 @@ type AIService interface {
 	GeneratePaintedPage(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error)
 	SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
 	StoreColourImage(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error)
+	FinishPageImage(ctx context.Context, req FinishPageImageRequest) (*FinishPageImageResponse, error)
 	AssemblePdf(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
 	GetJobStatus(ctx context.Context, jobID string) (*JobStatusResponse, error)
 }
@@ -190,6 +191,14 @@ func (c *AIServiceClient) StoreColourImage(ctx context.Context, req StoreColourI
 	return &resp, nil
 }
 
+func (c *AIServiceClient) FinishPageImage(ctx context.Context, req FinishPageImageRequest) (*FinishPageImageResponse, error) {
+	var resp FinishPageImageResponse
+	if err := c.postJSON(ctx, "/internal/v1/finish-page-image", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AIServiceClient) AssemblePdf(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error) {
 	var resp AssemblePdfResponse
 	if err := c.postJSON(ctx, "/internal/v1/assemble-pdf", req, &resp); err != nil {
@@ -237,6 +246,7 @@ type FakeAIServiceClient struct {
 	GeneratePaintedPageFunc        func(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error)
 	SuggestColourPaletteFunc       func(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
 	StoreColourImageFunc           func(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error)
+	FinishPageImageFunc            func(ctx context.Context, req FinishPageImageRequest) (*FinishPageImageResponse, error)
 	AssemblePdfFunc                func(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
 	GetJobStatusFunc               func(ctx context.Context, jobID string) (*JobStatusResponse, error)
 }
@@ -451,6 +461,15 @@ func (f *FakeAIServiceClient) StoreColourImage(ctx context.Context, req StoreCol
 	}
 	return &StoreColourImageResponse{
 		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/pages/%s/colours/fake.png", req.PageID),
+	}, nil
+}
+
+func (f *FakeAIServiceClient) FinishPageImage(ctx context.Context, req FinishPageImageRequest) (*FinishPageImageResponse, error) {
+	if f.FinishPageImageFunc != nil {
+		return f.FinishPageImageFunc(ctx, req)
+	}
+	return &FinishPageImageResponse{
+		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/finishes/%s/%s.jpg", req.PageID, req.FinishPreset),
 	}, nil
 }
 

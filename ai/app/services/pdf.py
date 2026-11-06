@@ -5,6 +5,7 @@ panel dialogue text, cover title, mandatory AI-generation disclosure,
 and preserved Meta C2PA provenance metadata.
 """
 
+import hashlib
 import json
 import struct
 import textwrap
@@ -19,6 +20,7 @@ from PIL import Image
 
 from ..adapters.storage.port import StoragePort
 from ..gen.models import PageExportItem, PdfLetteringWarning
+from .finish_layer import FinishStrength, finish_image, page_seed
 from .lettering.pdf import PdfLettering, eligibility
 
 
@@ -193,9 +195,10 @@ class PdfWriter:
         "Custom_Comic": (480.0, 740.0),
     }
 
-    def __init__(self, page_size: str = "A4"):
+    def __init__(self, page_size: str = "A4", storage_adapter: StoragePort | None = None):
         self.width, self.height = self.PAGE_DIMENSIONS.get(page_size, self.PAGE_DIMENSIONS["A4"])
         self.page_size_name = page_size
+        self.storage_adapter = storage_adapter
         self.objects: list[bytes] = []
 
     def _reserve_id(self) -> int:
@@ -217,6 +220,40 @@ class PdfWriter:
         pages_data: list[dict[str, Any]],
     ) -> bytes:
         """Assemble all document pages, embedded images, metadata, and cross-reference table."""
+        for idx, page in enumerate(pages_data, start=1):
+            image_bytes = page.get("image_bytes") or _generate_fallback_png()
+            preset = page.get("finish_preset", "off")
+            eligible = page.get("lettering_mode") == "overlay" or page.get(
+                "finish_preset_explicit", False
+            )
+            strength = {
+                "print": FinishStrength.PRINT,
+                "print-plus": FinishStrength.PLUS,
+                "print-heavy": FinishStrength.HEAVY,
+            }.get(preset)
+            if eligible and strength is not None:
+                page_identity = (
+                    page.get("page_id") or f"{project_id}/page-{page.get('page_number', idx)}"
+                )
+                finished = finish_image(
+                    image_bytes,
+                    seed=page_seed(f"{page_identity}/{preset}"),
+                    strength=strength,
+                )
+                with Image.open(BytesIO(finished)) as source:
+                    display_image = source.convert("RGB")
+                    display_output = BytesIO()
+                    display_image.save(display_output, format="JPEG", quality=92, optimize=True)
+                display_bytes = display_output.getvalue()
+                derivative_hash = hashlib.sha256(display_bytes).hexdigest()
+                derivative_key = f"finishes/{page_identity}/{preset}/{derivative_hash}.jpg"
+                if self.storage_adapter is not None:
+                    self.storage_adapter.put(derivative_key, display_bytes, "image/jpeg")
+                    page["finished_image_url"] = derivative_key
+                if not page.get("original_image_bytes"):
+                    page["original_image_bytes"] = image_bytes
+                page["image_bytes"] = display_bytes
+
         checked = [eligibility(page) for page in pages_data]
         self.warnings = [warning for _, warning in checked if warning]
         catalog_id = self._reserve_id()
@@ -707,6 +744,8 @@ class PdfAssemblyService:
         page_size: str,
         include_ai_disclosure: bool,
         pages: list[PageExportItem],
+        finish_preset: str = "off",
+        finish_preset_explicit: bool = False,
     ) -> tuple[str, bool, int, list[PdfLetteringWarning]]:
         """Assemble pages into PDF blob, upload to storage, and return download URL."""
         if not pages:
@@ -727,6 +766,10 @@ class PdfAssemblyService:
                     original_image_bytes = self.storage_adapter.get(original_image_url)
                 except (KeyError, ValueError, OSError):
                     original_image_bytes = None
+            page_preset = getattr(p.finish_preset, "root", p.finish_preset)
+            page_finish_explicit = finish_preset_explicit or p.finish_preset_explicit
+            if not page_preset or page_preset == "off":
+                page_preset = getattr(finish_preset, "root", finish_preset) or "off"
 
             # Convert p.panels into list of dicts if present
             panels_list: list[dict[str, Any]] = []
@@ -739,10 +782,13 @@ class PdfAssemblyService:
 
             pages_data.append(
                 {
+                    "page_id": p.page_id,
                     "lettering_mode": p.lettering_mode,
                     "lettering": p.lettering.model_dump(mode="json") if p.lettering else None,
                     "lettering_stale": p.lettering_stale,
                     "page_number": p.page_number,
+                    "finish_preset": str(page_preset),
+                    "finish_preset_explicit": page_finish_explicit,
                     "image_url": p.image_url,
                     "image_bytes": img_bytes,
                     "original_image_url": original_image_url,
@@ -753,7 +799,7 @@ class PdfAssemblyService:
                 }
             )
 
-        writer = PdfWriter(page_size=page_size)
+        writer = PdfWriter(page_size=page_size, storage_adapter=self.storage_adapter)
         pdf_content = writer.build_pdf(
             project_id=project_id,
             title=title,

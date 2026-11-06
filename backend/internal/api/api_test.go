@@ -113,6 +113,67 @@ func TestCreateProject(t *testing.T) {
 	}
 }
 
+func TestProjectFinishPresetIsOwnedAndPatchable(t *testing.T) {
+	_, handler, repo := setupTestServer(true, "test-user")
+	project := &domain.Project{ID: "43ceac9c-587c-4d4f-8342-0ac640c74fe3", UserID: "test-user", Title: "Finish", OriginalScript: "A short story", ChapterCount: 1}
+	if err := repo.CreateProject(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := repo.GetProject(context.Background(), project.ID)
+	if err != nil || loaded.FinishPreset != "print-heavy" {
+		t.Fatalf("new project preset = %q, err = %v", loaded.FinishPreset, err)
+	}
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID, nil))
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), `"finish_preset":"print-heavy"`) {
+		t.Fatalf("project setting read did not return preset: %d %s", get.Code, get.Body.String())
+	}
+	patch := httptest.NewRecorder()
+	handler.ServeHTTP(patch, httptest.NewRequest(http.MethodPatch, "/api/v1/projects/"+project.ID, strings.NewReader(`{"finish_preset":"print-plus"}`)))
+	if patch.Code != http.StatusOK {
+		t.Fatalf("preset patch returned %d: %s", patch.Code, patch.Body.String())
+	}
+	loaded, err = repo.GetProject(context.Background(), project.ID)
+	if err != nil || loaded.FinishPreset != "print-plus" || !loaded.FinishPresetExplicit {
+		t.Fatalf("patched preset = %q (explicit %t), err = %v", loaded.FinishPreset, loaded.FinishPresetExplicit, err)
+	}
+	invalid := httptest.NewRecorder()
+	handler.ServeHTTP(invalid, httptest.NewRequest(http.MethodPatch, "/api/v1/projects/"+project.ID, strings.NewReader(`{"finish_preset":"grain"}`)))
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid preset returned %d, want 400", invalid.Code)
+	}
+}
+
+func TestFinishPageImageUsesOwnedApprovedArtAndProjectPreset(t *testing.T) {
+	server, handler, repo := setupTestServer(true, "test-user")
+	project := &domain.Project{ID: "b93d9508-1571-45ea-b8bf-bb87347f3b1f", UserID: "test-user", Title: "Finish", FinishPreset: "print-plus", FinishPresetExplicit: true}
+	chapter := &domain.Chapter{ID: "311227f2-48c4-4091-bad8-d461cc571f6a", ProjectID: project.ID}
+	approved := time.Now().UTC().Add(-time.Minute)
+	page := &domain.Page{ID: "6fdbcb4a-ec3d-49ac-ae76-07ca3730c030", ChapterID: chapter.ID, LineArtImageURL: "pages/raw.png", LineArtApprovedAt: &approved, UpdatedAt: approved.Add(-time.Second)}
+	for _, create := range []func() error{
+		func() error { return repo.CreateProject(context.Background(), project) },
+		func() error { return repo.CreateChapter(context.Background(), chapter) },
+		func() error { return repo.CreatePage(context.Background(), page) },
+	} {
+		if err := create(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	called := false
+	server.AIClient.(*gen.FakeAIServiceClient).FinishPageImageFunc = func(_ context.Context, request gen.FinishPageImageRequest) (*gen.FinishPageImageResponse, error) {
+		called = true
+		if request.PageID != page.ID || request.ImageURL != page.LineArtImageURL || request.FinishPreset != gen.PrintPlus {
+			t.Fatalf("unexpected finish request: %+v", request)
+		}
+		return &gen.FinishPageImageResponse{ImageURL: "finishes/page.jpg"}, nil
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+page.ID+"/finish?variant=ink", nil))
+	if response.Code != http.StatusOK || !called || !strings.Contains(response.Body.String(), `"finished_image_url":"/media/finishes/page.jpg"`) {
+		t.Fatalf("finish endpoint returned %d (%s), called=%t", response.Code, response.Body.String(), called)
+	}
+}
+
 func TestGenerationResponsePreservesStructuredAIError(t *testing.T) {
 	s, handler, repo := setupTestServer(true, "test-user")
 	project := &domain.Project{ID: "f3149d43-28d9-5d7f-a24f-961e9de91774", UserID: "test-user", Title: "Test", OriginalScript: "A short story", ChapterCount: 1}

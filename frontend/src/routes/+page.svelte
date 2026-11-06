@@ -345,8 +345,8 @@
 							<select id="new-proj-style" bind:value={newProjectForm.art_style}>
 							<option value="cyberpunk-noir">Cyberpunk</option>
 							<option value="classic-superhero">Superhero</option>
-							<option value="manga-ink">Shonen ink</option>
-							<option value="indie-graphic-novel">Indie novel</option>
+							<option value="manga-ink">Shonen</option>
+							<option value="indie-graphic-novel">Indie</option>
 							</select>
 						</div>
 

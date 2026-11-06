@@ -95,6 +95,22 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     # Editor-specific text/placement edits retain approval and source pixels.
     assert api_client.post(f"/api/v1/pages/{page_id}/draft/approve").status_code == 200
     assert api_client.post(f"/api/v1/pages/{page_id}/painted-page/approve").status_code == 200
+    finished = api_client.post(f"/api/v1/pages/{page_id}/finish?variant=painted")
+    assert finished.status_code == 200, finished.text
+    finished_url = finished.json()["finished_image_url"]
+    assert finished_url.startswith("http")
+    raw_url = finished.json()["raw_master_image_url"]
+    raw_bytes = httpx.get(ai_service["base_url"] + httpx.URL(raw_url).path).content
+    assert hashlib.sha256(raw_bytes).hexdigest() == source_hash
+    finished_url_again = api_client.post(f"/api/v1/pages/{page_id}/finish?variant=painted")
+    assert finished_url_again.json()["finished_image_url"] == finished_url
+    preset_change = api_client.patch(
+        f"/api/v1/projects/{project_id}", json={"finish_preset": "print"}
+    )
+    assert preset_change.status_code == 200
+    rederived = api_client.post(f"/api/v1/pages/{page_id}/finish?variant=painted")
+    assert rederived.status_code == 200
+    assert rederived.json()["finished_image_url"] != finished_url
     approved = next(
         p
         for p in api_client.get(f"/api/v1/chapters/{chapter['id']}/pages").json()["pages"]
@@ -169,9 +185,13 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     )
 
 
-@pytest.mark.parametrize("go_api_server", [True], indirect=True)
+@pytest.mark.parametrize(
+    ("go_api_server", "overlay", "finish_preset"),
+    [(True, True, "print-heavy"), (False, False, "print"), (False, False, "off")],
+    indirect=["go_api_server"],
+)
 def test_standalone_fake_runner_overlay_flow_exports_pdf(
-    monkeypatch, go_api_server, ai_service, tmp_path
+    monkeypatch, go_api_server, ai_service, tmp_path, overlay, finish_preset
 ):
     from scripts.e2e import comic_e2e as runner
 
@@ -181,9 +201,10 @@ def test_standalone_fake_runner_overlay_flow_exports_pdf(
         runner, "provision_run_user", lambda: "00000000-0000-0000-0000-000000000001"
     )
     guard = runner.CostGuard(float("inf"), False)
-    guard.overlay_lettering = True
+    guard.overlay_lettering = overlay
+    guard.finish_preset = finish_preset
     count, project_id = runner.run_flow(guard, tmp_path)
     assert project_id and count > 0
-    assert len(list(tmp_path.glob("lettering-*.json"))) == count
+    assert len(list(tmp_path.glob("lettering-*.json"))) == (count if overlay else 0)
     assert guard.pdf_page_count == count + 1
     assert (tmp_path / "latest.pdf").read_bytes().startswith(b"%PDF")

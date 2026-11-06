@@ -513,6 +513,13 @@ def run_flow(
             project_response, "project", "project creation response has no project"
         )
         project_id = require(project, "id", "created project has no id")
+        finish_preset = getattr(guard, "finish_preset", "print-heavy")
+        if finish_preset != project.get("finish_preset"):
+            json_request(
+                f"/api/v1/projects/{project_id}",
+                "PATCH",
+                {"finish_preset": finish_preset},
+            )
     guard.project_id = project_id
     print(
         f"PASS project {'opened for resume' if resume_project_id else 'created'}: {project_id}"
@@ -924,6 +931,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--overlay-lettering", action="store_true", help="fake-only text-free art, edited stored lettering and vector PDF smoke")
     parser.add_argument(
+        "--finish-preset",
+        choices=("off", "print", "print-plus", "print-heavy"),
+        default="print-heavy",
+        help="project print finish preset for the fake run",
+    )
+    parser.add_argument(
         "--script-file",
         type=Path,
         help="complete story source; defaults to the short smoke script",
@@ -1228,6 +1241,7 @@ def main(argv: list[str] | None = None) -> int:
     guard.script_file = args.script_file
     guard.project_title = args.title
     guard.overlay_lettering = args.overlay_lettering
+    guard.finish_preset = args.finish_preset
     project_id = None
     page_count = 0
     failure = None
@@ -1324,6 +1338,7 @@ def main(argv: list[str] | None = None) -> int:
         ],
         "pdf_path": str(args.artifact_dir / "latest.pdf") if not failure else None,
         "lettering_mode": "overlay" if args.overlay_lettering else "baked",
+        "finish_preset": args.finish_preset,
         "generated_comic_pages": page_count,
         "generated_panels": guard.panel_count,
         "pdf_pages": guard.pdf_page_count,

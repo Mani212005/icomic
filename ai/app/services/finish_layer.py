@@ -231,7 +231,7 @@ def _registration_and_bleed(
     height, width, _ = image.shape
     # Displacements are specified at the 1280px working width and scale with it.
     scale = width / 1280.0
-    max_shift = min(0.95 * scale, 0.72 * scale * amount)
+    max_shift = min(0.60 * scale, 0.46 * scale * amount)
     angle = rng.uniform(0.0, 2.0 * np.pi)
     shifts = [
         (0.0, 0.0),
@@ -253,6 +253,21 @@ def _registration_and_bleed(
             )
         channels.append(np.asarray(channel.crop((2, 2, width + 2, height + 2)), dtype=np.float32))
     shifted = np.stack(channels, axis=2)
+    # Red/yellow skin receives progressively less channel displacement. A soft
+    # blur around the chroma mask avoids a visible boundary at cheeks and hands.
+    red, green, blue = image[:, :, 0], image[:, :, 1], image[:, :, 2]
+    luma_source = image @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    skin = (
+        (red > green + 10.0)
+        & (red > blue + 15.0)
+        & (green >= blue * 0.88)
+        & (luma_source > 62.0)
+        & (luma_source < 246.0)
+    )
+    skin_mask = Image.fromarray(np.uint8(skin) * 255, "L")
+    skin_mask = skin_mask.filter(ImageFilter.GaussianBlur(max(1.0, width / 420.0)))
+    protected = np.asarray(skin_mask, dtype=np.float32)[..., None] / 255.0
+    shifted = shifted * (1.0 - protected) + image * protected
     # Very restrained ink spread along dark contours, reduced on broad flat regions.
     gray = Image.fromarray(np.uint8(np.clip(shifted.mean(axis=2), 0, 255)), "L")
     gray_values = np.asarray(gray, dtype=np.float32)

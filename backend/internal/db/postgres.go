@@ -158,20 +158,23 @@ func (p *PostgresRepository) CreateProject(ctx context.Context, proj *domain.Pro
 	if proj.LetteringMode == "" {
 		proj.LetteringMode = "baked"
 	}
+	if proj.FinishPreset == "" {
+		proj.FinishPreset = "print-heavy"
+	}
 
 	query := `
-		INSERT INTO projects (id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO projects (id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode, finish_preset, finish_preset_explicit)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
-	_, err := p.db.ExecContext(ctx, query, proj.ID, proj.UserID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.CreatedAt, proj.UpdatedAt, proj.LetteringMode)
+	_, err := p.db.ExecContext(ctx, query, proj.ID, proj.UserID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.CreatedAt, proj.UpdatedAt, proj.LetteringMode, proj.FinishPreset, proj.FinishPresetExplicit)
 	return err
 }
 
 func (p *PostgresRepository) GetProject(ctx context.Context, id string) (*domain.Project, error) {
-	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode FROM projects WHERE id = $1`
+	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode, finish_preset, finish_preset_explicit FROM projects WHERE id = $1`
 	var proj domain.Project
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt, &proj.LetteringMode,
+		&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt, &proj.LetteringMode, &proj.FinishPreset, &proj.FinishPresetExplicit,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -183,7 +186,7 @@ func (p *PostgresRepository) GetProject(ctx context.Context, id string) (*domain
 }
 
 func (p *PostgresRepository) ListProjects(ctx context.Context, userID string) ([]*domain.Project, error) {
-	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode FROM projects WHERE user_id = $1 ORDER BY created_at DESC`
+	query := `SELECT id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode, finish_preset, finish_preset_explicit FROM projects WHERE user_id = $1 ORDER BY created_at DESC`
 	rows, err := p.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
@@ -193,7 +196,7 @@ func (p *PostgresRepository) ListProjects(ctx context.Context, userID string) ([
 	var res []*domain.Project
 	for rows.Next() {
 		var proj domain.Project
-		if err := rows.Scan(&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt, &proj.LetteringMode); err != nil {
+		if err := rows.Scan(&proj.ID, &proj.UserID, &proj.Title, &proj.OriginalScript, &proj.ChapterCount, &proj.ArtStyle, &proj.Status, &proj.CreatedAt, &proj.UpdatedAt, &proj.LetteringMode, &proj.FinishPreset, &proj.FinishPresetExplicit); err != nil {
 			return nil, err
 		}
 		res = append(res, &proj)
@@ -204,10 +207,10 @@ func (p *PostgresRepository) ListProjects(ctx context.Context, userID string) ([
 func (p *PostgresRepository) UpdateProject(ctx context.Context, proj *domain.Project) error {
 	proj.UpdatedAt = time.Now()
 	query := `
-		UPDATE projects SET title = $2, original_script = $3, chapter_count = $4, art_style = $5, status = $6, updated_at = $7
+		UPDATE projects SET title = $2, original_script = $3, chapter_count = $4, art_style = $5, status = $6, updated_at = $7, finish_preset = $8, finish_preset_explicit = $9
 		WHERE id = $1
 	`
-	res, err := p.db.ExecContext(ctx, query, proj.ID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.UpdatedAt)
+	res, err := p.db.ExecContext(ctx, query, proj.ID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.UpdatedAt, proj.FinishPreset, proj.FinishPresetExplicit)
 	if err != nil {
 		return err
 	}
