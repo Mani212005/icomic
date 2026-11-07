@@ -52,7 +52,7 @@ test('the page background is a small static root-level paint with no fixed attac
   assert.match(root_rule, /background-image:\s*var\(--page-gutters\),\s*var\(--page-grain\)/);
   assert.doesNotMatch(css, /background-attachment:\s*fixed/);
   for (const token of ['page-gutters', 'page-grain']) {
-    assert.match(css, new RegExp(`--${token}:\\s*url\\("data:image/svg\\+xml;utf8,`));
+    assert.match(css, new RegExp(`--${token}:\\s*url\\("data:image/svg\\+xml;base64,`));
     const payload = css.match(new RegExp(`--${token}:\\s*url\\("([^"]+)"\\)`))?.[1] ?? '';
     assert.ok(payload.length > 0 && payload.length < 2000, `${token} stays a tiny inline tile`);
   }
