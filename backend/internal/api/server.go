@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"icomic/backend/gen"
+	"icomic/backend/internal/accounts"
 	"icomic/backend/internal/auth"
 	"icomic/backend/internal/credits"
 	"icomic/backend/internal/db"
@@ -21,6 +22,7 @@ type Server struct {
 	JobService              jobs.JobService
 	AIClient                gen.AIService
 	Authenticator           auth.Authenticator
+	Accounts                *accounts.Service
 	ImageHosting            auth.ImageHostingSeam
 	KillSwitchEnabled       bool
 	KillSwitch              domain.KillSwitchProvider
@@ -63,6 +65,9 @@ func NewServer(
 	if memoryJobs, ok := jobService.(*jobs.InMemoryJobService); ok {
 		memoryJobs.SetCreditService(creditService)
 	}
+	accountService := accounts.NewService(repo, nil)
+	// Cookie sessions are tried first, then the configured authenticator (dev identity or custom).
+	authenticator = auth.NewCompositeAuthenticator(auth.NewSessionAuthenticator(accountService), authenticator)
 	return &Server{
 		Repo:                    repo,
 		LetteringOverlayEnabled: os.Getenv("LETTERING_OVERLAY_ENABLED") == "true",
@@ -70,6 +75,7 @@ func NewServer(
 		JobService:              jobService,
 		AIClient:                aiClient,
 		Authenticator:           authenticator,
+		Accounts:                accountService,
 		ImageHosting:            imageHosting,
 		KillSwitchEnabled:       false,
 		KillSwitch:              domain.NewInMemoryKillSwitchProvider(false, 0),

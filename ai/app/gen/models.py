@@ -6,7 +6,68 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, SecretStr
+
+
+class AccountKind(RootModel[Literal["guest", "registered"]]):
+    root: Literal["guest", "registered"] = Field(
+        ..., description="Any identity without a registered account is a guest."
+    )
+
+
+class Account(BaseModel):
+    kind: AccountKind
+    email: str | None = Field(..., description="Null for a guest.")
+    project_count: int = Field(..., ge=0)
+    project_limit: int | None = Field(
+        ..., description="Projects this account may own. Null when exempt (the dev identity).", ge=0
+    )
+    csrf_token: str | None = Field(
+        None,
+        description="Per-session token for X-CSRF-Token. Absent for header-authenticated callers.",
+    )
+
+
+class AccountResponse(BaseModel):
+    account: Account | None = Field(...)
+    claimed_projects: int | None = Field(
+        None,
+        description="Present on sign-in when a guest's projects were attached to the account.",
+        ge=1,
+    )
+
+
+class AuthCredentials(BaseModel):
+    email: str = Field(..., max_length=254)
+    password: SecretStr = Field(..., max_length=256, min_length=10)
+
+
+class AuthErrorResponse(BaseModel):
+    code: Literal[
+        "invalid_request",
+        "invalid_email",
+        "weak_password",
+        "email_taken",
+        "invalid_credentials",
+        "login_rate_limited",
+        "origin_not_allowed",
+        "csrf_invalid",
+        "INTERNAL_ERROR",
+    ]
+    message: str
+    retryable: bool = False
+    retry_after_seconds: float | None = Field(None, ge=0.0)
+
+
+class Details(BaseModel):
+    account_kind: AccountKind | None = None
+    limit: int | None = Field(None, ge=0)
+
+
+class ProjectLimitError(BaseModel):
+    code: Literal["project_limit_reached", "csrf_invalid"]
+    message: str
+    details: Details
 
 
 class ImageBudgetError(BaseModel):

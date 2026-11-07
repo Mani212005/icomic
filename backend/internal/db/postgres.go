@@ -67,6 +67,7 @@ func (p *PostgresRepository) CreateUser(ctx context.Context, u *domain.User) err
 	if u.PlanID == "" {
 		u.PlanID = "free"
 	}
+	u.AccountKind = domain.ParseAccountKind(string(u.AccountKind))
 
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -75,10 +76,10 @@ func (p *PostgresRepository) CreateUser(ctx context.Context, u *domain.User) err
 	defer func() { _ = tx.Rollback() }()
 
 	query := `
-		INSERT INTO users (id, email, password_hash, plan_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO users (id, email, password_hash, account_kind, plan_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
-	if _, err := tx.ExecContext(ctx, query, u.ID, u.Email, u.PasswordHash, u.PlanID, u.CreatedAt, u.UpdatedAt); err != nil {
+	if _, err := tx.ExecContext(ctx, query, u.ID, nullableString(u.Email), nullableString(u.PasswordHash), string(u.AccountKind), u.PlanID, u.CreatedAt, u.UpdatedAt); err != nil {
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
 			return ErrDuplicateKey
 		}
@@ -98,34 +99,46 @@ func (p *PostgresRepository) CreateUser(ctx context.Context, u *domain.User) err
 	return tx.Commit()
 }
 
-func (p *PostgresRepository) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
-	query := `SELECT id, email, password_hash, plan_id, created_at, updated_at FROM users WHERE id = $1`
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+const userColumns = `id, email, password_hash, account_kind, plan_id, created_at, updated_at`
+
+func scanUser(row interface{ Scan(...any) error }) (*domain.User, error) {
 	var u domain.User
-	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&u.ID, &u.Email, &u.PasswordHash, &u.PlanID, &u.CreatedAt, &u.UpdatedAt,
-	)
+	var email, hash sql.NullString
+	var kind string
+	if err := row.Scan(&u.ID, &email, &hash, &kind, &u.PlanID, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		return nil, err
+	}
+	u.Email, u.PasswordHash, u.AccountKind = email.String, hash.String, domain.ParseAccountKind(kind)
+	return &u, nil
+}
+
+func (p *PostgresRepository) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
+	u, err := scanUser(p.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get user by id: %w", err)
 	}
-	return &u, nil
+	return u, nil
 }
 
 func (p *PostgresRepository) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
-	query := `SELECT id, email, password_hash, plan_id, created_at, updated_at FROM users WHERE email = $1`
-	var u domain.User
-	err := p.db.QueryRowContext(ctx, query, email).Scan(
-		&u.ID, &u.Email, &u.PasswordHash, &u.PlanID, &u.CreatedAt, &u.UpdatedAt,
-	)
+	u, err := scanUser(p.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE LOWER(email) = LOWER($1)`, email))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get user by email: %w", err)
 	}
-	return &u, nil
+	return u, nil
 }
 
 func (p *PostgresRepository) GetPlan(ctx context.Context, id string) (*domain.Plan, error) {
@@ -147,6 +160,14 @@ func (p *PostgresRepository) GetPlan(ctx context.Context, id string) (*domain.Pl
 
 // Projects
 func (p *PostgresRepository) CreateProject(ctx context.Context, proj *domain.Project) error {
+	return insertProject(ctx, p.db, proj)
+}
+
+type sqlExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func insertProject(ctx context.Context, db sqlExecer, proj *domain.Project) error {
 	if proj.ID == "" {
 		proj.ID = uuid.NewString()
 	}
@@ -166,7 +187,7 @@ func (p *PostgresRepository) CreateProject(ctx context.Context, proj *domain.Pro
 		INSERT INTO projects (id, user_id, title, original_script, chapter_count, art_style, status, created_at, updated_at, lettering_mode, finish_preset, finish_preset_explicit)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
-	_, err := p.db.ExecContext(ctx, query, proj.ID, proj.UserID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.CreatedAt, proj.UpdatedAt, proj.LetteringMode, proj.FinishPreset, proj.FinishPresetExplicit)
+	_, err := db.ExecContext(ctx, query, proj.ID, proj.UserID, proj.Title, proj.OriginalScript, proj.ChapterCount, proj.ArtStyle, proj.Status, proj.CreatedAt, proj.UpdatedAt, proj.LetteringMode, proj.FinishPreset, proj.FinishPresetExplicit)
 	return err
 }
 
