@@ -35,23 +35,23 @@ pages use two columns in array order, with the last odd panel spanning both.
 Page margins are 3% horizontal/2% vertical, gutters 1.5% horizontal/1% vertical.
 
 Each nonempty panel initially reserves an upper band at `(0.04, 0.04)` with width
-`0.92`. Its height is `min(0.55, 0.34 + max(0, characters-50)*0.001 +
-max(0, utterances-1)*0.06)`. Counts include narration and speech. The art prompt
+`0.92`. Its height is `min(0.80, 0.55 + max(0, characters-50)*0.001 +
+max(0, utterances-1)*0.10)`. Counts include narration and speech. The art prompt
 requests a large low-detail empty sky, sea or wall pocket at the outer top of each
-dialogue panel, away from faces, mouths and the main character silhouette, with a
-clear path for each speech tail. After painting, the layout service scores local edge
+dialogue panel, away from faces, mouths, hands, birds, props and character silhouettes,
+with a clear path for each speech tail. After painting, the layout service scores local edge
 density and variance, detects face-like warm-color clusters, and searches within
 reserved zones for a calm position. Subject detail is a no-go area even when it is
 not recognized as a face. In overlay mode, panel text generation limits dialogue
 and captions to 12 words each, allows at most two short speech turns and one caption,
 and omits picture-description narration. The parser rejects text beyond that limit;
-layout overflow remains a review flag and lettering is never shrunk below 14 pt.
+layout overflow remains a review flag and lettering is never shrunk below 35 pt.
 If no calm face-safe position exists, the layout records `no_calm_zone`; the exporter
 withholds that utterance and any other unsafe bubbles, draws independently safe
 bubbles, and adds a visible review warning. Other layout issues withhold the layer.
 This deterministic image analysis complements the prompt rule and does not call a provider.
 Unrenderable/crowded text keeps review issues; the system never shrinks below
-14 pt to hide a mismatch. Editorial zone edits can instead reserve an empty side.
+35 pt to hide a mismatch. Editorial zone edits can instead reserve an empty side.
 
 Source narration becomes one narration utterance first. Nonempty explicit dialogue
 lines follow in source order as speech. A leading `Speaker:` is stored separately
@@ -192,10 +192,13 @@ edges. Empty line bounds have a tiny positive extent for serializability.
 
 ## Layout and review flags
 
-The default font size is 16 pt at A4 height. `LayoutConfig.minimum_font_size` is
-`14 / 841.89` of page height, equivalent to 14 pt on A4 (297 mm). Configurations
-cannot lower that floor. Size scaling below it is clamped to the minimum and
-flagged `below_minimum`. Layout never hides overflow by shrinking lettering.
+The default font size is 35 pt at A4 height. `LayoutConfig.minimum_font_size` is
+`35 / 841.89` of page height, equivalent to 35 pt on A4 (297 mm), targeting at
+least 55px glyph ink height on 1280x1920 portrait art. Configurations cannot lower
+that floor. Size scaling below it is clamped to the minimum and flagged
+`below_minimum`. Layout never hides overflow by shrinking lettering. Captions may
+use up to 94% of panel width within their reserved zone; speech bubbles may use up
+to 45% of panel width.
 Other paper heights scale proportionately; physical print-size requirements for
 other formats must be selected explicitly by their future integration.
 
@@ -203,9 +206,9 @@ Greedy wrapping uses actual shaped advances and preserves hard line breaks.
 Whitespace within a paragraph becomes single spaces; source text is unchanged.
 Long words and shaping clusters are never split. A target physical bubble aspect
 sets the starting wrap width. Bubbles fit the resulting text and padding; speech/thought
-ellipses expand by sqrt(2) so text corners fit. Captions/narration wrap at at most
-60% of panel width, then trim to their shaped text width plus padding. They anchor
-to the zone top (default) or bottom (`caption_edge`).
+ellipses expand by sqrt(2) so text corners fit. Captions/narration may wrap across
+up to 94% of panel width within the reserved zone, then trim to their shaped text
+width plus padding. They anchor to the zone top (default) or bottom (`caption_edge`).
 
 Manual rect takes precedence over manual center. Both remain exact, including
 invalid placements. Scale affects lettering size, not an explicit rect. Overrides

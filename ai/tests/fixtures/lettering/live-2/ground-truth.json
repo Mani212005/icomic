@@ -1,0 +1,84 @@
+{
+  "source": "raw-art-01.png, hand-marked bounds normalized to 1280x1920 source pixels",
+  "source_size": [
+    1280,
+    1920
+  ],
+  "scale": "Each rectangle x,y,width,height is normalized to full page width and height.",
+  "faces": [
+    {
+      "panel": 1,
+      "rect": [
+        0.224,
+        0.153,
+        0.175,
+        0.176
+      ]
+    },
+    {
+      "panel": 2,
+      "rect": [
+        0.608,
+        0.178,
+        0.089,
+        0.103
+      ]
+    },
+    {
+      "panel": 3,
+      "rect": [
+        0.045,
+        0.574,
+        0.23,
+        0.157
+      ]
+    },
+    {
+      "panel": 4,
+      "rect": [
+        0.548,
+        0.658,
+        0.161,
+        0.133
+      ]
+    }
+  ],
+  "birds": [
+    {
+      "panel": 1,
+      "rect": [
+        0.145,
+        0.35,
+        0.12,
+        0.086
+      ]
+    },
+    {
+      "panel": 2,
+      "rect": [
+        0.761,
+        0.126,
+        0.119,
+        0.077
+      ]
+    },
+    {
+      "panel": 3,
+      "rect": [
+        0.193,
+        0.692,
+        0.156,
+        0.104
+      ]
+    },
+    {
+      "panel": 4,
+      "rect": [
+        0.75,
+        0.568,
+        0.147,
+        0.091
+      ]
+    }
+  ]
+}

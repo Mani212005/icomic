@@ -25,9 +25,10 @@ from .typography import Run, select_font, shape, wrap
 
 @dataclass(frozen=True)
 class LayoutConfig:
-    # 14pt / 841.89pt A4 height. Never shrink below a print-readable minimum.
-    minimum_font_size: float = 14 / 841.89
-    font_size: float = 16 / 841.89
+    # 35pt / 841.89pt A4 height keeps glyphs near 55px on 1280x1920 art.
+    # Never shrink below the print-readable minimum.
+    minimum_font_size: float = 35 / 841.89
+    font_size: float = 35 / 841.89
     padding: float = 0.006
     gap: float = 0.012
 
@@ -35,7 +36,7 @@ class LayoutConfig:
         values = (self.minimum_font_size, self.font_size, self.padding, self.gap)
         if (
             not all(math.isfinite(v) and v > 0 for v in values)
-            or self.minimum_font_size < 14 / 841.89
+            or self.minimum_font_size < 35 / 841.89
             or self.font_size < self.minimum_font_size
         ):
             raise ValueError("Invalid print size, padding or gap")
@@ -104,6 +105,7 @@ def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfi
         flags.append("below_minimum")
     ellipse = u.kind in {"speech", "thought"}
     factor = math.sqrt(2) if ellipse else 1
+    height_factor = 1.5 if ellipse else 1
     widest = max((z.width for z in zones), default=panel.width)
     width = min(
         widest,
@@ -111,7 +113,9 @@ def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfi
         + cfg.padding * 2,
     )
     if u.kind in {"narration", "caption"}:
-        width = min(widest, panel.width * 0.6)
+        width = min(widest, panel.width * 0.94)
+    elif u.kind == "speech":
+        width = min(widest, panel.width * 0.45)
     if u.placement and u.placement.rect:
         width = u.placement.rect.width * panel.width
     available = max(size, width / factor - 2 * cfg.padding)
@@ -119,7 +123,7 @@ def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfi
     step = max(size * 1.35, max(r.ink.height for _, r in runs) + size * 0.15)
     top = min(r.ink.y + i * step for i, (_, r) in enumerate(runs))
     bottom = max(r.ink.bottom + i * step for i, (_, r) in enumerate(runs))
-    height = (bottom - top + 2 * cfg.padding) * factor
+    height = (bottom - top + 2 * cfg.padding) * height_factor
     if u.kind in {"narration", "caption"} and not (u.placement and u.placement.rect):
         width = min(width, max(r.ink.width for _, r in runs) + 2 * cfg.padding)
     box = Box(0, 0, width, height)
@@ -308,11 +312,35 @@ def _layout_panel(
             continue
         edge = u.caption_edge if u.kind in {"caption", "narration"} else None
         preferred = place(d.box, zones, occupied, cfg.gap, edge, floor)
+        if preferred is not None and u.kind in {"speech", "thought"} and panel_faces:
+            speaker_anchor = (
+                u.placement.tail_anchor
+                if u.placement and u.placement.tail_anchor
+                else u.speaker_anchor
+            )
+            if speaker_anchor:
+                speaker_x = (
+                    p.x + speaker_anchor[0] * p.width
+                    if isinstance(speaker_anchor, tuple)
+                    else _local_point(speaker_anchor, p)[0]
+                )
+            else:
+                speaker_face = min(
+                    panel_faces,
+                    key=lambda face: (
+                        (face.center[0] * aspect - preferred.center[0]) ** 2
+                        + (face.center[1] - preferred.center[1]) ** 2
+                    ),
+                )
+                speaker_x = speaker_face.center[0] * aspect
+            zone = min(zones, key=lambda candidate: abs(candidate.y - preferred.y))
+            on_left = speaker_x <= p.center[0]
+            side_x = zone.x if on_left else zone.right - d.box.width
+            preferred = Box(side_x, preferred.y, d.box.width, d.box.height)
         if art_safety and preferred is not None:
-            art_zones = [*zones, p]
             candidate, no_calm_zone = place_in_calm_art(
                 d.box,
-                art_zones,
+                [*zones, p],
                 occupied,
                 cfg.gap,
                 edge,

@@ -108,9 +108,15 @@ def test_minimum_print_size_and_large_text_is_flagged_instead_of_shrunk():
     doc = document("A very long sentence " * 400, placement={"size_scale": 0.01})
     result = layout_page(doc)
     assert {"overflow", "below_minimum"} <= flags(result)
-    assert all(line.font_size >= 14 / 841.89 for b in result.bubbles for line in b.lines)
+    assert all(line.font_size >= 35 / 841.89 for b in result.bubbles for line in b.lines)
     with pytest.raises(ValueError):
         LayoutConfig(minimum_font_size=0.001)
+
+
+def test_default_a4_glyph_height_targets_55_pixels_at_1280x1920():
+    result = layout_page(document("A readable line."))
+    assert result.bubbles[0].lines[0].font_size == pytest.approx(35 / 841.89)
+    assert result.bubbles[0].lines[0].bounds.height * 1920 >= 55
 
 
 def test_missing_zones_and_baked_in_art_never_get_a_lettering_layer():
@@ -233,7 +239,7 @@ def test_seeded_properties_bounds_collision_reading_order_and_determinism():
         p.rect.x, p.rect.y = rng.uniform(0.01, 0.1), rng.uniform(0.01, 0.1)
         p.rect.width, p.rect.height = rng.uniform(0.6, 0.85), rng.uniform(0.6, 0.85)
         p.reserved_zones[0].height = 0.85
-        count = rng.randint(1, 5)
+        count = rng.randint(1, 3)
         p.utterances = [
             utterance_copy(doc, n, rng.choice(["Go!", "We can do this.", "Café!"]))
             for n in range(1, count + 1)
@@ -344,9 +350,9 @@ def test_thought_ellipse_contains_text_and_tail_circles_avoid_text():
 
 def test_multiple_reserved_zones_and_deterministic_push_down():
     doc = document("Follow me.")
-    doc.panels[0].reserved_zones[0].width = 0.16
-    doc.panels[0].reserved_zones[0].height = 0.075
-    second_zone = doc.panels[0].reserved_zones[0].model_copy(update={"x": 0.55, "height": 0.5})
+    doc.panels[0].reserved_zones[0].width = 0.45
+    doc.panels[0].reserved_zones[0].height = 0.25
+    second_zone = doc.panels[0].reserved_zones[0].model_copy(update={"x": 0.55, "height": 0.7})
     doc.panels[0].reserved_zones.append(second_zone)
     doc.panels[0].utterances.extend([utterance_copy(doc, 2), utterance_copy(doc, 3)])
     doc.panels[0].utterances[-1].speaker_anchor = LetteringUnitPoint(x=0.95, y=0.8)
@@ -366,7 +372,7 @@ def test_comic_proportions_centered_speech_short_curved_tail_and_compact_caption
     assert bubble.shape.kind == "ellipse"
     assert bubble.shape.bounds.x + bubble.shape.bounds.width / 2 == pytest.approx(0.5)
     assert result.stroke_width * 1920 == pytest.approx(2.496)
-    assert all(line.font_size * 841.89 >= 14 for line in bubble.lines)
+    assert all(line.font_size * 841.89 >= 35 for line in bubble.lines)
     # Sampled sides curve toward a short point, instead of the old triangle needle.
     assert len(bubble.tail) == 9
     base = bubble.tail[0]

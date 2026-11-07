@@ -129,14 +129,17 @@ def analyze_art(image_bytes: bytes) -> ArtSafetyMap:
     # Exclude connected warm metallic highlights such as the brass bird and
     # bright props. A dilated mask catches their immediate silhouettes.
     warm_gold = (
-        (rgb[:, :, 0] >= 135)
-        & (rgb[:, :, 1] >= 85)
-        & (rgb[:, :, 0] > rgb[:, :, 1] * 1.08)
-        & (rgb[:, :, 1] > rgb[:, :, 2] * 1.22)
+        (rgb[:, :, 0] >= 120)
+        & (rgb[:, :, 1] >= 90)
+        & (rgb[:, :, 0] >= rgb[:, :, 1] * 0.90)
+        & (rgb[:, :, 1] > rgb[:, :, 2] * 1.25)
         & (gray >= 0.48)
-        & (color_range >= 0.18)
+        & (color_range >= 0.20)
     )
-    gold_image = Image.fromarray(warm_gold.astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(9))
+    # Bright gold art has soft, chromatic glow around the metallic silhouette.
+    # Keep that halo connected before filling component bounds, then add a 12px
+    # margin at the runner's 1280px source width (scaled for thumbnail analysis).
+    gold_image = Image.fromarray(warm_gold.astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(7))
     gold_mask = np.asarray(gold_image) > 0
     gold_subject = np.zeros((height, width), dtype=np.bool_)
     for x0, y0, x1, y1, area in _components(gold_mask):
@@ -146,7 +149,11 @@ def analyze_art(image_bytes: bytes) -> ArtSafetyMap:
             and box_w <= width * 0.35
             and box_h <= height * 0.35
         ):
-            gold_subject[y0:y1, x0:x1] = True
+            margin = max(1, round(12 * width / 1280))
+            gold_subject[
+                max(0, y0 - margin) : min(height, y1 + margin),
+                max(0, x0 - margin) : min(width, x1 + margin),
+            ] = True
 
     # Large coherent edge components approximate figure silhouettes without
     # classifying dark pixels as people. Bounding-box fill protects the interior.

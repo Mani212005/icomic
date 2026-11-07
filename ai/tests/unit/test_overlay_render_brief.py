@@ -37,6 +37,7 @@ def test_overlay_brief_keeps_text_out_of_model_and_has_geometry():
     assert "reserved_lettering_zones" in prompt and "page_geometry" in prompt
     assert "TEXT-FREE" in prompt and "no signs with readable text" in prompt
     assert "LARGE LOW-DETAIL EMPTY" in prompt
+    assert "hands, birds and props" in prompt
     assert "letters, words, numbers, signs, labels, symbols, writing" in prompt
     assert "glyph-like marks on any prop or scroll" in prompt
     assert "clear visual path from each pocket to its speaking character" in prompt

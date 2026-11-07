@@ -138,7 +138,7 @@ def build_page_render_request(
             "TEXT-FREE art. No speech bubbles, no captions, no lettering, no numbers, no signs with readable text."
         )
         brief["lettering_policy"] = (
-            "Follow the exact panel rectangles. Keep panel-local reserved lettering zones as LARGE LOW-DETAIL EMPTY POCKETS of sky, sea or wall at the outer top of every dialogue panel. Keep faces, mouths, heads, hands and the main character silhouette away from each pocket. Leave a clear visual path from each pocket to its speaking character for the bubble tail. We add bubbles later."
+            "Follow the exact panel rectangles. Keep panel-local reserved lettering zones as LARGE LOW-DETAIL EMPTY POCKETS of sky, sea or wall at the outer top of every dialogue panel. Keep faces, mouths, heads, hands, birds, props and character silhouettes away from each pocket. Leave a clear visual path from each pocket to its speaking character for the bubble tail. We add bubbles later."
         )
         brief["annotation_policy"] = brief["dialogue_policy"]
     image_instructions = (
@@ -154,7 +154,7 @@ def build_page_render_request(
         "Character references:\n"
         + json.dumps(brief, ensure_ascii=False, sort_keys=True, indent=2)
         + (
-            "\nTEXT-FREE art only. Leave a LARGE LOW-DETAIL EMPTY sky, sea or wall pocket at the outer top of each dialogue panel, away from faces and mouths, with a clear path to the speaker for the tail. Do not draw lettering, letters, words, numbers, signs, labels, symbols, writing or glyph-like marks on props or scrolls."
+            "\nTEXT-FREE art only. Leave a LARGE LOW-DETAIL EMPTY sky, sea or wall pocket at the outer top of each dialogue panel, away from faces, mouths, hands, birds and props, with a clear path to the speaker for the tail. Do not draw lettering, letters, words, numbers, signs, labels, symbols, writing or glyph-like marks on props or scrolls."
             if overlay
             else "\nUse only spoken words inside bubbles. Never draw speaker names, labels, or prefixes such as 'Nia:' or 'Sailor:' inside a bubble."
         )

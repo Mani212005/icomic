@@ -130,13 +130,13 @@ func (s *Server) sourceLetteringDocument(ctx context.Context, pg *domain.Page, r
 				UtteranceID: fmt.Sprintf("%s-dialogue-%d", id, lineIndex), Order: len(panel.Utterances), Kind: "speech", Text: text, Speaker: speaker})
 		}
 		if len(panel.Utterances) > 0 {
-			// Reserve 34-55% by demand, maintaining the 14pt print floor and
-			// leaving the lower panel for faces. Crowding remains a review issue.
+			// Reserve a large upper pocket for 35pt overlay lettering. Image analysis
+			// still withholds bubbles when the generated art does not leave it calm.
 			characters := 0
 			for _, u := range panel.Utterances {
 				characters += len([]rune(u.Text))
 			}
-			band := min(0.55, 0.34+float64(max(0, characters-50))*0.001+float64(max(0, len(panel.Utterances)-1))*0.06)
+			band := letteringZoneHeight(characters, len(panel.Utterances))
 			panel.ReservedZones = []gen.LetteringUnitRect{{X: 0.04, Y: 0.04, Width: 0.92, Height: band}}
 		}
 		if old != nil {
@@ -147,6 +147,10 @@ func (s *Server) sourceLetteringDocument(ctx context.Context, pg *domain.Page, r
 		doc.Panels = append(doc.Panels, panel)
 	}
 	return doc, nil
+}
+
+func letteringZoneHeight(characters, utterances int) float64 {
+	return min(0.8, 0.55+float64(max(0, characters-50))*0.001+float64(max(0, utterances-1))*0.10)
 }
 
 func (s *Server) computeLettering(ctx context.Context, pg *domain.Page, doc gen.LetteringDocument, overrides map[string]gen.LetteringOverride, zoneOverrides map[string][]gen.LetteringUnitRect) error {
