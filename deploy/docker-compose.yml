@@ -58,6 +58,7 @@ services:
       ADAPTER_STORAGE: "${ADAPTER_STORAGE:-fake}"
       ADAPTER_QUEUE: "${ADAPTER_QUEUE:-fake}"
       ADAPTER_CLOCK: "${ADAPTER_CLOCK:-fake}"
+      LETTERING_OVERLAY_ENABLED: "${LETTERING_OVERLAY_ENABLED:-false}"
       # Model IDs are shared with the backend quote configuration.
       META_IMAGE_MODEL: "${META_IMAGE_MODEL:-muse-image-1.0}"
       META_VISION_MODEL: "${META_VISION_MODEL:-muse-spark-1.3}"

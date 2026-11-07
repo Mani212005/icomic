@@ -49,6 +49,29 @@ def eligibility(page):
         )
         if not flags:
             return state.layout, None
+        omitted = {i.utterance_id for i in state.layout.issues} - {
+            b.utterance_id for b in state.layout.bubbles
+        }
+        if (
+            flags == ["no_calm_zone"]
+            and omitted
+            and any(not bubble.flags for bubble in state.layout.bubbles)
+        ):
+            # Export independently placed bubbles while retaining a visible review
+            # warning for lines the art could not safely accommodate.
+            safe_layout = state.layout.model_copy(
+                update={
+                    "issues": [],
+                    "bubbles": [bubble for bubble in state.layout.bubbles if not bubble.flags],
+                }
+            )
+            code, message = (
+                "lettering_review_required",
+                "Some lettering was withheld because no calm zone was found.",
+            )
+            return safe_layout, PdfLetteringWarning(
+                page_number=page["page_number"], code=code, message=message, flags=flags
+            )
         code, message = (
             "lettering_review_required",
             "Lettering needs review: " + ", ".join(flags) + ". Fix before publishing.",

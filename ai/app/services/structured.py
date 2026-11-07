@@ -8,12 +8,31 @@ from ..adapters.language.port import LanguagePort, Message
 from ..costs import GENERATION_POLICIES, STORY_INPUT_TOKEN_LIMIT
 from ..provider_output import ProviderOutputError, reject_schema_echo
 
+OVERLAY_PANEL_TEXT_POLICY = (
+    "For every panel, keep dialogue and narration to at most 12 words each. "
+    "Use at most two short speech turns and one concise caption; do not narrate visible action "
+    "or describe the picture. Preserve only essential story information."
+)
 
-def complete_json(adapter: LanguagePort, model: str, operation: str, payload: dict, schema: dict):
+
+def complete_json(
+    adapter: LanguagePort,
+    model: str,
+    operation: str,
+    payload: dict,
+    schema: dict,
+    *,
+    overlay_lettering: bool = False,
+):
+    instruction = (
+        OVERLAY_PANEL_TEXT_POLICY
+        if operation == "panels" and overlay_lettering
+        else "Write concise fields (at most 40 words each)."
+    )
     messages = [
         Message(
             role="system",
-            content=f"Return only JSON data for {operation}, not the schema itself. Write concise fields (at most 40 words each), cover the entire source in order, and return exactly the requested panel count. Follow this schema exactly: {json.dumps(schema)}",
+            content=f"Return only JSON data for {operation}, not the schema itself. {instruction} Cover the entire source in order and return exactly the requested panel count. Follow this schema exactly: {json.dumps(schema)}",
         ),
         Message(role="user", content=json.dumps({"operation": operation, **payload})),
     ]
