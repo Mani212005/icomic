@@ -569,3 +569,18 @@ func TestRealDBSignUpSignInFlowOnPostgres(t *testing.T) {
 }
 
 var _ = sql.ErrNoRows
+
+func TestRealDBSeededDevIdentityIsRegistered(t *testing.T) {
+	pool, repo, ctx := realDatabase(t)
+	seeds, err := os.ReadFile(filepath.Join(migrationsDir, "..", "seeds.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.ExecContext(ctx, string(seeds)); err != nil {
+		t.Fatalf("apply seeds after migrations: %v", err)
+	}
+	dev, err := repo.GetUserByID(ctx, devUserID)
+	if err != nil || dev.AccountKind != domain.AccountRegistered {
+		t.Fatalf("seeded dev user: %+v err=%v", dev, err)
+	}
+}

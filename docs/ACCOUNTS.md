@@ -33,7 +33,7 @@ A registered user must have an email and a password hash (a database constraint)
 UPDATE account_policy SET guest_max_projects = 1, registered_max_projects = 100;
 ```
 
-Migration `000011_accounts` makes every existing user a guest except the seeded dev user (`00000000-0000-0000-0000-000000000001`), which becomes registered.
+Migration `000011_accounts` makes every existing user a guest except the seeded dev user (`00000000-0000-0000-0000-000000000001`), which becomes registered. `deploy/seeds.sql` creates the dev user as registered too, for fresh databases where seeds run after the migrations.
 
 ## Endpoints
 

@@ -106,8 +106,6 @@ func nullableString(s string) any {
 	return s
 }
 
-const userColumns = `id, email, password_hash, account_kind, plan_id, created_at, updated_at`
-
 func scanUser(row interface{ Scan(...any) error }) (*domain.User, error) {
 	var u domain.User
 	var email, hash sql.NullString
@@ -120,7 +118,7 @@ func scanUser(row interface{ Scan(...any) error }) (*domain.User, error) {
 }
 
 func (p *PostgresRepository) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
-	u, err := scanUser(p.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1`, id))
+	u, err := scanUser(p.db.QueryRowContext(ctx, `SELECT id, email, password_hash, account_kind, plan_id, created_at, updated_at FROM users WHERE id = $1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -131,7 +129,7 @@ func (p *PostgresRepository) GetUserByID(ctx context.Context, id string) (*domai
 }
 
 func (p *PostgresRepository) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
-	u, err := scanUser(p.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE LOWER(email) = LOWER($1)`, email))
+	u, err := scanUser(p.db.QueryRowContext(ctx, `SELECT id, email, password_hash, account_kind, plan_id, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1)`, email))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
