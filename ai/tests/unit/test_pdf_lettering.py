@@ -305,7 +305,8 @@ def test_live_3_text_free_art_relayouts_and_exports_offline():
     assert all(line in extracted for line in lines)
     assert len(page_streams(pdf)) == 2
     assert len(pdf) > 100_000
-    assert writer.warnings  # no_calm_zone warnings identify art-safe withheld dialogue
+    assert not writer.warnings and not layout.issues  # Scored placement keeps every line
+    assert "REVIEW REQUIRED" not in extracted
 
 
 @pytest.mark.parametrize("name", ["speech-tail", "narration", "thought", "unicode-devanagari"])

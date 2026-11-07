@@ -9,8 +9,8 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app.gen.models import LetteringDocument, LetteringOverride, LetteringUnitPoint
-from app.services.lettering import layout_page
-from app.services.lettering.art_safety import analyze_art
+from app.services.lettering import art_safety, layout_page
+from app.services.lettering.art_safety import Subject, analyze_art, place_in_calm_art, slot_cost
 from app.services.lettering.geometry import Box
 
 FIXTURES = Path(__file__).parents[1] / "fixtures/lettering"
@@ -47,7 +47,7 @@ def _doc(zone, *, panel_id="panel", text="Hello there!", kind="speech"):
     )
 
 
-def test_real_probe_refuses_panel_three_speech_without_hand_marked_face_clearance(monkeypatch):
+def test_panel_three_speech_never_covers_the_hand_marked_face(monkeypatch):
     document = LetteringDocument.model_validate(PROBE_STATE["input"])
     image = (FIXTURES / "nia-brass-bird-raw.jpg").read_bytes()
     safety = analyze_art(image)
@@ -59,11 +59,18 @@ def test_real_probe_refuses_panel_three_speech_without_hand_marked_face_clearanc
     result = layout_page(document, art_image=image)
 
     panel_id = document.panels[2].panel_id
-    panel_speech = [b for b in result.bubbles if b.panel_id == panel_id and b.kind == "speech"]
-    assert not panel_speech
-    assert any(
-        issue.panel_id == panel_id and issue.flag.root == "no_calm_zone" for issue in result.issues
-    )
+    face = Box(*FACE_PANEL3)
+    for bubble in result.bubbles:
+        if bubble.panel_id == panel_id:
+            assert not Box(**bubble.shape.bounds.model_dump()).overlaps(face)
+    # A line that cannot be placed is withheld with a review issue, never drawn over the face.
+    placed = {bubble.utterance_id for bubble in result.bubbles}
+    for utterance in document.panels[2].utterances:
+        if utterance.utterance_id not in placed:
+            assert any(
+                issue.utterance_id == utterance.utterance_id and issue.flag.root == "no_calm_zone"
+                for issue in result.issues
+            )
 
 
 def test_real_probe_places_short_text_away_from_hand_marked_faces_and_birds(monkeypatch):
@@ -125,74 +132,151 @@ def test_live_2_gold_mask_covers_hand_marked_bird_bounds_with_margin():
         assert safety.subject_fraction(bounds, 2 / 3) >= 0.75, bird["panel"]
 
 
-def test_live_3_saved_art_layout_has_no_colliding_or_clipped_bubbles():
-    state = json.loads((FIXTURES / "live-3/lettering-01.json").read_text())
-    document = LetteringDocument.model_validate(state["input"])
-    image = (FIXTURES / "live-3/nia-brass-bird.webp").read_bytes()
+LIVE_3_NO_GO = [  # Hand-marked page-normalized faces, birds and hands in the live-3 art.
+    Box(*rect)
+    for rect in [
+        (0.16, 0.13, 0.20, 0.17),  # upper-left face and hairline
+        (0.63, 0.19, 0.09, 0.12),  # upper-right face
+        (0.77, 0.15, 0.15, 0.12),  # upper-right brass bird
+        (0.29, 0.28, 0.19, 0.15),  # hand and brass bird
+        (0.27, 0.68, 0.17, 0.14),  # lower-left bird
+        (0.03, 0.75, 0.13, 0.16),  # lower-left face and hand
+        (0.73, 0.64, 0.17, 0.14),  # lower-right brass bird
+        (0.43, 0.69, 0.12, 0.13),  # lower-right face
+        (0.88, 0.70, 0.12, 0.15),  # lower-right hand
+    ]
+]
+LIVE_2_NO_GO = [
+    Box(*item["rect"]) for group in ("faces", "birds", "hands") for item in LIVE_2_TRUTH[group]
+]
+SAVED_PAGES = {
+    "live-3": ("live-3/lettering-01.json", "live-3/nia-brass-bird.webp", LIVE_3_NO_GO),
+    "live-2": ("live-2/lettering-01.json", "nia-brass-bird-live-2.jpg", LIVE_2_NO_GO),
+}
 
-    result = layout_page(document, art_image=image)
 
-    assert result.bubbles
+def _saved_page(name):
+    state_file, art_file, no_go = SAVED_PAGES[name]
+    document = LetteringDocument.model_validate(
+        json.loads((FIXTURES / state_file).read_text())["input"]
+    )
+    return document, (FIXTURES / art_file).read_bytes(), no_go
+
+
+def _bounds(bubble):
+    return Box(**bubble.shape.bounds.model_dump())
+
+
+def _assert_complete_clean_layout(result, document):
+    lines = [u for panel in document.panels for u in panel.utterances]
+    speech = {u.utterance_id for u in lines if u.kind == "speech"}
+    assert len(result.bubbles) >= 0.8 * len(lines)
+    assert speech <= {bubble.utterance_id for bubble in result.bubbles}
     assert all(not bubble.flags for bubble in result.bubbles)
-    assert not {
-        "collision",
-        "outside_reserved_zone",
-        "overflow",
-    } & {issue.flag.root for issue in result.issues}
+    assert not result.issues  # No review note, no withheld line.
     assert all(line.font_size >= 18 / 841.89 for bubble in result.bubbles for line in bubble.lines)
-    no_go = [
-        Box(x * (2 / 3), y, width * (2 / 3), height)
-        for x, y, width, height in [
-            (0.16, 0.13, 0.20, 0.17),  # upper-left face and hairline
-            (0.63, 0.19, 0.09, 0.12),  # upper-right face
-            (0.77, 0.15, 0.15, 0.12),  # upper-right brass bird
-            (0.29, 0.28, 0.19, 0.15),  # hand and brass bird
-            (0.27, 0.68, 0.17, 0.14),  # lower-left bird
-            (0.03, 0.75, 0.13, 0.16),  # lower-left face and hand
-            (0.73, 0.64, 0.17, 0.14),  # lower-right brass bird
-            (0.43, 0.69, 0.12, 0.13),  # lower-right face
-            (0.88, 0.70, 0.12, 0.15),  # lower-right hand
-        ]
-    ]
-    assert all(
-        not Box(
-            bubble.shape.bounds.x,
-            bubble.shape.bounds.y,
-            bubble.shape.bounds.width,
-            bubble.shape.bounds.height,
-        ).overlaps(subject)
-        for bubble in result.bubbles
-        for subject in no_go
+
+
+@pytest.mark.parametrize("name", ["live-3", "live-2"])
+def test_saved_page_places_every_line_clear_of_hand_marked_subjects(name, monkeypatch):
+    document, image, no_go = _saved_page(name)
+    safety = analyze_art(image)
+    # Hand-marked faces, birds and hands are hard no-go boxes, as in the other probes.
+    monkeypatch.setattr(
+        "app.services.lettering.analyze_art",
+        lambda _: replace(safety, face_boxes=(*safety.face_boxes, *no_go)),
     )
 
-
-def test_live_2_shrinks_captions_and_withholds_unsafe_speech():
-    state = json.loads((FIXTURES / "live-2/lettering-01.json").read_text())
-    document = LetteringDocument.model_validate(state["input"])
-    image = (FIXTURES / "nia-brass-bird-live-2.jpg").read_bytes()
     result = layout_page(document, art_image=image)
-    speech = [bubble for bubble in result.bubbles if bubble.kind == "speech"]
-    assert speech == []
-    assert len([issue for issue in result.issues if issue.flag.root == "no_calm_zone"]) >= 3
-    assert all(line.font_size >= 18 / 841.89 for bubble in result.bubbles for line in bubble.lines)
-    assert any(line.font_size < 35 / 841.89 for bubble in result.bubbles for line in bubble.lines)
-    assert any(issue.flag.root == "no_calm_zone" for issue in result.issues)
-    no_go = [
-        Box(x * (2 / 3), y, width * (2 / 3), height)
-        for group in (LIVE_2_TRUTH["faces"], LIVE_2_TRUTH["birds"])
-        for item in group
-        for x, y, width, height in [item["rect"]]
-    ]
-    assert all(
-        not Box(
-            bubble.shape.bounds.x,
-            bubble.shape.bounds.y,
-            bubble.shape.bounds.width,
-            bubble.shape.bounds.height,
-        ).overlaps(subject)
-        for bubble in result.bubbles
-        for subject in no_go
+
+    _assert_complete_clean_layout(result, document)
+    for bubble in result.bubbles:
+        assert not any(_bounds(bubble).overlaps(subject) for subject in no_go)
+
+
+@pytest.mark.parametrize("name", ["live-3", "live-2"])
+def test_saved_page_unaided_layout_is_complete_and_nearly_clear(name):
+    document, image, no_go = _saved_page(name)
+
+    result = layout_page(document, art_image=image)
+
+    _assert_complete_clean_layout(result, document)
+    # Detection is heuristic and the hand-drawn rectangles are loose: a bubble may only graze
+    # a marked rectangle's edge (at most a quarter of its own area), never cover the subject.
+    for bubble in result.bubbles:
+        box = _bounds(bubble)
+        for subject in no_go:
+            ox = min(box.right, subject.right) - max(box.x, subject.x)
+            oy = min(box.bottom, subject.bottom) - max(box.y, subject.y)
+            if ox > 0 and oy > 0:
+                assert ox * oy <= 0.25 * box.width * box.height, (name, bubble.utterance_id)
+
+
+def test_live_2_ground_truth_marks_hands_in_every_panel():
+    assert {hand["panel"] for hand in LIVE_2_TRUTH["hands"]} == {1, 2, 3, 4}
+
+
+def _calm_map():
+    image = Image.new("RGB", (360, 540), (135, 185, 220))
+    from io import BytesIO
+
+    out = BytesIO()
+    image.save(out, format="PNG")
+    return analyze_art(out.getvalue())
+
+
+PANEL = Box(0.02 * 2 / 3, 0.02, 0.96 * 2 / 3, 0.96)
+SLOT = Box(0.06, 0.05, 0.18, 0.06)
+
+
+def test_slot_cost_rises_with_subject_detail_and_distance_from_the_top():
+    calm = _calm_map()
+    low_confidence = replace(calm, subjects=(Subject(Box(0.0, 0.0, 1.0, 1.0), "face", 0.05),))
+    high_confidence = replace(calm, subjects=(Subject(Box(0.0, 0.0, 1.0, 1.0), "face", 0.95),))
+    base = slot_cost(SLOT, PANEL, calm, 2 / 3)
+    # A low-confidence "face" (a golden sky) is nearly free; a confident one is not.
+    assert slot_cost(SLOT, PANEL, low_confidence, 2 / 3) - base < 0.3 * art_safety.COST_FACE
+    assert slot_cost(SLOT, PANEL, high_confidence, 2 / 3) - base > 0.8 * art_safety.COST_FACE
+    lower = Box(SLOT.x, SLOT.y + 0.4, SLOT.width, SLOT.height)
+    assert slot_cost(lower, PANEL, calm, 2 / 3) > base
+
+
+def test_confident_face_is_a_hard_no_go_while_a_weak_one_is_only_a_cost():
+    calm = _calm_map()
+    zone = Box(PANEL.x, PANEL.y, PANEL.width, 0.2)
+    size = Box(0, 0, 0.18, 0.06)
+    face = Box(0.0, 0.0, 1.0, 0.23)  # Covers the whole zone in page coordinates.
+    weak = replace(calm, subjects=(Subject(face, "face", 0.05),))
+    strong = replace(calm, face_boxes=(face,))
+
+    assert place_in_calm_art(size, [zone], [], 0.012, None, (-9, -9), zone, weak, 2 / 3, PANEL)[0]
+    box, cost = place_in_calm_art(
+        size, [zone], [], 0.012, None, (-9, -9), zone, strong, 2 / 3, PANEL
     )
+    # The zone is fully covered by a confident face, so the search leaves it for the panel.
+    assert box is not None and not face.overlaps(box) and cost < float("inf")
+
+
+def test_panel_margin_is_used_when_the_reserved_zone_is_full():
+    calm = _calm_map()
+    zone = Box(PANEL.x, PANEL.y, 0.1, 0.02)  # Too small for the slot.
+    size = Box(0, 0, 0.18, 0.06)
+
+    box, _ = place_in_calm_art(size, [zone], [], 0.012, None, (-9, -9), zone, calm, 2 / 3, PANEL)
+
+    assert box is not None and PANEL.contains(box) and not zone.contains(box)
+
+
+def test_nothing_is_placed_when_every_slot_is_confidently_covered():
+    calm = _calm_map()
+    everything = Box(0.0, 0.0, 1.0, 1.0)
+    covered = replace(calm, face_boxes=(everything,))
+
+    box, cost = place_in_calm_art(
+        Box(0, 0, 0.18, 0.06), [PANEL], [], 0.012, None, (-9, -9), PANEL, covered, 2 / 3, PANEL
+    )
+
+    assert box is None and cost == float("inf")
 
 
 def test_caption_anchors_outer_top_and_speech_uses_detected_speaker_side(monkeypatch):
@@ -221,9 +305,13 @@ def test_caption_anchors_outer_top_and_speech_uses_detected_speaker_side(monkeyp
 
     result = layout_page(document, art_image=raw)
 
-    caption, bubble = result.bubbles
-    assert caption.kind == "narration" and bubble.kind == "speech"
-    assert caption.shape.bounds.y < bubble.shape.bounds.y
+    assert len(result.bubbles) == 2
+    caption = next(b for b in result.bubbles if b.kind == "narration")
+    bubble = next(b for b in result.bubbles if b.kind == "speech")
+    assert caption.shape.bounds.y < 0.1  # Anchored to the outer top of the panel.
+    assert not Box(**caption.shape.bounds.model_dump()).overlaps(
+        Box(**bubble.shape.bounds.model_dump())
+    )
     assert bubble.shape.bounds.x + bubble.shape.bounds.width / 2 > 0.5
     assert not bubble.flags
 

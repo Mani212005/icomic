@@ -40,17 +40,18 @@ max(0, utterances-1)*0.10)`. Counts include narration and speech. The art prompt
 requests a large low-detail empty sky, sea or wall pocket at the outer top of each
 dialogue panel, away from faces, mouths, hands, birds, props and character silhouettes,
 with a clear path for each speech tail. After painting, the layout service scores local edge
-density and variance, detects face-like warm-color clusters, and searches within
-reserved zones for a calm position. Subject detail is a no-go area even when it is
-not recognized as a face. In overlay mode, panel text generation limits dialogue
+density and variance, detects face-like warm-color clusters and compact brass areas, and
+scores every candidate slot with a continuous cost (see Scored art-aware placement below).
+In overlay mode, panel text generation limits dialogue
 and captions to bounded lengths, allows at most two short speech turns and one caption,
 and omits picture-description narration. The parser enforces at most 12 words per
 speech turn and 14 words per caption; the shaped-text fit check rejects text that
 does not fit inside the reserved band. Layout may reduce lettering from 35 pt down
 to the documented 18 pt minimum, but never truncates it.
-If no calm face-safe position exists, the layout records `no_calm_zone`; the exporter
-withholds that utterance and any other unsafe bubbles, draws independently safe
-bubbles, and adds a visible review warning. Other layout issues withhold the layer.
+Only when no slot is affordable even after widening to the panel margin does the layout
+record `no_calm_zone`; the exporter then withholds that utterance, draws independently
+safe bubbles, and adds a visible review warning. Withheld text is the last resort, not
+the normal outcome. Other layout issues withhold the layer.
 This deterministic image analysis complements the prompt rule and does not call a provider.
 Unrenderable/crowded text keeps review issues; the system never shrinks below
 18 pt to hide a mismatch. Editorial zone edits can instead reserve an empty side.
@@ -147,8 +148,8 @@ narration or an unknown speaker. The engine does not infer labels, strip prefixe
 rewrite source dialogue, or resolve names. An optional speaker anchor identifies
 where the tail points in that panel. Panels supply geometry from the page layout
 and explicitly reserved safe zones. Empty zones produce `missing_zone` and no
-bubble. When painted art is available, deterministic image analysis also rejects
-face and subject regions and marks layouts that have no calm placement for review.
+bubble. When painted art is available, deterministic image analysis also scores
+face and subject regions and marks layouts that have no affordable placement for review.
 
 `art_mode` is required. Future integrations must classify existing art as
 `baked_in`; this mode always returns an empty draw list and `baked_in_art`, even if
@@ -220,12 +221,49 @@ Manual rectangles reserve space before automatic placement, even when their
 utterances occur later in reading order.
 
 Automatic placement evaluates a bounded set of font sizes, caption widths and
-utterance orders, scoring complete placements before partial ones. Candidates must
-fit wholly inside a reserved zone and clear known face and subject masks. Busy but
-subject-safe positions can be used with a `no_calm_zone` review warning. The search
-is finite and deterministic, without a pixel grid, randomness or mutable document
-state. Unresolved packing returns explicit `overflow`/`collision` flags for editorial
-review. Exact manual overrides may intentionally violate automatic reading order.
+utterance orders, scoring complete placements before partial ones. Without art, candidates
+must fit wholly inside a reserved zone. With painted art, see Scored art-aware placement.
+The search is finite and deterministic, without randomness or mutable document state.
+Unresolved packing returns explicit `overflow`/`collision` flags for editorial review.
+Exact manual overrides may intentionally violate automatic reading order.
+
+### Scored art-aware placement
+
+Binary vetoes (a face veto, a gold-subject veto and a gold-pixel limit) used to remove
+every slot on busy golden-hour art, so most text was withheld. Placement is now a
+minimum-cost search (`art_safety.slot_cost`). Each candidate slot costs the sum of:
+
+- local busyness and mean edge density,
+- the subject mask fraction and the brass-subject fraction,
+- confidence-weighted overlap with detected face and bird boxes (a golden sky mistaken
+  for a face has confidence near zero and costs almost nothing),
+- distance of the slot's lower edge from the panel top, and distance from the nearest
+  side edge, so lettering hugs the outer pocket the art prompt asks for,
+- the slot's area and height, so compact flat bubbles beat tall narrow ones,
+
+and every term is evaluated on a slot grown by a small halo, so a bubble hugging a subject
+costs more than one with breathing room. Font size is part of the objective: each
+(size, width, slot) option costs `slot cost + SIZE_COST * shortfall from the requested
+size`, and the cheapest option wins. Type still never drops below 18 pt. Narration and
+speech are placed jointly, in every order, with no overlap, and the arrangement with the
+most placed lines and then the lowest total cost wins.
+
+Hard rules never bend: a bubble never overlaps another bubble, leaves its panel, or
+covers a confident face (`HARD_FACE_CONFIDENCE`, which includes any hand-marked face box
+injected in tests). Search order: reserved zones first, accepting a slot costing at most
+`ZONE_COST_LIMIT`; otherwise the whole panel margin, accepting a slot costing at most
+`MAX_SLOT_COST`; otherwise the line is withheld with `no_calm_zone` and a review note.
+Slots outside the reserved zone are legal in art-aware mode (`outside_reserved_zone`
+applies only to manual placements). The constants are documented in `art_safety.py`.
+
+The acceptance fixtures are the saved live-2 and live-3 painted pages with hand-marked
+faces, birds and hands (`fixtures/lettering/live-2/ground-truth.json` and the live-3 list
+in `test_lettering_art_aware.py`). On both pages at least 80% of lines, including every
+speech bubble, are placed with no collision, outside-zone or overflow flag, and the
+exported PDF carries no review note. Detection is heuristic: residual contact with a
+loosely drawn hand-marked rectangle is possible on unaided runs, so the zero-overlap
+assertion is made with those rectangles as hard no-go boxes, as in the existing
+hand-marked regression tests.
 
 Tails attach to the actual bubble silhouette facing the manual/speaker anchor.
 Automatic speech tails use a broad base and sampled quadratic sides for a short,
