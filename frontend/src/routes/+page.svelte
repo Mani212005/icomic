@@ -152,7 +152,7 @@
 	<header class="navbar">
 		<div class="brand">
 			<img class="brand-mark" src="/brand/mark.svg" alt="" />
-			<div class="brand-text"><h1>Icomic</h1></div>
+			<img class="brand-wordmark" src="/brand/wordmark.svg" alt="Icomic" />
 		</div>
 
 		<div class="nav-status">
