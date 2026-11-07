@@ -102,6 +102,7 @@ small { font-size: 12px; color: var(--muted); }
   padding: 9px 14px; border: 1px solid var(--line); background-color: var(--sheet);
   font-size: 14px; font-weight: 650; box-shadow: inset 0 1px 0 #fff9;
 }
+.project-title { display: flex; align-items: center; min-height: 42px; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .project-select:hover { background-color: var(--sage); border-color: var(--ink); }
 .project-select:focus-visible { border-color: var(--focus); background-color: var(--sheet); }
 .project-meta-pill { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 11px; }
@@ -249,7 +250,7 @@ small { font-size: 12px; color: var(--muted); }
 .page-status { display: flex; gap: 5px; align-items: center; font-size: 11px; color: var(--muted); }
 .empty-pages { width: 100%; padding: 25px; border: 1px dashed var(--line); }
 .export-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end; border-top: 1px solid var(--rule); padding-top: 20px; }
-.error-banner, .project-error-banner, .modal-error, .stale-stage-banner, .unauth-banner, .job-banner { display: flex; gap: 12px; padding: 16px 20px; border: 1px solid #C47F6F; border-left-width: 4px; border-radius: 4px 7px 3px 5px; color: var(--danger); background: var(--danger-soft); font-size: 13px; }
+.error-banner, .project-error-banner, .modal-error, .stale-stage-banner, .job-banner { display: flex; gap: 12px; padding: 16px 20px; border: 1px solid #C47F6F; border-left-width: 4px; border-radius: 4px 7px 3px 5px; color: var(--danger); background: var(--danger-soft); font-size: 13px; }
 .error-banner { flex-direction: column; }
 .error-header { display: flex; align-items: center; gap: 10px; }
 .error-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -263,8 +264,7 @@ small { font-size: 12px; color: var(--muted); }
 .demo-sample-banner { max-width: 1440px; width: calc(100% - 80px); margin: 18px auto 0; display: flex; align-items: center; gap: 12px; padding: 12px 18px; border: 1px solid var(--line); border-left-width: 4px; border-radius: 4px 7px 3px 5px; color: var(--ink); background: var(--sage); font-size: 13px; box-shadow: 2px 3px 0 var(--rule); }
 .sample-banner-icon { color: var(--success); display: flex; align-items: center; flex: none; }
 .sample-banner-body { flex: 1; line-height: 1.5; }
-.project-error-banner, .unauth-banner { max-width: 1440px; width: calc(100% - 80px); margin: 24px auto 0; align-items: center; flex-wrap: wrap; }
-.unauth-content { display: flex; gap: 10px; align-items: center; flex: 1; }
+.project-error-banner { max-width: 1440px; width: calc(100% - 80px); margin: 24px auto 0; align-items: center; flex-wrap: wrap; }
 .job-banner { color: var(--ink); background: var(--sage); border-color: #C47F6F; align-items: center; position: relative; overflow: hidden; }
 .job-banner::after { content: ''; position: absolute; bottom: 0; height: 3px; width: 30%; background: #C47F6F; animation: wash-progress 2s ease-in-out infinite alternate; }
 .job-info { min-width: 0; display: flex; flex-direction: column; flex: 1; }
@@ -282,6 +282,16 @@ small { font-size: 12px; color: var(--muted); }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 6px; }
 .modal-error { margin-bottom: 16px; }
+.auth-main { display: grid; place-items: start center; padding: 56px 24px 0; }
+.auth-card { width: 100%; max-width: 420px; padding: 28px; border: 1px solid var(--ink); border-radius: 6px 14px 5px 8px; background: var(--sheet); box-shadow: 6px 8px 0 #4B454250; display: flex; flex-direction: column; gap: 18px; }
+.auth-card h1 { margin: 0; font-size: 29px; }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.auth-tabs button[aria-pressed='true'] { background-color: var(--accent-soft); border-color: var(--ink); box-shadow: 2px 3px 0 #C47F6F40; }
+.auth-note { margin: 0; padding: 10px 12px; border-left: 4px solid var(--primary); background: var(--accent-soft); font-size: 13px; }
+.auth-hint { font-size: 12px; color: var(--muted); }
+.auth-skip, .account-link { color: var(--ink); font-size: 13px; font-weight: 600; }
+.account-control { display: inline-flex; align-items: center; gap: 8px; }
+.account-control .action-btn { min-height: 32px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes reveal { from { opacity: .5; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes wash-progress { from { left: -5%; } to { left: 75%; } }
@@ -370,7 +380,7 @@ small { font-size: 12px; color: var(--muted); }
   .form-row { grid-template-columns: 1fr 90px; }
   .error-banner, .job-banner { padding: 12px; }
   .stale-stage-banner { flex-wrap: wrap; padding: 12px; gap: 4px; }
-  .project-error-banner, .unauth-banner { width: calc(100% - 32px); }
+  .project-error-banner { width: calc(100% - 32px); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
@@ -392,3 +402,11 @@ h1, h2, h3 { overflow-wrap: anywhere; text-wrap: pretty; }
 /* Scroll reveal: fade and lift only. The hidden state is set by revealCards in scroll.js, never under reduced motion. */
 [data-reveal='hidden'] { opacity: 0; transform: translate3d(0, 14px, 0); }
 [data-reveal='shown'] { opacity: 1; transform: none; transition: opacity 420ms ease-out, transform 420ms cubic-bezier(.2, .8, .2, 1); }
+.account-control .status-pill { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) {
+  .auth-main { padding: 28px 16px 0; }
+  .auth-card { padding: 22px; }
+  .account-link { font-size: 11px; }
+  .account-control .status-pill { max-width: 110px; }
+  .account-control .action-btn { min-height: 28px; padding: 3px 8px; font-size: 11px; }
+}

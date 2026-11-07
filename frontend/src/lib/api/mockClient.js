@@ -7,9 +7,19 @@ function genId(prefix = 'id') {
 	return `${prefix}-${counter++}`;
 }
 
+function apiError(message, code, status, details) {
+	return Object.assign(new Error(message), { code, status, details });
+}
+
 export class MockApiClient {
 	constructor(options = {}) {
 		this.baseUrl = 'mock://icomic.local';
+		// Fake in-memory accounts, enabled for the browser demo. Off by default so
+		// tests that create many projects keep working.
+		this.accountsEnabled = options.accounts ?? false;
+		this.registry = new Map();
+		this.owner = null;
+		this.startNewGuest();
 		this.autoCompleteJobs = options.autoCompleteJobs ?? true;
 		this.failureRate = options.failureRate ?? 0;
 
@@ -43,6 +53,87 @@ export class MockApiClient {
 		return true;
 	}
 
+	startNewGuest() {
+		this.owner = `guest:${counter++}`;
+		this.email = null;
+	}
+
+	ownProjects() {
+		return Array.from(this.projects.values()).filter((p) => p.owner === this.owner);
+	}
+
+	accountView() {
+		const count = this.ownProjects().length;
+		if (!this.accountsEnabled) {
+			return { kind: 'registered', email: null, project_count: count, project_limit: null };
+		}
+		const registered = Boolean(this.email);
+		return {
+			kind: registered ? 'registered' : 'guest',
+			email: this.email,
+			project_count: count,
+			project_limit: registered ? 100 : 1
+		};
+	}
+
+	async getAccount() {
+		return this.accountView();
+	}
+
+	async startGuest() {
+		return this.accountView();
+	}
+
+	async ensureSession() {
+		return this.accountView();
+	}
+
+	validateCredentials(email, password) {
+		const normalized = String(email || '').trim().toLowerCase();
+		if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) {
+			throw apiError('Enter a valid email address.', 'invalid_email', 400);
+		}
+		if (String(password || '').length < 10) {
+			throw apiError('Use at least 10 characters.', 'weak_password', 400);
+		}
+		return normalized;
+	}
+
+	adopt(email, claimFrom) {
+		let claimed = 0;
+		const key = `user:${email}`;
+		for (const p of this.projects.values()) {
+			if (claimFrom && p.owner === claimFrom) {
+				p.owner = key;
+				claimed += 1;
+			}
+		}
+		this.owner = key;
+		this.email = email;
+		return { account: this.accountView(), ...(claimed ? { claimed_projects: claimed } : {}) };
+	}
+
+	async signUp(email, password) {
+		const normalized = this.validateCredentials(email, password);
+		if (this.registry.has(normalized)) {
+			throw apiError('An account with this email already exists.', 'email_taken', 409);
+		}
+		this.registry.set(normalized, password);
+		return this.adopt(normalized, this.email ? null : this.owner);
+	}
+
+	async signIn(email, password) {
+		const normalized = String(email || '').trim().toLowerCase();
+		if (this.registry.get(normalized) !== password || !password) {
+			throw apiError('Incorrect email or password.', 'invalid_credentials', 401);
+		}
+		return this.adopt(normalized, this.email ? null : this.owner);
+	}
+
+	async signOut() {
+		this.startNewGuest();
+	}
+
 	getAuthMode() {
 		return 'mock';
 	}
@@ -58,6 +149,7 @@ export class MockApiClient {
 			art_style: 'indie-graphic-novel',
 			chapter_count: 1,
 			is_sample: true,
+			owner: null,
 			sample_label: 'Sample',
 			sample_source: 'Meta AI',
 			script: 'Nia, a young lighthouse keeper, discovers a tiny brass bird during a storm. The bird lights the dark sea, guiding a lost boat safely home. At sunrise, Nia sets it free and watches it fly toward the bright horizon.',
@@ -173,6 +265,13 @@ export class MockApiClient {
 	}
 
 	async createProject(project) {
+		const account = this.accountView();
+		if (account.project_limit !== null && account.project_count >= account.project_limit) {
+			throw apiError('Project limit reached.', 'project_limit_reached', 403, {
+				account_kind: account.kind,
+				limit: account.project_limit
+			});
+		}
 		const id = genId('proj');
 		const now = new Date().toISOString();
 		const script = project.original_script || project.script || '';
@@ -183,6 +282,7 @@ export class MockApiClient {
 			chapter_count: project.chapter_count || 1,
 			script,
 			original_script: script,
+			owner: this.owner,
 			created_at: now,
 			updated_at: now
 		};
@@ -191,7 +291,9 @@ export class MockApiClient {
 	}
 
 	async listProjects() {
-		return Array.from(this.projects.values());
+		return Array.from(this.projects.values()).filter(
+			(p) => !this.accountsEnabled || p.owner === null || p.owner === this.owner
+		);
 	}
 
 	async getProject(id) {

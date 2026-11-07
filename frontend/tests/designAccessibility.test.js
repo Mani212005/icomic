@@ -58,7 +58,7 @@ test('paper reference stays below 250 KB and other visual assets stay below 100 
 });
 
 
-test('visible UI copy remains within the 534-word ceiling', () => {
+test('visible UI copy remains within the 590-word ceiling', () => {
   const result = execFileSync('python3', [join(root, '../scripts/count_frontend_text.py'), join(root, 'src')], { encoding: 'utf8' });
-  assert.ok(Number(result.match(/copy_words=(\d+)/)[1]) <= 534, result);
+  assert.ok(Number(result.match(/copy_words=(\d+)/)[1]) <= 590, result);
 });

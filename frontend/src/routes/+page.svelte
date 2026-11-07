@@ -2,14 +2,17 @@
 	import '#lib/design/theme.css';
 	import ComicEditor from '#lib/editor/ComicEditor.svelte';
 	import { Icon, focusDialog, AppHeader, AppFooter, Hamburger, Sidebar, StageNav, stageList } from '#lib/design/shell.js';
-	import { createDefaultClient, formatApiError } from '#lib/api/index.js';
+	import { formatApiError } from '#lib/api/index.js';
 	import { AGE_TERMS_ADVISORY } from '#lib/config/policies.js';
+	import { sharedClient, projectAccess, LOGIN_LIMIT_URL } from '#lib/account/session.js';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
-	let apiClient = createDefaultClient();
+	let apiClient = sharedClient();
 
-	let isAuthenticated = apiClient.isAuthenticated();
 	let authMode = apiClient.getAuthMode();
+	let account = null;
+	$: access = projectAccess(account);
 
 	let projects = [];
 	let activeProjectId = '';
@@ -50,11 +53,11 @@
 	async function loadProjects() {
 		isLoadingProjects = true;
 		projectError = null;
-		isAuthenticated = apiClient.isAuthenticated();
 		authMode = apiClient.getAuthMode();
 
 		try {
-			const res = await apiClient.listProjects();
+			account = await apiClient.getAccount();
+			const res = account ? await apiClient.listProjects() : [];
 			const list = Array.isArray(res) ? res : (res && res.projects ? res.projects : []);
 			projects = list;
 
@@ -88,6 +91,10 @@
 	}
 
 	function openCreateModal() {
+		if (access.needsLogin) {
+			goto(LOGIN_LIMIT_URL);
+			return;
+		}
 		newProjectForm = {
 			title: '',
 			art_style: 'cyberpunk-noir',
@@ -120,6 +127,7 @@
 		createError = null;
 
 		try {
+			await apiClient.ensureSession();
 			const created = await apiClient.createProject({
 				title,
 				art_style: newProjectForm.art_style,
@@ -134,6 +142,10 @@
 				switchProject(created.id);
 			}
 		} catch (err) {
+			if (err?.code === 'project_limit_reached' && err.details?.account_kind !== 'registered') {
+				goto(LOGIN_LIMIT_URL);
+				return;
+			}
 			createError = (err && err.message) || 'Creation failed.';
 		} finally {
 			isCreatingProject = false;
@@ -152,11 +164,15 @@
 		}
 	}
 
-	function enableDevIdentity() {
-		apiClient.setDevMode(true, '00000000-0000-0000-0000-000000000001');
-		isAuthenticated = apiClient.isAuthenticated();
-		authMode = apiClient.getAuthMode();
-		loadProjects();
+	async function handleSignOut() {
+		try {
+			await apiClient.signOut();
+		} catch (err) {
+			projectError = formatApiError(err);
+			return;
+		}
+		activeProjectId = '';
+		await loadProjects();
 	}
 
 	onMount(() => {
@@ -194,11 +210,15 @@
 					<span class="indicator green"></span>
 					<span>Token</span>
 				</div>
-			{:else if authMode !== 'mock'}
-				<div class="status-pill unauth-pill">
-					<span class="indicator amber"></span>
-					<span class="unauth-label">Signed out</span>
+			{/if}
+
+			{#if account?.email}
+				<div class="account-control">
+					<span class="status-pill">{account.email}</span>
+					<button class="action-btn" on:click={handleSignOut}>Sign out</button>
 				</div>
+			{:else if account?.kind !== 'registered'}
+				<a class="account-link" href="/login">Sign in</a>
 			{/if}
 		</svelte:fragment>
 	</AppHeader>
@@ -207,25 +227,13 @@
 		<StageNav stages={stageList} active={activeStage} completed={stageCompleted} disabled={!activeProject} on:select={selectStage} />
 	</Sidebar>
 
-	{#if !isAuthenticated && authMode !== 'mock'}
-		<div class="unauth-banner" role="alert">
-			<div class="unauth-content">
-				<span class="unauth-icon"><Icon name="lock" size={18} /></span>
-				<div class="unauth-text">
-					<strong>Sign in:</strong> Enable <code>DEV_AUTH_ENABLED=true</code> and <code>PUBLIC_DEV_MODE=true</code>.
-				</div>
-			</div>
-			<button class="enable-dev-btn" on:click={enableDevIdentity} >
-				<Icon name="script" size={18} /> Enable dev
-			</button>
-		</div>
-	{/if}
-
 	<section class="project-bar" aria-label="Project" aria-busy={isLoadingProjects}>
 		<div class="project-selector-group">
 			<label for="project-select" class="selector-label">Project:</label>
 			{#if isLoadingProjects}
 				<span class="loading-label">Loading…</span>
+			{:else if projects.length > 0 && !access.canSeeList}
+				<span class="project-title">{activeProject?.title || 'Untitled'}</span>
 			{:else if projects.length > 0}
 				<select
 					id="project-select"

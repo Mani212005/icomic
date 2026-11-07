@@ -26,6 +26,7 @@ npm run build
 - Bucket fill, palette suggestions, undo, and outline gap repair.
 - PDF and PNG exports with AI disclosure and C2PA provenance.
 - Dev identity or bearer authentication; no identity headers without credentials.
+- Guest and account sessions: a guest keeps one project, and `/login` offers sign in and sign up for more. The demo build uses an in-memory fake.
 
 ## App shell
 

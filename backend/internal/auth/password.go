@@ -69,11 +69,11 @@ func (h *PasswordHasher) release() { <-h.slots }
 func ValidatePassword(password, email string) error {
 	switch {
 	case utf8.RuneCountInString(password) < MinPasswordLength:
-		return fmt.Errorf("%w: use at least %d characters", ErrInvalidPassword, MinPasswordLength)
+		return fmt.Errorf("%w: Use at least %d characters.", ErrInvalidPassword, MinPasswordLength)
 	case len(password) > MaxPasswordBytes:
-		return fmt.Errorf("%w: use at most %d bytes", ErrInvalidPassword, MaxPasswordBytes)
+		return fmt.Errorf("%w: Use at most %d bytes.", ErrInvalidPassword, MaxPasswordBytes)
 	case email != "" && strings.EqualFold(password, email):
-		return fmt.Errorf("%w: do not reuse the email address", ErrInvalidPassword)
+		return fmt.Errorf("%w: Do not use your email as the password.", ErrInvalidPassword)
 	}
 	return nil
 }
