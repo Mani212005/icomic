@@ -289,7 +289,7 @@ small { font-size: 12px; color: var(--muted); }
 .auth-tabs button[aria-pressed='true'] { background-color: var(--accent-soft); border-color: var(--ink); box-shadow: 2px 3px 0 #C47F6F40; }
 .auth-note { margin: 0; padding: 10px 12px; border-left: 4px solid var(--primary); background: var(--accent-soft); font-size: 13px; }
 .auth-hint { font-size: 12px; color: var(--muted); }
-.auth-skip, .account-link { color: var(--ink); font-size: 13px; font-weight: 600; }
+.account-link { color: var(--ink); font-size: 13px; font-weight: 600; }
 .account-control { display: inline-flex; align-items: center; gap: 8px; }
 .account-control .action-btn { min-height: 32px; }
 @keyframes spin { to { transform: rotate(360deg); } }

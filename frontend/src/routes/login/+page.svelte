@@ -1,5 +1,6 @@
 <script>
 	import '#lib/design/theme.css';
+	import { AppHeader, AppFooter } from '#lib/design/shell.js';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import LoginForm from '#lib/account/LoginForm.svelte';
@@ -24,16 +25,13 @@
 </script>
 
 <div class="app-layout">
-	<header class="navbar">
-		<a class="brand" href="/" aria-label="Icomic">
-			<img class="brand-mark" src="/brand/mark.svg" alt="" />
-			<img class="brand-wordmark" src="/brand/wordmark.svg" alt="" />
-		</a>
-		<a class="auth-skip" href="/">Back</a>
-	</header>
+	<AppHeader>
+		<svelte:fragment slot="account"><a class="account-link" href="/">Back</a></svelte:fragment>
+	</AppHeader>
 	<main class="auth-main">
 		{#if ready}
 			<LoginForm {client} {note} done={() => goto('/')} />
 		{/if}
 	</main>
+	<AppFooter />
 </div>
