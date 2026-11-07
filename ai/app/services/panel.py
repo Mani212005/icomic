@@ -24,15 +24,26 @@ OVERLAY_SPEECH_WORDS = 12
 OVERLAY_CAPTION_WORDS = 14
 
 
+def _spoken_text(line: str) -> str:
+    """The lettered words of a speech turn, without its leading `Speaker:`."""
+    before, colon, after = line.partition(":")
+    if colon and before.strip() and len(before) <= 80 and len(before.split()) <= 4:
+        return after.strip()
+    return line
+
+
 def _with_overlay_text_budgets(schema: dict) -> dict:
     """Add JSON Schema patterns so overlay word limits are checked before parsing."""
     properties = schema["$defs"]["PanelTextItem"]["properties"]
     word = r"[^\s\r\n]+"
     gap = r"[^\S\r\n]+"
-    speech_line = rf"{word}(?:{gap}{word}){{0,{OVERLAY_SPEECH_WORDS - 1}}}"
+    # An optional leading `Name:` (up to four tokens) names the speaker and is not lettered.
+    speaker = rf"(?:[^\s:\r\n]+(?:{gap}[^\s:\r\n]+){{0,3}}:{gap})?"
+    speech_line = rf"{speaker}{word}(?:{gap}{word}){{0,{OVERLAY_SPEECH_WORDS - 1}}}"
     properties["dialogue"]["pattern"] = rf"^(?:{speech_line}(?:\r?\n{speech_line})?)?$"
     properties["dialogue"]["description"] = (
-        "At most two newline-separated speech turns, each with no more than 12 whitespace-separated words."
+        "At most two newline-separated speech turns, each starting with the speaking "
+        "character's exact name and a colon, then no more than 12 whitespace-separated words."
     )
     caption_word = r"\S+"
     properties["narration"]["pattern"] = (
@@ -220,7 +231,10 @@ class PanelService:
                 dialogue_turns = [line for line in item.dialogue.splitlines() if line.strip()]
                 if overlay_lettering and (
                     len(dialogue_turns) > 2
-                    or any(len(line.split()) > OVERLAY_SPEECH_WORDS for line in dialogue_turns)
+                    or any(
+                        len(_spoken_text(line).split()) > OVERLAY_SPEECH_WORDS
+                        for line in dialogue_turns
+                    )
                     or len(item.narration.split()) > OVERLAY_CAPTION_WORDS
                 ):
                     raise ValueError(

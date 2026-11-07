@@ -59,6 +59,11 @@ from .services.draft import DraftService
 from .services.errors import JobExecutionError, classify_error
 from .services.finish_layer import FinishStrength, finish_image, page_seed
 from .services.lettering import layout_page
+from .services.lettering.subjects import (
+    detect_page_subjects,
+    subject_detection_enabled,
+    to_art_subjects,
+)
 from .services.line_art import LineArtService
 from .services.moderation import ModerationService
 from .services.painted_page import PaintedPageService
@@ -287,7 +292,11 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     def layout_lettering(req: LetteringLayoutRequest):
         try:
             art_image = wired_adapters.storage.get(req.art_image_url) if req.art_image_url else None
-            return layout_page(req.document, art_image=art_image)
+            return layout_page(
+                req.document,
+                art_image=art_image,
+                subjects=to_art_subjects(req.subjects) if req.subjects else None,
+            )
         except KeyError as exc:
             raise HTTPException(
                 status_code=422, detail="Stored lettering art was not found"
@@ -360,12 +369,23 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             character_identities=req.character_identities,
             style_reference_image_url=req.style_reference_image_url,
         )
+        subjects, source = None, None
+        if req.lettering_document is not None and subject_detection_enabled():
+            # One bounded vision call on the stored art. Any failure falls back to heuristics.
+            subjects, source = detect_page_subjects(
+                wired_adapters.vision,
+                wired_adapters.storage.get(url),
+                [identity.name for identity in req.character_identities],
+                hashed_user_id=req.hashed_user_id,
+            )
         return GeneratePaintedPageResponse(
             job_id=str(req.job_id),
             image_url=url,
             model_id=model_id,
             variant=variant,
             provenance_metadata=provenance,
+            lettering_subjects=subjects,
+            lettering_subjects_source=source,
         )
 
     @app.post(

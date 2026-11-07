@@ -13,6 +13,8 @@ PRICE_PER_IMAGE_FLAT_USD = 0.01
 WORST_CASE_TEXT_INPUT_TOKENS = 60
 STORY_INPUT_TOKEN_LIMIT = 16384
 WORST_CASE_VISION_INPUT_TOKENS = 350
+# A page downscaled to at most 1024 px on the long edge, plus the subject prompt.
+WORST_CASE_SUBJECTS_INPUT_TOKENS = 2048
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,11 @@ GENERATION_POLICIES = MappingProxyType(
         ),
         # No separately retained live review reasoning; use the vision completion bound.
         "review": GenerationPolicy(256, 1280, "minimal", 809, 809, WORST_CASE_VISION_INPUT_TOKENS),
+        # One JSON list of up to 40 boxes; reasoning stays minimal. Bounds are conservative
+        # reuse of the review reasoning evidence until a live call records its own usage.
+        "subjects": GenerationPolicy(
+            1024, 1280, "minimal", 809, 809, WORST_CASE_SUBJECTS_INPUT_TOKENS
+        ),
     }
 )
 

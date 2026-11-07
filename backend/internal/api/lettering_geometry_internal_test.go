@@ -2,16 +2,17 @@ package api
 
 import "testing"
 
-func TestLetteringZoneHeightFitsLargeTypeAndCapsAtPanelBounds(t *testing.T) {
+func TestLetteringZoneHeightIsAHintCappedAtAThirdOfThePanel(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		characters int
 		utterances int
 		want       float64
 	}{
-		{name: "one short line", characters: 12, utterances: 1, want: 0.55},
-		{name: "caption and speech", characters: 29, utterances: 2, want: 0.65},
-		{name: "large script", characters: 400, utterances: 3, want: 0.8},
+		{name: "one short line", characters: 12, utterances: 1, want: 0.25},
+		{name: "caption and speech", characters: 29, utterances: 2, want: 0.3},
+		{name: "large script", characters: 400, utterances: 3, want: letteringZoneMaxHeight},
+		{name: "never the whole panel", characters: 5000, utterances: 4, want: 0.35},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := letteringZoneHeight(test.characters, test.utterances)

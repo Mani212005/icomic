@@ -1,0 +1,237 @@
+{
+ "source": "saved painted page live-3; boxes hand-marked, page-normalized (x, y, width, height)",
+ "document": {
+  "art_mode": "text_free",
+  "page_aspect": 0.6666666666666666,
+  "page_id": "0185dbd4-74a7-4f16-b452-977d08b4de7e",
+  "panels": [
+   {
+    "order": 0,
+    "panel_id": "e2a2f9d7-26a6-4f53-a101-38254696a822",
+    "rect": {
+     "height": 0.475,
+     "width": 0.46249999999999997,
+     "x": 0.03,
+     "y": 0.02
+    },
+    "reserved_zones": [
+     {
+      "height": 0.55,
+      "width": 0.92,
+      "x": 0.04,
+      "y": 0.04
+     }
+    ],
+    "utterances": [
+     {
+      "kind": "narration",
+      "order": 0,
+      "text": "Storm night at the lighthouse.",
+      "utterance_id": "e2a2f9d7-26a6-4f53-a101-38254696a822-narration"
+     }
+    ]
+   },
+   {
+    "order": 1,
+    "panel_id": "a9638cd4-c2dc-4aea-b913-4c3d650632f4",
+    "rect": {
+     "height": 0.475,
+     "width": 0.46249999999999997,
+     "x": 0.5075,
+     "y": 0.02
+    },
+    "reserved_zones": [
+     {
+      "height": 0.65,
+      "width": 0.92,
+      "x": 0.04,
+      "y": 0.04
+     }
+    ],
+    "utterances": [
+     {
+      "kind": "narration",
+      "order": 0,
+      "text": "A boat is lost at sea.",
+      "utterance_id": "a9638cd4-c2dc-4aea-b913-4c3d650632f4-narration"
+     },
+     {
+      "kind": "speech",
+      "order": 1,
+      "text": "\"Follow my light!\"",
+      "utterance_id": "a9638cd4-c2dc-4aea-b913-4c3d650632f4-dialogue-0",
+      "speaker": "Nia"
+     }
+    ]
+   },
+   {
+    "order": 2,
+    "panel_id": "e1c7e788-302d-4f24-bd8a-bfa6f2b85087",
+    "rect": {
+     "height": 0.475,
+     "width": 0.46249999999999997,
+     "x": 0.03,
+     "y": 0.505
+    },
+    "reserved_zones": [
+     {
+      "height": 0.653,
+      "width": 0.92,
+      "x": 0.04,
+      "y": 0.04
+     }
+    ],
+    "utterances": [
+     {
+      "kind": "narration",
+      "order": 0,
+      "text": "Golden light leads them home.",
+      "utterance_id": "e1c7e788-302d-4f24-bd8a-bfa6f2b85087-narration"
+     },
+     {
+      "kind": "speech",
+      "order": 1,
+      "text": "\"Steady, this way home!\"",
+      "utterance_id": "e1c7e788-302d-4f24-bd8a-bfa6f2b85087-dialogue-0",
+      "speaker": "Nia"
+     }
+    ]
+   },
+   {
+    "order": 3,
+    "panel_id": "7eecb236-cd03-41c4-8440-62e8db3f7c67",
+    "rect": {
+     "height": 0.475,
+     "width": 0.46249999999999997,
+     "x": 0.5075,
+     "y": 0.505
+    },
+    "reserved_zones": [
+     {
+      "height": 0.652,
+      "width": 0.92,
+      "x": 0.04,
+      "y": 0.04
+     }
+    ],
+    "utterances": [
+     {
+      "kind": "narration",
+      "order": 0,
+      "text": "Sunrise brings a farewell.",
+      "utterance_id": "7eecb236-cd03-41c4-8440-62e8db3f7c67-narration"
+     },
+     {
+      "kind": "speech",
+      "order": 1,
+      "text": "\"Fly free, little friend.\"",
+      "utterance_id": "7eecb236-cd03-41c4-8440-62e8db3f7c67-dialogue-0",
+      "speaker": "Nia"
+     }
+    ]
+   }
+  ],
+  "version": "lettering-v1"
+ },
+ "subjects": [
+  {
+   "kind": "face",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.16,
+    0.13,
+    0.2,
+    0.17
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.63,
+    0.19,
+    0.09,
+    0.12
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 1.0,
+   "character": null,
+   "rect": [
+    0.77,
+    0.15,
+    0.15,
+    0.12
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 1.0,
+   "character": null,
+   "rect": [
+    0.29,
+    0.28,
+    0.19,
+    0.15
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 1.0,
+   "character": null,
+   "rect": [
+    0.27,
+    0.68,
+    0.17,
+    0.14
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.03,
+    0.75,
+    0.13,
+    0.16
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 1.0,
+   "character": null,
+   "rect": [
+    0.73,
+    0.64,
+    0.17,
+    0.14
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.43,
+    0.69,
+    0.12,
+    0.13
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.88,
+    0.7,
+    0.12,
+    0.15
+   ]
+  }
+ ]
+}

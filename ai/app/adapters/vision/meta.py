@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from ...costs import GENERATION_POLICIES
 from ..meta_http import (
     DEFAULT_META_USER_FIELD,
     DEFAULT_META_VISION_MODEL,
@@ -22,7 +23,8 @@ from ..meta_http import (
     validate_model_id_tier,
     validate_reasoning_effort,
 )
-from .port import PaletteSuggestion, VisionPort
+from .port import PaletteSuggestion, SubjectBox, VisionPort
+from .subjects import downscale_for_vision, parse_subjects, subjects_prompt
 
 
 class MetaVisionAdapter(VisionPort):
@@ -193,3 +195,14 @@ class MetaVisionAdapter(VisionPort):
         except Exception as exc:
             self._client.record_invalid_response(type(exc).__name__)
             raise
+
+    def detect_subjects(
+        self, model: str, image_bytes: bytes, characters: list[str], **kwargs: Any
+    ) -> list[SubjectBox]:
+        """One bounded call: downscaled page in, validated normalized boxes out. No retries."""
+        policy = GENERATION_POLICIES["subjects"]
+        for name, value in policy.options().items():
+            kwargs.setdefault(name, value)
+        small = downscale_for_vision(image_bytes)
+        content = self.review(model, small, subjects_prompt(characters), **kwargs)
+        return parse_subjects(content, characters)
