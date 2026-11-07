@@ -200,7 +200,8 @@ it('refreshes source panels after inline lettering edits when returning to Panel
 	await fireEvent.input(input, { target: { value: 'Fresh lettering' } });
 	await waitFor(() => expect(api.pages.get(page.id).lettering.input.panels[0].utterances[1].text).toBe('Fresh lettering'));
 	await fireEvent.keyDown(input, { key: 'Escape' });
-	await fireEvent.click(view.getByRole('button', { name: '4. Panels Complete' }));
+	// Stage navigation lives in the app sidebar and calls the editor's exported selectStage.
+	await view.component.selectStage('panels');
 	await waitFor(() => expect(view.getByText('"Fresh lettering"')).toBeTruthy());
 });
 

@@ -144,16 +144,28 @@ test('Mock character image and description reference the same coherent sample', 
 	);
 });
 
-test('Frontend UI templates render sample indicator on sample assets in mock mode', () => {
+test('Frontend UI templates tag sample assets and the product as Beta in mock mode', () => {
 	const pageTemplate = readFileSync(join(root, 'src/routes/+page.svelte'), 'utf8');
 	assert.ok(
-		pageTemplate.includes('mock-pill'),
-		'+page.svelte must identify mock mode with status pill'
+		pageTemplate.includes("authMode === 'mock'") && pageTemplate.includes('demo-sample-banner'),
+		'+page.svelte must still explain mock mode in the demo banner'
 	);
+	assert.match(pageTemplate, /sample art|sample/i, 'the banner sentence keeps the honest sample wording');
 
 	const editorTemplate = readFileSync(join(root, 'src/lib/editor/ComicEditor.svelte'), 'utf8');
-	assert.ok(
-		editorTemplate.includes('sample-tag') || editorTemplate.includes('sample-badge'),
-		'ComicEditor.svelte must render sample indicator on sample page previews'
+	assert.equal(
+		(editorTemplate.match(/\{#if \w+\.is_sample \|\| \w+\.sample_label\}\s*<BetaTag \/>/g) || []).length,
+		3,
+		'ComicEditor.svelte must render the Beta tag on sample character and page previews'
 	);
+	const beta = readFileSync(join(root, 'src/lib/design/BetaTag.svelte'), 'utf8');
+	assert.match(beta, />Beta</, 'the tag reads Beta');
+});
+
+test('No UI label reads Sample any more', () => {
+	const sources = ['src/routes/+page.svelte', 'src/lib/editor/ComicEditor.svelte', 'src/lib/design/BetaTag.svelte', 'src/lib/design/AppHeader.svelte', 'src/lib/design/AppFooter.svelte'];
+	for (const file of sources) {
+		const source = readFileSync(join(root, file), 'utf8').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, '');
+		assert.doesNotMatch(source, />\s*Sample\s*</, `${file} must not label anything Sample`);
+	}
 });

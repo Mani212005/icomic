@@ -9,7 +9,8 @@ const forbidden = [
 	/\b[A-Z][A-Z0-9_]*(?:API_KEY|AUTH_TOKEN|SECRET|ACCESS_TOKEN)\b/
 ];
 const externalUrl = /https?:\/\/[^\s"'<>`)}\]]+/gi;
-const allowedUrl = /^(?:https?:\/\/www\.w3\.org\/(?:2000\/svg(?:%22)?|1999\/xhtml)$|https:\/\/svelte\.dev\/e\/)/i;
+// The footer links to the public repository README and docs; nothing else outside the bundle is allowed.
+const allowedUrl = /^(?:https?:\/\/www\.w3\.org\/(?:2000\/svg(?:%22)?|1999\/xhtml)$|https:\/\/svelte\.dev\/e\/|https:\/\/github\.com\/Mani212005\/icomic(?:[/#]|$))/i;
 
 async function* filesUnder(directory) {
 	for (const entry of await readdir(directory, { withFileTypes: true })) {
