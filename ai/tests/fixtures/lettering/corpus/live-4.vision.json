@@ -1,0 +1,170 @@
+{
+ "source": "one real Meta vision call on the raw art (downscaled to 1024 px), boxes page-normalized (x, y, width, height); objects larger than 5 percent of the page dropped as clearly wrong",
+ "subjects": [
+  {
+   "kind": "face",
+   "confidence": 0.95,
+   "character": "Nia",
+   "rect": [
+    0.168,
+    0.162,
+    0.185,
+    0.139
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.9,
+   "character": "Nia",
+   "rect": [
+    0.184,
+    0.354,
+    0.102,
+    0.052
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 0.95,
+   "character": null,
+   "rect": [
+    0.363,
+    0.271,
+    0.077,
+    0.062
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.95,
+   "character": null,
+   "rect": [
+    0.354,
+    0.31,
+    0.125,
+    0.119
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.85,
+   "character": null,
+   "rect": [
+    0.24,
+    0.338,
+    0.104,
+    0.122
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 0.98,
+   "character": null,
+   "rect": [
+    0.702,
+    0.164,
+    0.2,
+    0.135
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.95,
+   "character": null,
+   "rect": [
+    0.636,
+    0.311,
+    0.319,
+    0.115
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 0.9,
+   "character": "Nia",
+   "rect": [
+    0.094,
+    0.587,
+    0.119,
+    0.064
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.88,
+   "character": "Nia",
+   "rect": [
+    0.189,
+    0.664,
+    0.07,
+    0.05
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 0.95,
+   "character": null,
+   "rect": [
+    0.184,
+    0.695,
+    0.104,
+    0.087
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.9,
+   "character": null,
+   "rect": [
+    0.19,
+    0.641,
+    0.098,
+    0.08
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.9,
+   "character": null,
+   "rect": [
+    0.327,
+    0.827,
+    0.15,
+    0.089
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 0.96,
+   "character": "Nia",
+   "rect": [
+    0.642,
+    0.702,
+    0.217,
+    0.153
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.9,
+   "character": "Nia",
+   "rect": [
+    0.826,
+    0.877,
+    0.087,
+    0.033
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 0.97,
+   "character": null,
+   "rect": [
+    0.759,
+    0.62,
+    0.149,
+    0.092
+   ]
+  }
+ ]
+}

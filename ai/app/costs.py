@@ -53,10 +53,10 @@ GENERATION_POLICIES = MappingProxyType(
         ),
         # No separately retained live review reasoning; use the vision completion bound.
         "review": GenerationPolicy(256, 1280, "minimal", 809, 809, WORST_CASE_VISION_INPUT_TOKENS),
-        # One JSON list of up to 40 boxes; reasoning stays minimal. Bounds are conservative
-        # reuse of the review reasoning evidence until a live call records its own usage.
+        # One JSON list of up to 40 boxes. Three live calls on 1024 px pages (15 to 22 boxes)
+        # recorded 1275, 1633 and 1388 completion tokens, of which 665, 672 and 601 reasoning.
         "subjects": GenerationPolicy(
-            1024, 1280, "minimal", 809, 809, WORST_CASE_SUBJECTS_INPUT_TOKENS
+            1024, 1280, "minimal", 1633, 672, WORST_CASE_SUBJECTS_INPUT_TOKENS
         ),
     }
 )

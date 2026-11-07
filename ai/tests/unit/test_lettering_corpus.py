@@ -22,19 +22,35 @@ from app.services.lettering.geometry import Box
 from app.services.lettering.pdf import eligibility
 
 CORPUS = Path(__file__).parents[1] / "fixtures/lettering/corpus"
-PAGES = sorted(path.stem for path in CORPUS.glob("*.json"))
+PAGES = sorted(path.stem for path in CORPUS.glob("*.jpg"))
+VISION_PAGES = sorted(
+    path.name.removesuffix(".vision.json") for path in CORPUS.glob("*.vision.json")
+)
+BOX_SETS = [(name, "hand") for name in PAGES] + [(name, "vision") for name in VISION_PAGES]
 ASPECT = 2 / 3
 MIN_FONT = 18 / 841.89
 
 
-def _load(name):
+def _subjects(items):
+    return [
+        Subject(Box(*item["rect"]), item["kind"], item["confidence"], item["character"])
+        for item in items
+    ]
+
+
+def _load(name, boxes="hand"):
+    """The page, its art and the boxes that stand in for the vision step.
+
+    `hand` boxes were marked by eye on the art; `vision` boxes are the recorded output of one
+    real vision call. Either way the result is also checked against the hand-marked boxes.
+    """
     data = json.loads((CORPUS / f"{name}.json").read_text())
     document = LetteringDocument.model_validate(data["document"])
-    subjects = [
-        Subject(Box(*item["rect"]), item["kind"], item["confidence"], item["character"])
-        for item in data["subjects"]
-    ]
-    return document, (CORPUS / f"{name}.jpg").read_bytes(), subjects
+    marked = _subjects(data["subjects"])
+    if boxes == "vision":
+        fed = _subjects(json.loads((CORPUS / f"{name}.vision.json").read_text())["subjects"])
+        return document, (CORPUS / f"{name}.jpg").read_bytes(), fed, marked
+    return document, (CORPUS / f"{name}.jpg").read_bytes(), marked, marked
 
 
 def _bounds(bubble):
@@ -50,7 +66,7 @@ def _speaker_faces(document, subjects, panel):
     return [s for s in subjects if s.kind == "face" and rect.overlaps(s.box)]
 
 
-def _assert_clean_and_complete(result, document, subjects):
+def _assert_clean_and_complete(result, document, subjects, cross_checked=()):
     lines = [u for panel in document.panels for u in panel.utterances]
     # Every utterance is drawn, as itself or as the parts of a split caption.
     placed = {}
@@ -66,7 +82,8 @@ def _assert_clean_and_complete(result, document, subjects):
             for part in bubble.lines
         )
         assert drawn.split() == line.text.split(), "text must never be trimmed or reordered"
-    boxes = [b.box for b in subjects]
+    # Faces, hands and birds are hard exclusions; key objects only add placement cost.
+    boxes = [b.box for b in subjects if b.kind in ("face", "hand", "bird")]
     for bubble in result.bubbles:
         assert not bubble.flags, (bubble.utterance_id, bubble.flags)
         assert all(line.font_size >= MIN_FONT - 1e-9 for line in bubble.lines)
@@ -74,6 +91,18 @@ def _assert_clean_and_complete(result, document, subjects):
         page_box = Box(physical.x, physical.y, physical.width, physical.height)
         for subject in boxes:
             assert not page_box.overlaps(subject), (bubble.utterance_id, subject)
+        # A second, independent source (the hand marks, when a real vision call drove the
+        # layout) may draw a box slightly differently: only real coverage of it is a failure.
+        for other in cross_checked:
+            if other.kind not in ("face", "hand", "bird"):
+                continue
+            ox = min(page_box.right, other.box.right) - max(page_box.x, other.box.x)
+            oy = min(page_box.bottom, other.box.bottom) - max(page_box.y, other.box.y)
+            if ox > 0 and oy > 0:
+                assert ox * oy <= 0.15 * other.box.width * other.box.height, (
+                    bubble.utterance_id,
+                    other,
+                )
     for first, second in zip(result.bubbles, result.bubbles[1:] + result.bubbles[:1]):
         if first is not second:
             assert not _bounds(first).overlaps(_bounds(second)), "collision"
@@ -124,20 +153,20 @@ def _assert_exports_without_review_note(result, document):
     assert warning is None and layout is not None
 
 
-@pytest.mark.parametrize("name", PAGES)
-def test_saved_page_letters_completely_without_review(name):
-    document, art, subjects = _load(name)
+@pytest.mark.parametrize(("name", "boxes"), BOX_SETS)
+def test_saved_page_letters_completely_without_review(name, boxes):
+    document, art, fed, marked = _load(name, boxes)
 
-    result = layout_page(document, art_image=art, subjects=subjects)
+    result = layout_page(document, art_image=art, subjects=fed)
 
-    _assert_clean_and_complete(result, document, subjects)
-    _assert_tails_point_at_speakers(result, document, subjects)
+    _assert_clean_and_complete(result, document, fed, cross_checked=marked)
+    _assert_tails_point_at_speakers(result, document, fed)
     _assert_exports_without_review_note(result, document)
 
 
 @pytest.mark.parametrize("name", PAGES)
 def test_layout_is_deterministic(name):
-    document, art, subjects = _load(name)
+    document, art, subjects, _ = _load(name)
 
     first = layout_page(document, art_image=art, subjects=subjects)
     second = layout_page(document, art_image=art, subjects=subjects)
@@ -145,11 +174,12 @@ def test_layout_is_deterministic(name):
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
 
 
-def test_live_4_panel_one_narration_clears_the_head_and_brow():
-    document, art, subjects = _load("live-4")
-    head = next(s.box for s in subjects if s.kind == "face")  # Panel 1: hat, brow and face.
+@pytest.mark.parametrize("boxes", ["hand", "vision"])
+def test_live_4_panel_one_narration_clears_the_head_and_brow(boxes):
+    document, art, fed, marked = _load("live-4", boxes)
+    head = next(s.box for s in marked if s.kind == "face")  # Panel 1: hat, brow and face.
 
-    result = layout_page(document, art_image=art, subjects=subjects)
+    result = layout_page(document, art_image=art, subjects=fed)
 
     caption = next(b for b in result.bubbles if b.panel_id == document.panels[0].panel_id)
     assert caption.kind == "narration" and not _bounds(caption).overlaps(head)
@@ -222,7 +252,7 @@ VARIANTS = {
 @pytest.mark.parametrize("variant", sorted(VARIANTS))
 @pytest.mark.parametrize("name", PAGES)
 def test_stress_variant_still_letters_completely(name, variant):
-    document, art, subjects = _load(name)
+    document, art, subjects, _ = _load(name)
     document = VARIANTS[variant](document)
 
     result = layout_page(document, art_image=art, subjects=subjects)
@@ -231,9 +261,37 @@ def test_stress_variant_still_letters_completely(name, variant):
     _assert_exports_without_review_note(result, document)
 
 
+@pytest.mark.parametrize("variant", sorted(VARIANTS))
+@pytest.mark.parametrize("name", VISION_PAGES)
+def test_stress_variant_with_real_vision_boxes_never_drops_a_line_or_covers_a_subject(
+    name, variant
+):
+    # Real boxes are looser than hand marks (whole torsos, wide objects), so a crowded panel
+    # may leave a line placed but flagged for review. It is never dropped, trimmed or hidden
+    # over a face, hand or bird that the vision step found.
+    document, art, fed, _ = _load(name, "vision")
+    document = VARIANTS[variant](document)
+
+    result = layout_page(document, art_image=art, subjects=fed)
+
+    flagged = {i.utterance_id for i in result.issues}
+    drawn = {}
+    for bubble in result.bubbles:
+        drawn.setdefault(bubble.utterance_id.split("~")[0], []).append(bubble)
+    for panel in document.panels:
+        for u in panel.utterances:
+            parts = sorted(drawn[u.utterance_id], key=lambda b: b.utterance_id)
+            assert " ".join(p.text for b in parts for p in b.lines).split() == u.text.split()
+    hard = [s.box for s in fed if s.kind in ("face", "hand", "bird")]
+    for bubble in result.bubbles:
+        if bubble.utterance_id.split("~")[0] in flagged or bubble.utterance_id in flagged:
+            continue
+        assert not any(_bounds(bubble).overlaps(box) for box in hard)
+
+
 @pytest.mark.parametrize("name", PAGES)
 def test_no_calm_space_art_still_letters_every_line_clear_of_subjects(name):
-    document, _, subjects = _load(name)
+    document, _, subjects, _ = _load(name)
     noise = np.random.default_rng(7).integers(0, 256, (960, 640, 3), dtype=np.uint8)
     buffer = BytesIO()
     Image.fromarray(noise).save(buffer, format="PNG")
@@ -249,7 +307,7 @@ def test_no_calm_space_art_still_letters_every_line_clear_of_subjects(name):
 
 @pytest.mark.parametrize("name", PAGES)
 def test_over_budget_narration_is_never_dropped_trimmed_or_hidden_over_a_subject(name):
-    document, art, subjects = _load(name)
+    document, art, subjects, _ = _load(name)
     document = _set_narration(document, OVER_BUDGET_CAPTION)
 
     result = layout_page(document, art_image=art, subjects=subjects)

@@ -21,6 +21,7 @@ from ...gen.models import (
     LetteringUtterance,
 )
 from .art_safety import (
+    HARD_MARGIN,
     SIZE_COST,
     ArtSafetyMap,
     Subject,
@@ -547,7 +548,15 @@ def _layout_panel(
             ),
             key=lambda s: -s.confidence,
         )
-        hard_boxes = [Box(f.x * aspect, f.y, f.width * aspect, f.height) for f in panel_faces]
+        hard_boxes = [
+            Box(
+                f.x * aspect - HARD_MARGIN,
+                f.y - HARD_MARGIN,
+                f.width * aspect + 2 * HARD_MARGIN,
+                f.height + 2 * HARD_MARGIN,
+            )
+            for f in panel_faces
+        ]
 
     def named_speaker_face(u: LetteringUtterance) -> Box | None:
         """The speaker's own face box, when the vision step named the character."""
@@ -724,13 +733,9 @@ def _layout_panel(
     for i, (d, (lines, texts)) in enumerate(zip(drafts, rendered)):
         if not p.contains(d.box) or any(not p.contains(t) for t in texts):
             d.flags.append("out_of_panel")
-        if not any(z.contains(d.box) for z in zones) and (
-            not art_safety
-            or (
-                d.utterance.placement
-                and (d.utterance.placement.rect or d.utterance.placement.center)
-            )
-        ):
+        # With art (or vision boxes) a zone is only a hint, so even a manual placement may leave
+        # it; without any art the zones stay hard.
+        if not art_safety and not any(z.contains(d.box) for z in zones):
             d.flags.append("outside_reserved_zone")
         inner = Box(
             d.box.x + cfg.padding,

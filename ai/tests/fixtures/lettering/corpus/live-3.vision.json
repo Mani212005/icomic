@@ -1,0 +1,236 @@
+{
+ "source": "one real Meta vision call on the raw art (downscaled to 1024 px), boxes page-normalized (x, y, width, height); objects larger than 5 percent of the page dropped as clearly wrong",
+ "subjects": [
+  {
+   "kind": "face",
+   "confidence": 0.95,
+   "character": "Nia",
+   "rect": [
+    0.107,
+    0.079,
+    0.26,
+    0.236
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.95,
+   "character": "Nia",
+   "rect": [
+    0.201,
+    0.296,
+    0.134,
+    0.093
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.9,
+   "character": "Nia",
+   "rect": [
+    0.275,
+    0.365,
+    0.144,
+    0.105
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 0.97,
+   "character": null,
+   "rect": [
+    0.322,
+    0.292,
+    0.142,
+    0.189
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.95,
+   "character": null,
+   "rect": [
+    0.025,
+    0.06,
+    0.099,
+    0.22
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.9,
+   "character": null,
+   "rect": [
+    0.094,
+    0.462,
+    0.142,
+    0.097
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 0.92,
+   "character": "Nia",
+   "rect": [
+    0.565,
+    0.184,
+    0.22,
+    0.169
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.93,
+   "character": "Nia",
+   "rect": [
+    0.687,
+    0.269,
+    0.09,
+    0.036
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.9,
+   "character": "Nia",
+   "rect": [
+    0.591,
+    0.333,
+    0.063,
+    0.036
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 0.97,
+   "character": null,
+   "rect": [
+    0.803,
+    0.157,
+    0.16,
+    0.128
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.93,
+   "character": null,
+   "rect": [
+    0.758,
+    0.29,
+    0.215,
+    0.166
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 0.94,
+   "character": "Nia",
+   "rect": [
+    0.053,
+    0.719,
+    0.206,
+    0.16
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.92,
+   "character": "Nia",
+   "rect": [
+    0.254,
+    0.814,
+    0.1,
+    0.077
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.88,
+   "character": "Nia",
+   "rect": [
+    0.068,
+    0.938,
+    0.11,
+    0.062
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 0.97,
+   "character": null,
+   "rect": [
+    0.261,
+    0.66,
+    0.178,
+    0.15
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.92,
+   "character": null,
+   "rect": [
+    0.066,
+    0.591,
+    0.178,
+    0.204
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 0.95,
+   "character": "Nia",
+   "rect": [
+    0.578,
+    0.706,
+    0.262,
+    0.19
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.93,
+   "character": "Nia",
+   "rect": [
+    0.872,
+    0.769,
+    0.114,
+    0.158
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 0.85,
+   "character": "Nia",
+   "rect": [
+    0.592,
+    0.952,
+    0.07,
+    0.048
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 0.97,
+   "character": null,
+   "rect": [
+    0.715,
+    0.649,
+    0.152,
+    0.122
+   ]
+  },
+  {
+   "kind": "object",
+   "confidence": 0.88,
+   "character": null,
+   "rect": [
+    0.647,
+    0.917,
+    0.07,
+    0.078
+   ]
+  }
+ ]
+}

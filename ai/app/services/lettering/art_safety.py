@@ -19,7 +19,11 @@ BIRD_CONFIDENCE = 0.7
 # Subject boxes supplied by the vision step (or hand-marked fixtures) are hard no-go areas
 # from this confidence upward; weaker boxes only add cost.
 HARD_SUBJECT_CONFIDENCE = 0.5
+# Breathing room kept around every hard box: detected boxes are never tight, and two sources
+# (a vision call and a human) rarely agree to the pixel.
+HARD_MARGIN = 0.004
 SUBJECT_KINDS = ("face", "hand", "bird", "object")
+HARD_KINDS = ("face", "hand", "bird")
 
 
 @dataclass(frozen=True)
@@ -92,7 +96,10 @@ def with_subjects(base: ArtSafetyMap | None, subjects: Sequence[Subject]) -> Art
     if base is None:
         base = _flat_map()
     zeros = np.zeros_like(base.subject_integral)
-    hard = tuple(s.box for s in subjects if s.confidence >= HARD_SUBJECT_CONFIDENCE)
+    # Faces, hands and birds are never covered. Key objects (lamps, boats) only add cost.
+    hard = tuple(
+        s.box for s in subjects if s.kind in HARD_KINDS and s.confidence >= HARD_SUBJECT_CONFIDENCE
+    )
     return replace(
         base,
         subject_integral=zeros,
@@ -454,7 +461,7 @@ def place_in_calm_art(
                     if (
                         (y, x) >= floor
                         and not any(candidate.overlaps(b, gap) for b in occupied)
-                        and not safety.intersects_face(candidate, aspect, margin=0.004)
+                        and not safety.intersects_face(candidate, aspect, margin=HARD_MARGIN)
                         and safety.busy_fraction(candidate, aspect) <= MAX_BUSY
                     ):
                         cost = slot_cost(candidate, panel or region, safety, aspect)

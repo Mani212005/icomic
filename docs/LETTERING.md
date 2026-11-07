@@ -35,12 +35,17 @@ pages use two columns in array order, with the last odd panel spanning both.
 Page margins are 3% horizontal/2% vertical, gutters 1.5% horizontal/1% vertical.
 
 Each nonempty panel initially reserves an upper band at `(0.04, 0.04)` with width
-`0.92`. Its height is `min(0.80, 0.55 + max(0, characters-50)*0.001 +
-max(0, utterances-1)*0.10)`. Counts include narration and speech. The art prompt
+`0.92`. Its height is `min(0.35, 0.25 + max(0, characters-50)*0.001 +
+max(0, utterances-1)*0.05)`: a hint about where the art should leave calm space, capped at
+about a third of the panel and never the whole panel (the layout service also clamps any
+older stored zone to 35% of the panel height when art is present). Counts include narration
+and speech. The art prompt
 requests a large low-detail empty sky, sea or wall pocket at the outer top of each
 dialogue panel, away from faces, mouths, hands, birds, props and character silhouettes,
-with a clear path for each speech tail. After painting, the layout service scores local edge
-density and variance, detects face-like warm-color clusters and compact brass areas, and
+with a clear path for each speech tail. After painting, one vision call returns subject
+boxes (see Subject boxes from the vision step below); the layout service scores local edge
+density and variance, uses those boxes (or, as a fallback, face-like warm-color clusters and
+compact brass areas), and
 scores every candidate slot with a continuous cost (see Scored art-aware placement below).
 In overlay mode, panel text generation limits dialogue
 and captions to bounded lengths, allows at most two short speech turns and one caption,
@@ -81,7 +86,7 @@ this mode; baked fake output is unchanged.
 `PageLetteringState` model contains `version: page-lettering-v1`, `input` (the
 `lettering-v1` document with no manual placement), `overrides` keyed by utterance
 ID, `zone_overrides` keyed by panel ID, and the computed `lettering-layout-v1`
-`layout`. Source zones and manual placements remain separate from the draw list.
+`layout`. It also caches the vision step's `subjects` and their `subjects_source`. Source zones and manual placements remain separate from the draw list.
 
 Layout is computed at allocation, after source panel text edits and page allocation
 edits, and after zone/utterance override PATCH. Automatic zones follow changed text
@@ -93,8 +98,10 @@ compare the previous layer and update only JSONB, so concurrent edits return 409
 for reload/retry without overwriting images or another placement. Ordinary image
 writes cannot change lettering mode/state. Reads and generation reconcile changed
 source input after an interrupted text update. Painted-page generation also
-recomputes layout against the newly stored art when the lettering document is
-unchanged.
+recomputes layout against the newly stored art, using the subject boxes returned with
+the page, and persists it with the same compare-and-save as every other lettering write
+(the generic page update never writes the lettering column; before this was fixed the
+art-aware layout was computed but dropped, so export used the art-blind layout).
 
 The public contract is `contracts/openapi/lettering-api.yaml`; payload schemas and
 Go/Python generated models share `contracts/openapi/ai-service.yaml`:
@@ -253,10 +260,11 @@ covers a confident face (`HARD_FACE_CONFIDENCE`, which includes any hand-marked 
 injected in tests). Search order: reserved zones first, accepting a slot costing at most
 `ZONE_COST_LIMIT`; otherwise the whole panel margin, accepting a slot costing at most
 `MAX_SLOT_COST`; otherwise the line is withheld with `no_calm_zone` and a review note.
-Slots outside the reserved zone are legal in art-aware mode (`outside_reserved_zone`
-applies only to manual placements). The constants are documented in `art_safety.py`.
+Slots outside the reserved zone are legal in art-aware mode, manual placements included:
+a zone is only a hint there, and `outside_reserved_zone` is raised only when no art or subject
+boxes were available. The constants are documented in `art_safety.py`.
 
-The acceptance fixtures are the saved live-2 and live-3 painted pages with hand-marked
+The earlier acceptance fixtures are the saved live-2 and live-3 painted pages with hand-marked
 faces, birds and hands (`fixtures/lettering/live-2/ground-truth.json` and the live-3 list
 in `test_lettering_art_aware.py`). On both pages at least 80% of lines, including every
 speech bubble, are placed with no collision, outside-zone or overflow flag, and the
@@ -264,6 +272,57 @@ exported PDF carries no review note. Detection is heuristic: residual contact wi
 loosely drawn hand-marked rectangle is possible on unaided runs, so the zero-overlap
 assertion is made with those rectangles as hard no-go boxes, as in the existing
 hand-marked regression tests.
+
+### Subject boxes from the vision step
+
+With overlay lettering on, the painted page job makes **one** vision call on the stored art
+(`LETTERING_SUBJECT_DETECTION_ENABLED`, empty by default so it follows
+`LETTERING_OVERLAY_ENABLED`; `false` turns it off). The page is downscaled to at most
+1024 px on its long edge, then `VisionPort.detect_subjects` returns normalized boxes with a
+confidence for faces, hands, birds and key objects, and the character each face or hand
+belongs to (the project's character names are in the prompt). The call goes through the
+existing Meta vision adapter and cost guard: an explicit per-call cap (policy `subjects`:
+1024 answer plus 1280 reasoning tokens), reserve before transmission, settle on usage, and
+no retry. It costs **about $0.007 to $0.008 per page** (three live calls: $0.00672,
+$0.00824, $0.00709). The reply is parsed defensively: unknown kinds, non-finite or
+out-of-range numbers, boxes under 1% or over 90% of a page side are dropped, and a reply
+with no valid box is junk.
+
+The boxes are stored on the page (`subjects`, with `subjects_source`) next to the layout, so
+every later layout (a text edit, a zone edit) reuses them: deterministic and free. They are
+passed to `layout_page(..., subjects=...)`, where they **replace** the colour and brass
+heuristics (`art_safety.with_subjects`); the local detail maps still score calmness. Faces,
+hands and birds are hard exclusions (a slot never overlaps one, with a 0.4% breathing
+margin); key objects only add cost. If the call fails, is refused by the cost guard, or
+returns junk, `subjects_source` is `fallback`, the heuristics above are used and the export
+is never blocked. The fake vision adapter returns a deterministic face per character name,
+or a fixture of boxes.
+
+Speakers: panel text generation asks the model to start every speech turn with the
+speaking character's name (`Nia: Follow my light!`). The Go API stores it as the
+utterance `speaker` and the name is not lettered. When a face box carries the same
+character name, the speech bubble prefers a slot above that face and its tail (up to 6% of
+page height) points at that face; otherwise the nearest face is used. Narration has no
+speaker.
+
+**Every line is placed.** After the scored search, a line that found no calm slot is
+handled in this order: type is already at the documented minimum, so a caption is split into
+two captions at a word boundary (ids `<id>~1` and `<id>~2`, text never trimmed); then a
+margin strip along the panel's top or bottom edge; then, for speech or a blocked strip, the
+least-bad free slot. Only a slot that still touches a face, hand or bird, or that is solid
+detail edge to edge, gets `no_calm_zone` and a review note. Without any art or boxes the old
+behavior stays (zones are hard and a line that cannot fit is flagged).
+
+The acceptance corpus is `ai/tests/fixtures/lettering/corpus/` (test
+`test_lettering_corpus.py`): the saved painted pages probe-1, live-2, live-3 and live-4
+(downscaled art under 300 KB each, real utterance sets, `Nia` as speaker) with hand-marked
+face, hand and bird boxes as the fake vision output, plus recorded real vision output for
+live-2, live-3 and live-4 (`*.vision.json`, objects above 5% of a page dropped as clearly
+wrong). Every line must be placed with no overlap of a face, hand or bird box, no flag, a
+clean PDF eligibility decision and tails pointing at the speaker's face; live-4's first
+narration must clear Nia's head and brow. Synthetic stress variants (14-word captions, three
+and four lines per panel, art with no calm space, over-budget text) must also place every
+line.
 
 Tails attach to the actual bubble silhouette facing the manual/speaker anchor.
 Automatic speech tails use a broad base and sampled quadratic sides for a short,

@@ -56,7 +56,11 @@ def _with_overlay_text_budgets(schema: dict) -> dict:
 
 
 def _overlay_page_document(panels: list[PanelTextItem], page_number: int) -> LetteringDocument:
-    """Build the same default panel rectangles and zones as the Go page source."""
+    """Build the Go page source's panel rectangles with a generous zone for the generation check.
+
+    The stored zone is capped at 35% of the panel; this check keeps the wider band so text is
+    only rejected when it cannot fit a panel at the documented 18 pt minimum.
+    """
     count = len(panels)
     columns = 1 if count <= 2 else 2
     rows = math.ceil(count / columns)
