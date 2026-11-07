@@ -34,6 +34,9 @@
   --danger-soft: var(--accent-soft);
   --focus: var(--text);
   --paper-texture: url('/textures/watercolour-paper.webp');
+  --page-ground: #F7F2E8;
+  --page-gutters: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc5NjAnIGhlaWdodD0nNzIwJyB2aWV3Qm94PScwIDAgOTYwIDcyMCcgZmlsbD0nbm9uZScgc3Ryb2tlPScjNEI0NTQyJyBzdHJva2Utb3BhY2l0eT0nLjE2JyBzdHJva2Utd2lkdGg9JzInIHN0cm9rZS1saW5lam9pbj0ncm91bmQnPjxwYXRoIGQ9J00zMCAyOCBMNDUyIDI0IEw0NDggMjM4IEwyNiAyNDRaJy8+PHBhdGggZD0nTTQ3OCAyNiBMOTM0IDMwIEw5MzAgMjM4IEw0NzQgMjM2WicvPjxwYXRoIGQ9J00yOCAyNjYgTDI5MCAyNjIgTDI4NiA0NzggTDI0IDQ4MlonLz48cGF0aCBkPSdNMzE2IDI2NCBMOTM0IDI2MiBMOTMwIDQ4MCBMMzEyIDQ3OFonLz48cGF0aCBkPSdNMjYgNTA4IEw1OTggNTA0IEw1OTQgNjk2IEwyNCA2OThaJy8+PHBhdGggZD0nTTYyNCA1MDYgTDkzNiA1MDQgTDkzNCA2OTQgTDYyMCA2OTZaJy8+PC9zdmc+");
+  --page-grain: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSczMjAnIGhlaWdodD0nMzIwJz48ZmlsdGVyIGlkPSduJyB4PScwJyB5PScwJyB3aWR0aD0nMTAwJScgaGVpZ2h0PScxMDAlJz48ZmVUdXJidWxlbmNlIHR5cGU9J2ZyYWN0YWxOb2lzZScgYmFzZUZyZXF1ZW5jeT0nLjknIG51bU9jdGF2ZXM9JzMnIHN0aXRjaFRpbGVzPSdzdGl0Y2gnLz48ZmVDb2xvck1hdHJpeCB2YWx1ZXM9JzAgMCAwIDAgLjMwICAwIDAgMCAwIC4yNSAgMCAwIDAgMCAuMjAgIDAgMCAwIC45IC0uMjgnLz48L2ZpbHRlcj48cmVjdCB3aWR0aD0nMTAwJScgaGVpZ2h0PScxMDAlJyBmaWx0ZXI9J3VybCgjbiknIG9wYWNpdHk9Jy41NScvPjwvc3ZnPg==");
   --header-h: 72px;
   --shadow: 0 3px 0 #4B454212, 0 14px 40px #4B454210;
   --display: 'Kalam', 'Segoe Print', cursive;
@@ -43,7 +46,14 @@
   font-synthesis: none;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--paper); font-size: 14px; line-height: 1.55; }
+html {
+  background-color: var(--page-ground);
+  background-image: var(--page-gutters), var(--page-grain);
+  background-size: 960px 720px, 320px 320px;
+  background-position: 0 0, 0 0;
+  background-repeat: repeat, repeat;
+}
+body { margin: 0; font-size: 14px; line-height: 1.55; }
 button, input, textarea, select { font: inherit; color: inherit; }
 button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 button, a { touch-action: manipulation; }
@@ -79,10 +89,6 @@ p { overflow-wrap: anywhere; }
 strong { font-weight: 650; }
 small { font-size: 12px; color: var(--muted); }
 .app-layout { min-height: 100vh; min-height: 100dvh; position: relative; isolation: isolate; display: flex; flex-direction: column; }
-.app-layout::before {
-  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-  background: var(--paper-texture) center / cover no-repeat; opacity: .72;
-}
 .nav-status { display: flex; align-items: center; gap: 6px; }
 .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; padding: 5px 8px; }
 .global-pill { color: var(--success); }

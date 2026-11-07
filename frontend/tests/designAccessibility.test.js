@@ -34,15 +34,27 @@ test('the supplied palette and its semantic surfaces retain AA text and control 
   for (const [name, expected] of Object.entries({ primary: '#c47f6f', background: '#f8f4ee', surface: '#fcfaf7', text: '#4b4542', accent: '#d6c19b' })) {
     assert.equal(colour(name), expected);
   }
-  for (const background of ['paper', 'sheet', 'sage', 'success-soft', 'warning-soft', 'danger-soft', 'accent-soft', 'accent-hover']) {
+  for (const background of ['paper', 'page-ground', 'sheet', 'sage', 'success-soft', 'warning-soft', 'danger-soft', 'accent-soft', 'accent-hover']) {
     for (const foreground of ['ink', 'muted']) {
       assert.ok(contrast(colour(foreground), colour(background)) >= 4.5, `${foreground} on ${background}`);
     }
   }
-  for (const background of ['paper', 'sheet', 'sage']) {
+  for (const background of ['paper', 'page-ground', 'sheet', 'sage']) {
     for (const foreground of ['line', 'focus']) {
       assert.ok(contrast(colour(foreground), colour(background)) >= 3, `${foreground} on ${background}`);
     }
+  }
+});
+
+test('the page background is a small static root-level paint with no fixed attachment', () => {
+  const root_rule = css.match(/\nhtml \{([^}]*)\}/)?.[1] ?? '';
+  assert.match(root_rule, /background-color:\s*var\(--page-ground\)/);
+  assert.match(root_rule, /background-image:\s*var\(--page-gutters\),\s*var\(--page-grain\)/);
+  assert.doesNotMatch(css, /background-attachment:\s*fixed/);
+  for (const token of ['page-gutters', 'page-grain']) {
+    assert.match(css, new RegExp(`--${token}:\\s*url\\("data:image/svg\\+xml;base64,`));
+    const payload = css.match(new RegExp(`--${token}:\\s*url\\("([^"]+)"\\)`))?.[1] ?? '';
+    assert.ok(payload.length > 0 && payload.length < 2000, `${token} stays a tiny inline tile`);
   }
 });
 
