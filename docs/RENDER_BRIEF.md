@@ -55,13 +55,16 @@ metadata or provenance verification.
 New projects/pages allocated with `LETTERING_OVERLAY_ENABLED=true` persist overlay
 eligibility and a versioned lettering document. Existing projects/pages and ink
 stay baked. Baked v1/v4/v5 prompt fixtures remain unchanged. Overlay draft and painted
-requests supply `lettering_document`; `page-render-brief-v5-overlay` contains an
+requests supply `lettering_document`; `page-render-brief-v6-overlay` contains an
 explicit 2:3 page aspect, exact normalized panel rectangles and reserved zones.
 Dialogue/narration, ordered utterance kinds and speaker labels are layout inputs
 only and are omitted from the image brief. The art policy requires TEXT-FREE output
-without bubbles, captions, lettering, numbers or readable signs, and calm sky/wall
-background inside the reserved upper bands, with faces/action below them.
+without bubbles, captions, letters, words, numbers, signs, labels, symbols, writing
+or glyph-like marks on props and scrolls. Dialogue panels request a large low-detail
+empty sky, sea or wall pocket at the outer top, away from faces and mouths, with a
+clear path to the speaker for the tail.
 
 See [LETTERING.md](LETTERING.md) for geometry, source IDs, persistence, ownership
-API, review flags and fake e2e instructions. No provider call, model option, editor
-UI or PDF drawing is added.
+API, review flags and fake e2e instructions. Art-aware placement reads the stored
+painted image without a provider call or additional model option. Eligible PDF exports
+draw searchable vector lettering as described in that document.

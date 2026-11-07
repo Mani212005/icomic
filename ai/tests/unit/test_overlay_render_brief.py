@@ -33,9 +33,13 @@ def test_overlay_brief_keeps_text_out_of_model_and_has_geometry():
         }
     )
     prompt, _ = build_page_render_request(**request, lettering_document=doc)
-    assert "page-render-brief-v5-overlay" in prompt
+    assert "page-render-brief-v6-overlay" in prompt
     assert "reserved_lettering_zones" in prompt and "page_geometry" in prompt
     assert "TEXT-FREE" in prompt and "no signs with readable text" in prompt
+    assert "LARGE LOW-DETAIL EMPTY" in prompt
+    assert "letters, words, numbers, signs, labels, symbols, writing" in prompt
+    assert "glyph-like marks on any prop or scroll" in prompt
+    assert "clear visual path from each pocket to its speaking character" in prompt
     assert "Draw exactly 1 separate bordered rectangular panels" in prompt
     assert "Never draw two copies of the same person" in prompt
     assert "draw exactly ONE bird" in prompt

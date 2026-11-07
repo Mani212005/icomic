@@ -37,6 +37,7 @@ from urllib.request import Request, urlopen
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT_DIR = Path("/home/mani/icomic-artifacts/comic-e2e")
 CAP_USD = 2.0
+MAX_OVERLAY_PDF_BYTES_PER_COMIC_PAGE = 4_000_000
 RUN_USER_ID: str | None = None
 COMPOSE_PROJECT: str | None = None
 API_URL = os.environ.get("ICOMIC_E2E_API_URL", "http://127.0.0.1:8080").rstrip("/")
@@ -427,6 +428,33 @@ def verify_pdf(pdf: bytes, expected_comic_pages: int) -> int:
         )
 
     return page_count
+
+
+def verify_overlay_pdf(pdf: bytes, layouts: list[dict[str, Any]], comic_page_count: int) -> None:
+    """Check searchable lettering independently of visual reading order and art payload size."""
+    extracted = subprocess.run(
+        ["pdftotext", "-", "-"], input=pdf, capture_output=True, check=True
+    ).stdout.decode("utf-8", errors="replace")
+    normalized = " ".join(extracted.split())
+    expected_lines = [
+        line["text"]
+        for layout in layouts
+        for bubble in layout.get("bubbles", [])
+        for line in bubble.get("lines", [])
+        if line.get("text")
+    ]
+    missing = [line for line in expected_lines if line not in normalized]
+    if not expected_lines or missing:
+        raise E2EError(
+            "overlay PDF is missing extractable lettering lines: "
+            + repr(missing[:3] if missing else "no source lettering")
+        )
+    maximum = MAX_OVERLAY_PDF_BYTES_PER_COMIC_PAGE * comic_page_count
+    if len(pdf) > maximum:
+        raise E2EError(
+            f"overlay PDF is not compact: {len(pdf)} bytes exceeds {maximum} bytes "
+            f"for {comic_page_count} comic page(s)"
+        )
 
 
 def resolve_project_title(
@@ -860,6 +888,7 @@ def run_flow(
             if job.get("status") != "done":
                 raise E2EError(f"repaint page {number} requires a completed finish job")
 
+    overlay_layouts: list[dict[str, Any]] = []
     for page_index, page in enumerate(pages):
         page_id = page["id"]
         if guard.overlay_lettering and not guard.live:
@@ -926,6 +955,8 @@ def run_flow(
                 if hashlib.sha256(fetch_line_art_image(image_url)).hexdigest() != before_hash:
                     raise E2EError("lettering edit changed source image bytes")
                 (artifact_dir / f"lettering-{page_index+1:02d}.json").write_text(json.dumps(edited, indent=2) + "\n")
+                state = edited
+            overlay_layouts.append(state["layout"])
             if getattr(guard, "finish_preset", "print-heavy") != "off":
                 finished = json_request(
                     f"/api/v1/pages/{page_id}/finish?variant=painted", "POST"
@@ -989,15 +1020,7 @@ def run_flow(
         raise E2EError("download endpoint did not return PDF bytes")
     guard.pdf_page_count = verify_pdf(pdf, len(pages))
     if guard.overlay_lettering:
-        text = subprocess.run(["pdftotext", "-", "-"], input=pdf, capture_output=True, check=True).stdout.decode()
-        expected_text = " ".join(
-            line["text"]
-            for bubble in state["layout"]["bubbles"]
-            for line in bubble["lines"]
-            if line.get("text")
-        )
-        if not expected_text or expected_text not in " ".join(text.split()) or len(pdf) > 500_000 * len(pages):
-            raise E2EError("overlay PDF must contain extractable edited text and stay compact")
+        verify_overlay_pdf(pdf, overlay_layouts, len(pages))
     artifact_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     staged = artifact_dir / f"latest-{timestamp}.pdf"

@@ -48,9 +48,9 @@ func TestLetteringOwnershipLegacyAndOverrideReplacement(t *testing.T) {
 	}
 	fake := server.AIClient.(*gen.FakeAIServiceClient)
 	calls := 0
-	fake.LayoutLetteringFunc = func(_ context.Context, doc gen.LetteringDocument) (*gen.LetteringLayout, error) {
+	fake.LayoutLetteringFunc = func(_ context.Context, doc gen.LetteringLayoutRequest) (*gen.LetteringLayout, error) {
 		calls++
-		return &gen.LetteringLayout{Version: "lettering-layout-v1", PageID: id, PageAspect: doc.PageAspect, Bubbles: []gen.LetteringBubble{}, Issues: []gen.LetteringIssue{}}, nil
+		return &gen.LetteringLayout{Version: "lettering-layout-v1", PageID: id, PageAspect: doc.Document.PageAspect, Bubbles: []gen.LetteringBubble{}, Issues: []gen.LetteringIssue{}}, nil
 	}
 	if r := request("GET", endpoint, "", "owner"); r.Code != 200 {
 		t.Fatal(r.Code, r.Body.String())
@@ -98,7 +98,7 @@ func TestLetteringOwnershipLegacyAndOverrideReplacement(t *testing.T) {
 func TestEnablingLetteringDoesNotUpgradeExistingBookAllocations(t *testing.T) {
 	server, handler, repo, _, id := paintedPageFixture(t)
 	server.LetteringOverlayEnabled = true
-	server.AIClient.(*gen.FakeAIServiceClient).LayoutLetteringFunc = func(context.Context, gen.LetteringDocument) (*gen.LetteringLayout, error) {
+	server.AIClient.(*gen.FakeAIServiceClient).LayoutLetteringFunc = func(context.Context, gen.LetteringLayoutRequest) (*gen.LetteringLayout, error) {
 		t.Fatal("existing book was sent to overlay layout")
 		return nil, nil
 	}
@@ -146,11 +146,11 @@ func TestLetteringTextPreservesImageApprovalAndRejectsFailedLayout(t *testing.T)
 		t.Fatal(err)
 	}
 	failLayout := false
-	server.AIClient.(*gen.FakeAIServiceClient).LayoutLetteringFunc = func(_ context.Context, doc gen.LetteringDocument) (*gen.LetteringLayout, error) {
+	server.AIClient.(*gen.FakeAIServiceClient).LayoutLetteringFunc = func(_ context.Context, doc gen.LetteringLayoutRequest) (*gen.LetteringLayout, error) {
 		if failLayout {
 			return nil, errors.New("layout unavailable")
 		}
-		return &gen.LetteringLayout{Version: "lettering-layout-v1", PageID: id, PageAspect: doc.PageAspect, Bubbles: []gen.LetteringBubble{}, Issues: []gen.LetteringIssue{}}, nil
+		return &gen.LetteringLayout{Version: "lettering-layout-v1", PageID: id, PageAspect: doc.Document.PageAspect, Bubbles: []gen.LetteringBubble{}, Issues: []gen.LetteringIssue{}}, nil
 	}
 	request := func(path, body, user string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("PATCH", path, strings.NewReader(body))
@@ -222,7 +222,7 @@ func TestExportUsesStoredLetteringAndFlagsChangedSourceWithoutLayout(t *testing.
 		t.Fatal(err)
 	}
 	fake := server.AIClient.(*gen.FakeAIServiceClient)
-	fake.LayoutLetteringFunc = func(context.Context, gen.LetteringDocument) (*gen.LetteringLayout, error) {
+	fake.LayoutLetteringFunc = func(context.Context, gen.LetteringLayoutRequest) (*gen.LetteringLayout, error) {
 		t.Fatal("export must not refresh the stored layout")
 		return nil, nil
 	}

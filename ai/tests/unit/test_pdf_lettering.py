@@ -1,5 +1,6 @@
 """Stored vector geometry, Unicode, review guards and legacy stream regressions."""
 
+import json
 import re
 import subprocess
 import zlib
@@ -126,7 +127,15 @@ def test_stale_layout_is_flagged_without_relayout(mutation, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "flag", ["overflow", "collision", "out_of_panel", "missing_zone", "unsupported_glyph"]
+    "flag",
+    [
+        "overflow",
+        "collision",
+        "out_of_panel",
+        "missing_zone",
+        "no_calm_zone",
+        "unsupported_glyph",
+    ],
 )
 def test_review_flags_produce_typed_warning_and_pdf_note(flag):
     p = page()
@@ -209,6 +218,44 @@ def test_overlay_adds_under_30_kb_and_preserves_original_image_bytes():
     pdf, _ = build([p])
     assert len(pdf) - len(baseline) < 30_000
     assert p["original_image_bytes"] in pdf and p["image_bytes"] + b"source-provenance" in baseline
+
+
+def test_real_probe_layout_pdf_has_extractable_lines_and_allows_image_payloads():
+    fixture = FIXTURES / "nia-brass-bird-lettering.state"
+    state = json.loads(fixture.read_text())
+    art = (FIXTURES / "nia-brass-bird-raw.jpg").read_bytes()
+    page_data = {
+        "page_number": 1,
+        "page_id": state["input"]["page_id"],
+        "image_bytes": art,
+        "original_image_bytes": art,
+        "lettering_mode": "overlay",
+        "finish_preset": "print-heavy",
+        "lettering": state,
+    }
+
+    pdf, writer = build([page_data])
+    extracted = " ".join(extract(pdf).split())
+    lines = [
+        line["text"]
+        for bubble in state["layout"]["bubbles"]
+        for line in bubble["lines"]
+        if line.get("text")
+    ]
+
+    assert not writer.warnings
+    # Text extraction follows page geometry, not the source array's panel order.
+    assert " ".join(lines) not in extracted
+    assert all(line in extracted for line in lines)
+    assert len(pdf) > 500_000  # The old per-page cap rejected valid art and attachments.
+
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parents[3] / "scripts/e2e"))
+    from comic_e2e import verify_overlay_pdf
+
+    verify_overlay_pdf(pdf, [state["layout"]], 1)
+    verify_overlay_pdf(pdf + b" " * 2_000_000, [state["layout"]], 1)
 
 
 @pytest.mark.parametrize("name", ["speech-tail", "narration", "thought", "unicode-devanagari"])

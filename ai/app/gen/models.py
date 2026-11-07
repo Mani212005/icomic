@@ -415,6 +415,7 @@ class LetteringFlag(
             "collision",
             "tail_crosses_text",
             "missing_zone",
+            "no_calm_zone",
             "baked_in_art",
         ]
     ]
@@ -430,8 +431,19 @@ class LetteringFlag(
         "collision",
         "tail_crosses_text",
         "missing_zone",
+        "no_calm_zone",
         "baked_in_art",
     ]
+
+
+class LetteringLayoutRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    document: LetteringDocument
+    art_image_url: str | None = Field(
+        None, description="Trusted object-storage URL for the text-free painted page."
+    )
 
 
 class LetteringBubble(BaseModel):
