@@ -3,6 +3,7 @@
 import itertools
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 
@@ -19,9 +20,25 @@ from ...gen.models import (
     LetteringTextLine,
     LetteringUtterance,
 )
-from .art_safety import SIZE_COST, ArtSafetyMap, analyze_art, place_in_calm_art
+from .art_safety import (
+    HARD_MARGIN,
+    SIZE_COST,
+    ArtSafetyMap,
+    Subject,
+    analyze_art,
+    place_in_calm_art,
+    slot_cost,
+    with_subjects,
+)
 from .geometry import Box, ellipse_contains, place, polygon_hits_box
 from .typography import Run, select_font, shape, wrap
+
+# Reserved zones are a hint about where the art left calm space, never the whole panel.
+ZONE_MAX_HEIGHT = 0.35
+# Lines placed by the fallback chain (split caption or margin strip) are not bound to a zone.
+STRIP_INSET = 0.004
+# A fallback slot is reviewed only when the art under it is detail from edge to edge.
+FALLBACK_MAX_BUSY = 0.995
 
 
 @dataclass(frozen=True)
@@ -58,6 +75,7 @@ class Draft:
     step: float
     flags: list[str]
     cost: float = 0.0
+    fallback: bool = False
 
 
 def _local_rect(rect, panel: Box) -> Box:
@@ -236,6 +254,7 @@ def _tail(
     panel: Box,
     texts: list[Box],
     inferred_anchor: tuple[float, float] | None = None,
+    reach: float = 0.025,
 ) -> tuple[list[tuple[float, float]], list[Box]]:
     u, b = d.utterance, d.box
     if u.kind in {"narration", "caption"}:
@@ -272,8 +291,8 @@ def _tail(
         ex, ey = cx + direction_x / divisor, cy + direction_y / divisor
         distance = math.hypot(ax - ex, ay - ey)
     manual = u.placement and u.placement.tail_anchor
-    if distance > 0.025 and not manual:
-        ax, ay = ex + (ax - ex) * 0.025 / distance, ey + (ay - ey) * 0.025 / distance
+    if distance > reach and not manual:
+        ax, ay = ex + (ax - ex) * reach / distance, ey + (ay - ey) * reach / distance
     half = min(0.008, (b.height if index < 2 else b.width) / 5)
     nx, ny = (0, half) if index < 2 else (half, 0)
     if u.kind in {"speech", "thought"}:
@@ -332,6 +351,163 @@ def _tail(
     return triangle, []
 
 
+def _name_tokens(name: str | None) -> set[str]:
+    return {t for t in "".join(c if c.isalnum() else " " for c in (name or "").casefold()).split()}
+
+
+def same_character(a: str | None, b: str | None) -> bool:
+    """Whether two character names or ids denote the same character (case/punctuation-blind)."""
+    left, right = _name_tokens(a), _name_tokens(b)
+    return bool(left and right and (left <= right or right <= left))
+
+
+def _anchor_beside(face: Box, bubble: Box, aspect: float, panel: Box) -> tuple[float, float]:
+    """A panel-local tail target just outside the speaker's face box, toward the bubble."""
+    x0, y0, x1, y1 = face.x * aspect, face.y, face.right * aspect, face.bottom
+    cx, cy = bubble.center
+    nx, ny = min(max(cx, x0), x1), min(max(cy, y0), y1)
+    dx, dy = cx - nx, cy - ny
+    length = math.hypot(dx, dy)
+    if length > 1e-9:
+        nx, ny = nx + dx / length * 0.004, ny + dy / length * 0.004
+    return (nx - panel.x) / panel.width, (ny - panel.y) / panel.height
+
+
+def _split_caption(u: LetteringUtterance) -> list[LetteringUtterance]:
+    words = u.text.split()
+    if len(words) < 4:
+        return []
+    mid = len(words) // 2
+    return [
+        u.model_copy(update={"utterance_id": f"{u.utterance_id}~{i}", "text": " ".join(part)})
+        for i, part in enumerate((words[:mid], words[mid:]), start=1)
+    ]
+
+
+def _fallback_drafts(
+    u: LetteringUtterance,
+    panel: Box,
+    cfg: LayoutConfig,
+    aspect: float,
+    blockers: list[Box],
+    safety: ArtSafetyMap,
+    hard: list[Box],
+) -> list[Draft]:
+    """Place a line that found no calm slot: split caption, then a margin strip.
+
+    Shrinking to the documented minimum already happened in the normal search. Nothing is
+    trimmed. The result is never empty unless the panel cannot hold the text at all.
+    """
+    wide = Box(panel.x, panel.y, panel.width, panel.height)
+    if u.kind in {"narration", "caption"}:
+        parts = _split_caption(u)
+        placed: list[Draft] = []
+        occupied = blockers[:]
+        for part in parts:
+            best = None
+            for candidate in _draft_candidates(part, panel, [wide], cfg):
+                box, cost = place_in_calm_art(
+                    candidate.box,
+                    [],
+                    occupied,
+                    cfg.gap,
+                    None,
+                    (-math.inf, -math.inf),
+                    Box(panel.x, panel.y, candidate.box.width, candidate.box.height),
+                    safety,
+                    aspect,
+                    panel,
+                )
+                if box is None:
+                    continue
+                candidate.box = box
+                if not _text_fits(candidate, aspect, cfg.padding):
+                    continue
+                if best is None or cost < best.cost:
+                    candidate.cost = cost
+                    best = candidate
+            if best is None:
+                placed = []
+                break
+            best.fallback = True
+            placed.append(best)
+            occupied.append(best.box)
+        if parts and len(placed) == len(parts):
+            return placed
+    return _strip_draft(u, panel, cfg, aspect, blockers, safety, hard)
+
+
+def _strip_draft(
+    u: LetteringUtterance,
+    panel: Box,
+    cfg: LayoutConfig,
+    aspect: float,
+    blockers: list[Box],
+    safety: ArtSafetyMap,
+    hard: list[Box],
+) -> list[Draft]:
+    """Last resort: a margin strip (captions) or the least-bad free slot, never over a subject.
+
+    Captions try the panel's top and bottom edges first. Speech, and captions whose strips are
+    blocked, scan a grid over the whole panel. The least overlap with any subject wins, then
+    cost; only a slot that still touches a subject is flagged for review.
+    """
+    options: list[tuple[float, float, float, float, Box, Draft]] = []
+    is_caption = u.kind in {"narration", "caption"}
+    for strips_only in (True, False) if is_caption else (False,):
+        for candidate in _draft_candidates(u, panel, [panel], cfg):
+            if not _text_fits(candidate, aspect, cfg.padding):
+                continue
+            b = candidate.box
+            if b.width > panel.width or b.height > panel.height:
+                continue
+            xs = [panel.x + STRIP_INSET, panel.center[0] - b.width / 2, panel.right - b.width]
+            ys = [panel.y + STRIP_INSET, panel.bottom - b.height - STRIP_INSET]
+            if not strips_only:
+                step_x, step_y = max(b.width * 0.2, 0.01), max(b.height * 0.25, 0.01)
+                xs += [
+                    panel.x + i * step_x for i in range(int((panel.width - b.width) / step_x) + 1)
+                ]
+                ys += [
+                    panel.y + i * step_y for i in range(int((panel.height - b.height) / step_y) + 1)
+                ]
+            for y in ys:
+                for x in xs:
+                    slot = Box(x, y, b.width, b.height)
+                    if not panel.contains(slot) or any(slot.overlaps(o, cfg.gap) for o in blockers):
+                        continue
+                    covered = sum(
+                        max(0.0, min(slot.right, h.right) - max(slot.x, h.x))
+                        * max(0.0, min(slot.bottom, h.bottom) - max(slot.y, h.y))
+                        for h in hard
+                    )
+                    cost = slot_cost(slot, panel, safety, aspect)
+                    shortfall = max(0.0, cfg.font_size - candidate.size) / cfg.font_size
+                    if safety.busy_fraction(slot, aspect) > FALLBACK_MAX_BUSY:
+                        # Lettering over solid detail is placed, never dropped, but reviewed.
+                        covered += 1e-6
+                    options.append(
+                        (
+                            round(covered, 9),
+                            round(cost + SIZE_COST * shortfall, 6),
+                            y,
+                            x,
+                            slot,
+                            candidate,
+                        )
+                    )
+        if options and min(o[0] for o in options) == 0:
+            break
+    if not options:
+        return []
+    covered, _, _, _, slot, draft = min(options, key=lambda o: o[:4])
+    draft.box = slot
+    draft.fallback = True
+    if covered > 0:
+        draft.flags.append("no_calm_zone")  # Touches a subject or sits on solid detail.
+    return [draft]
+
+
 def _layout_panel(
     panel: LetteringPanel,
     aspect: float,
@@ -341,6 +517,8 @@ def _layout_panel(
 ) -> None:
     p = Box(panel.rect.x * aspect, panel.rect.y, panel.rect.width * aspect, panel.rect.height)
     zones = sorted((_local_rect(z, p) for z in panel.reserved_zones), key=lambda z: (z.y, z.x))
+    if art_safety:
+        zones = [Box(z.x, z.y, z.width, min(z.height, ZONE_MAX_HEIGHT * p.height)) for z in zones]
     drafts = []
     for u in sorted(panel.utterances, key=lambda u: u.order):
         _, flags = select_font(u.text)
@@ -357,9 +535,35 @@ def _layout_panel(
             continue
         drafts.append(_draft(u, p, zones, cfg))
     panel_faces = []
+    named_faces: list[Subject] = []
+    hard_boxes: list[Box] = []
     if art_safety:
         panel_rect = Box(panel.rect.x, panel.rect.y, panel.rect.width, panel.rect.height)
         panel_faces = [face for face in art_safety.face_boxes if panel_rect.overlaps(face)]
+        named_faces = sorted(
+            (
+                s
+                for s in art_safety.subjects
+                if s.kind == "face" and s.character and panel_rect.overlaps(s.box)
+            ),
+            key=lambda s: -s.confidence,
+        )
+        hard_boxes = [
+            Box(
+                f.x * aspect - HARD_MARGIN,
+                f.y - HARD_MARGIN,
+                f.width * aspect + 2 * HARD_MARGIN,
+                f.height + 2 * HARD_MARGIN,
+            )
+            for f in panel_faces
+        ]
+
+    def named_speaker_face(u: LetteringUtterance) -> Box | None:
+        """The speaker's own face box, when the vision step named the character."""
+        if u.speaker_anchor is not None or not u.speaker:
+            return None
+        return next((s.box for s in named_faces if same_character(u.speaker, s.character)), None)
+
     pinned_drafts = [
         d
         for d in drafts
@@ -394,8 +598,27 @@ def _layout_panel(
                     candidate_draft.box, zones, blockers, cfg.gap, edge, (-math.inf, -math.inf)
                 )
                 if preferred is None:
-                    continue
-                if u.kind in {"speech", "thought"} and panel_faces:
+                    if not art_safety:
+                        continue
+                    # Only a pull target: the art-aware search still scans the whole panel.
+                    top = zones[0] if zones else p
+                    preferred = Box(
+                        top.x, top.y, candidate_draft.box.width, candidate_draft.box.height
+                    )
+                own_face = named_speaker_face(u) if u.kind in {"speech", "thought"} else None
+                if own_face is not None:
+                    # Sit above the speaker's own face so the tail points straight at it.
+                    face_x, face_top = own_face.center[0] * aspect, own_face.y
+                    preferred = Box(
+                        min(
+                            max(p.x, face_x - preferred.width / 2),
+                            p.right - preferred.width,
+                        ),
+                        max(p.y, face_top - preferred.height - cfg.gap),
+                        preferred.width,
+                        preferred.height,
+                    )
+                elif u.kind in {"speech", "thought"} and panel_faces:
                     speaker_anchor = u.speaker_anchor
                     if speaker_anchor:
                         speaker_x = (
@@ -466,6 +689,7 @@ def _layout_panel(
     # a tall speech bubble cannot be starved by a caption placed first.
     orders = list(itertools.permutations(automatic)) if len(automatic) <= 4 else [tuple(automatic)]
     arrangements = [arranged for order in orders if (arranged := arrange(order)) is not None]
+    chosen: list[Draft] = []
     if arrangements:
         chosen = max(
             arrangements,
@@ -478,24 +702,22 @@ def _layout_panel(
                 round(-sum(d.box.width * d.box.height for d in arrangement), 9),
             ),
         )
-        placed_drafts = pinned_drafts + chosen
-        placed_ids = {d.utterance.utterance_id for d in chosen}
-        for d in automatic:
-            if d.utterance.utterance_id not in placed_ids:
-                flags = ["no_calm_zone"] if art_safety else ["overflow", "outside_reserved_zone"]
-                if "below_minimum" in d.flags:
-                    flags.append("below_minimum")
-                result.issues.extend(
-                    LetteringIssue(
-                        panel_id=panel.panel_id, utterance_id=d.utterance.utterance_id, flag=flag
-                    )
-                    for flag in flags
-                )
-    else:
-        # Preserve any pinned geometry for review. Automatic items are omitted
-        # instead of saving a known collision or overflowing layout.
-        placed_drafts = pinned_drafts
-        for d in automatic:
+    placed_ids = {d.utterance.utterance_id for d in chosen}
+    # No line is left unplaced: shrink (done above), split a caption into two, then a margin
+    # strip or the least-bad free slot, flagged for review only if it still touches a subject.
+    for d in automatic:
+        # Without any art pixels or boxes the zones stay hard and the old review flags apply.
+        if d.utterance.utterance_id in placed_ids or not art_safety:
+            continue
+        extra = _fallback_drafts(
+            d.utterance, p, cfg, aspect, [*pinned, *(c.box for c in chosen)], art_safety, hard_boxes
+        )
+        chosen.extend(extra)
+        if extra:
+            placed_ids.add(d.utterance.utterance_id)
+    placed_drafts = pinned_drafts + chosen
+    for d in automatic:
+        if d.utterance.utterance_id not in placed_ids:
             flags = ["no_calm_zone"] if art_safety else ["overflow", "outside_reserved_zone"]
             if "below_minimum" in d.flags:
                 flags.append("below_minimum")
@@ -511,13 +733,9 @@ def _layout_panel(
     for i, (d, (lines, texts)) in enumerate(zip(drafts, rendered)):
         if not p.contains(d.box) or any(not p.contains(t) for t in texts):
             d.flags.append("out_of_panel")
-        if not any(z.contains(d.box) for z in zones) and (
-            not art_safety
-            or (
-                d.utterance.placement
-                and (d.utterance.placement.rect or d.utterance.placement.center)
-            )
-        ):
+        # With art (or vision boxes) a zone is only a hint, so even a manual placement may leave
+        # it; without any art the zones stay hard.
+        if not art_safety and not any(z.contains(d.box) for z in zones):
             d.flags.append("outside_reserved_zone")
         inner = Box(
             d.box.x + cfg.padding,
@@ -533,7 +751,12 @@ def _layout_panel(
         if any(d.box.overlaps(other.box) for j, other in enumerate(drafts) if i != j):
             d.flags.append("collision")
         inferred_anchor = None
-        if (
+        own_face = (
+            named_speaker_face(d.utterance) if d.utterance.kind in {"speech", "thought"} else None
+        )
+        if own_face is not None:
+            inferred_anchor = _anchor_beside(own_face, d.box, aspect, p)
+        elif (
             art_safety
             and d.utterance.kind in {"speech", "thought"}
             and not d.utterance.speaker_anchor
@@ -550,7 +773,10 @@ def _layout_panel(
                     (center[0] * aspect - p.x) / p.width,
                     (center[1] - p.y) / p.height,
                 )
-        tail, circles = _tail(d, p, all_text, inferred_anchor)
+        # A tail to a known speaker's face reaches further so it is unmistakable who speaks.
+        tail, circles = _tail(
+            d, p, all_text, inferred_anchor, 0.06 if own_face is not None else 0.025
+        )
         if any(not p.contains(c) for c in circles) or any(
             not (p.x <= x <= p.right and p.y <= y <= p.bottom) for x, y in tail
         ):
@@ -602,6 +828,7 @@ def layout_page(
     document: LetteringDocument,
     config: LayoutConfig | None = None,
     art_image: bytes | None = None,
+    subjects: Sequence[Subject] | None = None,
 ) -> LetteringLayout:
     """Compute a fresh draw list without mutating the input.
 
@@ -624,6 +851,9 @@ def layout_page(
         result.issues.append(LetteringIssue(panel_id="", utterance_id="", flag="baked_in_art"))
         return result
     art_safety = analyze_art(art_image) if art_image else None
+    if subjects is not None:
+        # Vision boxes replace the colour heuristics; without them the heuristics stay.
+        art_safety = with_subjects(art_safety, subjects)
     for panel in sorted(document.panels, key=lambda p: p.order):
         _layout_panel(panel, document.page_aspect, config, result, art_safety)
     return result

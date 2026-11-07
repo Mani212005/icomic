@@ -245,14 +245,6 @@ class GenerateLineArtResponse(BaseModel):
     provenance_metadata: dict[str, Any]
 
 
-class GeneratePaintedPageResponse(BaseModel):
-    job_id: str
-    image_url: str
-    model_id: str
-    variant: Literal["draft-conditioned", "direct-from-brief"]
-    provenance_metadata: dict[str, Any]
-
-
 class ColourRegionSuggestion(BaseModel):
     region_name: str = Field(..., examples=["background_sky"])
     hex_color: str = Field(..., examples=["#4A90E2"], pattern="^#[0-9A-Fa-f]{6}$")
@@ -497,6 +489,29 @@ class LetteringFlag(
     ]
 
 
+class LetteringSubject(BaseModel):
+    """
+    A face, hand, bird or key object on the painted page, as a page-normalized box (x, y, width, height of the whole page image, top-left origin).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    kind: Literal["face", "hand", "bird", "object"]
+    rect: LetteringUnitRect
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    character: str | None = Field(
+        None, description="Name of the character a face or hand belongs to, when known."
+    )
+
+
+class LetteringSubjectsSource(RootModel[Literal["vision", "fallback"]]):
+    root: Literal["vision", "fallback"] = Field(
+        ...,
+        description="vision means the boxes came from one vision call and replace the colour heuristics; fallback means that call failed or returned junk and the heuristics were used.",
+    )
+
+
 class LetteringLayoutRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -504,6 +519,9 @@ class LetteringLayoutRequest(BaseModel):
     document: LetteringDocument
     art_image_url: str | None = Field(
         None, description="Trusted object-storage URL for the text-free painted page."
+    )
+    subjects: list[LetteringSubject] | None = Field(
+        None, description="Cached subject boxes. When present they replace the colour heuristics."
     )
 
 
@@ -563,6 +581,10 @@ class PageLetteringState(BaseModel):
     zone_overrides: dict[str, list[LetteringUnitRect]]
     overrides: dict[str, LetteringOverride]
     layout: LetteringLayout
+    subjects: list[LetteringSubject] | None = Field(
+        None, description="Cached subject boxes, so a later layout is deterministic and free."
+    )
+    subjects_source: LetteringSubjectsSource | None = None
 
 
 class PatchLetteringOverrideRequest(BaseModel):
@@ -622,6 +644,18 @@ class GeneratePaintedPageRequest(BaseModel):
         validate_default=True,
     )
     style_reference_image_url: str | None = None
+
+
+class GeneratePaintedPageResponse(BaseModel):
+    job_id: str
+    image_url: str
+    model_id: str
+    variant: Literal["draft-conditioned", "direct-from-brief"]
+    provenance_metadata: dict[str, Any]
+    lettering_subjects: list[LetteringSubject] | None = Field(
+        None, description="Subject boxes for overlay lettering; absent when detection is off."
+    )
+    lettering_subjects_source: LetteringSubjectsSource | None = None
 
 
 class FinishPageImageRequest(BaseModel):

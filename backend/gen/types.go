@@ -327,6 +327,48 @@ func (e LetteringShapeKind) Valid() bool {
 	}
 }
 
+// Defines values for LetteringSubjectKind.
+const (
+	Bird   LetteringSubjectKind = "bird"
+	Face   LetteringSubjectKind = "face"
+	Hand   LetteringSubjectKind = "hand"
+	Object LetteringSubjectKind = "object"
+)
+
+// Valid indicates whether the value is a known member of the LetteringSubjectKind enum.
+func (e LetteringSubjectKind) Valid() bool {
+	switch e {
+	case Bird:
+		return true
+	case Face:
+		return true
+	case Hand:
+		return true
+	case Object:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LetteringSubjectsSource.
+const (
+	Fallback LetteringSubjectsSource = "fallback"
+	Vision   LetteringSubjectsSource = "vision"
+)
+
+// Valid indicates whether the value is a known member of the LetteringSubjectsSource enum.
+func (e LetteringSubjectsSource) Valid() bool {
+	switch e {
+	case Fallback:
+		return true
+	case Vision:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LetteringUtteranceCaptionEdge.
 const (
 	Bottom LetteringUtteranceCaptionEdge = "bottom"
@@ -738,11 +780,15 @@ type GeneratePaintedPageRequestVariant string
 
 // GeneratePaintedPageResponse defines model for GeneratePaintedPageResponse.
 type GeneratePaintedPageResponse struct {
-	ImageURL           string                             `json:"image_url"`
-	JobID              string                             `json:"job_id"`
-	ModelID            string                             `json:"model_id"`
-	ProvenanceMetadata map[string]interface{}             `json:"provenance_metadata"`
-	Variant            GeneratePaintedPageResponseVariant `json:"variant"`
+	ImageURL string `json:"image_url"`
+	JobID    string `json:"job_id"`
+
+	// LetteringSubjects Subject boxes for overlay lettering; absent when detection is off.
+	LetteringSubjects       *[]LetteringSubject                `json:"lettering_subjects,omitempty"`
+	LetteringSubjectsSource *LetteringSubjectsSource           `json:"lettering_subjects_source,omitempty"`
+	ModelID                 string                             `json:"model_id"`
+	ProvenanceMetadata      map[string]interface{}             `json:"provenance_metadata"`
+	Variant                 GeneratePaintedPageResponseVariant `json:"variant"`
 }
 
 // GeneratePaintedPageResponseVariant defines model for GeneratePaintedPageResponse.Variant.
@@ -882,6 +928,9 @@ type LetteringLayoutRequest struct {
 
 	// Document Standalone opt-in lettering input. Existing page art is baked_in and must never receive a second lettering layer. No image pixels or image URLs are accepted.
 	Document LetteringDocument `json:"document"`
+
+	// Subjects Cached subject boxes. When present they replace the colour heuristics.
+	Subjects *[]LetteringSubject `json:"subjects,omitempty"`
 }
 
 // LetteringOverride Panel-local normalized coordinates; rect takes precedence over center. Exact overrides may be outside the panel and are flagged, never clamped. Scale changes font size, never below the configured print minimum.
@@ -924,6 +973,21 @@ type LetteringShape struct {
 
 // LetteringShapeKind defines model for LetteringShape.Kind.
 type LetteringShapeKind string
+
+// LetteringSubject A face, hand, bird or key object on the painted page, as a page-normalized box (x, y, width, height of the whole page image, top-left origin).
+type LetteringSubject struct {
+	// Character Name of the character a face or hand belongs to, when known.
+	Character  *string              `json:"character,omitempty"`
+	Confidence float64              `json:"confidence"`
+	Kind       LetteringSubjectKind `json:"kind"`
+	Rect       LetteringUnitRect    `json:"rect"`
+}
+
+// LetteringSubjectKind defines model for LetteringSubject.Kind.
+type LetteringSubjectKind string
+
+// LetteringSubjectsSource vision means the boxes came from one vision call and replace the colour heuristics; fallback means that call failed or returned junk and the heuristics were used.
+type LetteringSubjectsSource string
 
 // LetteringTextLine Exact shaped glyph origins in page-normalized coordinates, top-left origin and downward Y. Font size is relative to page height; glyph IDs refer to the bundled versioned font. Bounds include ink and advance.
 type LetteringTextLine struct {
@@ -1026,10 +1090,16 @@ type PageLetteringState struct {
 	Input LetteringDocument `json:"input"`
 
 	// Layout Serializable draw list, never append it to a previous result. All coordinates and bounds are page-normalized. Review issues are authoritative even when a bubble cannot be emitted. No renderer needs to wrap or place text again.
-	Layout        LetteringLayout                `json:"layout"`
-	Overrides     map[string]LetteringOverride   `json:"overrides"`
-	Version       PageLetteringStateVersion      `json:"version"`
-	ZoneOverrides map[string][]LetteringUnitRect `json:"zone_overrides"`
+	Layout    LetteringLayout              `json:"layout"`
+	Overrides map[string]LetteringOverride `json:"overrides"`
+
+	// Subjects Cached subject boxes, so a later layout is deterministic and free.
+	Subjects *[]LetteringSubject `json:"subjects,omitempty"`
+
+	// SubjectsSource vision means the boxes came from one vision call and replace the colour heuristics; fallback means that call failed or returned junk and the heuristics were used.
+	SubjectsSource *LetteringSubjectsSource       `json:"subjects_source,omitempty"`
+	Version        PageLetteringStateVersion      `json:"version"`
+	ZoneOverrides  map[string][]LetteringUnitRect `json:"zone_overrides"`
 }
 
 // PageLetteringStateVersion defines model for PageLetteringState.Version.

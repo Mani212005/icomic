@@ -18,6 +18,14 @@ reasoning-token counts separately for future tuning.
 | Palette | 512 | 1280 | 1792 | low | 809 | 809 conservative upper bound |
 | Manual text check | 256 | 2048 | 2304 | minimal | 64 | 62 measured in the earlier diagnostic fixture |
 | Manual vision review | 256 | 1280 | 1536 | minimal | No separate live review retained | Uses the palette completion upper bound of 809 |
+| Lettering subject boxes | 1024 | 1280 | 2304 | minimal | 1633 | 672 measured (601 to 672 over three live calls) |
+
+The lettering subject call sends one page downscaled to at most 1024 px on its long
+edge (a worst-case input bound of 2048 tokens; the three live calls used 1040 input
+tokens each) and is reserved at about $0.0114 before transmission. Its measured cost
+was $0.00672, $0.00824 and $0.00709 per page, so **about $0.007 to $0.008 per painted
+overlay page**, priced from the same Meta rates in `ai/app/costs.py`. It runs once, inside the painted page job, and is
+never retried; a refusal or a malformed answer falls back to the colour heuristics.
 
 Image generation has a flat per-image cost and no exposed text/reasoning cap.
 There are no product text/vision calls with an intended answer cap below 256.

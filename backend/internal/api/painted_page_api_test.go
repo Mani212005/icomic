@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -308,7 +309,12 @@ func TestPaintedPageRegeneratesOverlayLayoutWithStoredArtURL(t *testing.T) {
 	var layoutRequest *gen.LetteringLayoutRequest
 	fake.LayoutLetteringFunc = func(_ context.Context, req gen.LetteringLayoutRequest) (*gen.LetteringLayout, error) {
 		layoutRequest = &req
-		return &gen.LetteringLayout{Version: "lettering-layout-v1", PageID: req.Document.PageID, PageAspect: req.Document.PageAspect, Bubbles: []gen.LetteringBubble{}, Issues: []gen.LetteringIssue{}}, nil
+		// Marks which layouts were computed over the painted art.
+		digest := "without-art"
+		if req.ArtImageURL != nil {
+			digest = "with-art"
+		}
+		return &gen.LetteringLayout{Version: "lettering-layout-v1", PageID: req.Document.PageID, PageAspect: req.Document.PageAspect, SourceDigest: &digest, Bubbles: []gen.LetteringBubble{}, Issues: []gen.LetteringIssue{}}, nil
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
@@ -327,6 +333,15 @@ func TestPaintedPageRegeneratesOverlayLayoutWithStoredArtURL(t *testing.T) {
 	saved, err := repo.GetPage(ctx, pageID)
 	if err != nil || len(saved.Lettering) == 0 {
 		t.Fatalf("art-aware lettering state was not stored: %v", err)
+	}
+	// Regression: the layout computed over the painted art must be the one persisted. It once
+	// stayed in memory (UpdatePage never writes lettering), so export used the art-blind layout.
+	var state gen.PageLetteringState
+	if err := json.Unmarshal(saved.Lettering, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Layout.SourceDigest == nil || *state.Layout.SourceDigest != "with-art" {
+		t.Fatalf("the persisted layout was not the art-aware one: %+v", state.Layout.SourceDigest)
 	}
 }
 
@@ -350,3 +365,106 @@ func TestLineArtEndpointKeepsInkExplicit(t *testing.T) {
 		t.Fatalf("ink result was not saved independently: page=%+v err=%v", page, err)
 	}
 }
+
+// overlayPaintedPageFixture returns an overlay page whose painted page generation answers
+// with the given subject detection result, and the layout requests the Go API then makes.
+func overlayPaintedPageFixture(t *testing.T, subjects *[]gen.LetteringSubject, source *gen.LetteringSubjectsSource) (http.Handler, db.Repository, string, *[]gen.LetteringLayoutRequest) {
+	t.Helper()
+	server, handler, repo, _, pageID := paintedPageFixture(t)
+	ctx := context.Background()
+	legacy, _ := repo.GetPage(ctx, pageID)
+	server.LetteringOverlayEnabled = true
+	pg := &domain.Page{ChapterID: legacy.ChapterID, PageNumber: 2, PanelIDs: legacy.PanelIDs, LetteringMode: "overlay"}
+	if err := repo.CreatePage(ctx, pg); err != nil {
+		t.Fatal(err)
+	}
+	panel, _ := repo.GetPanel(ctx, pg.PanelIDs[0])
+	panel.Dialogue = "Nia: Follow me!"
+	if err := repo.UpdatePanel(ctx, panel); err != nil {
+		t.Fatal(err)
+	}
+	fake := server.AIClient.(*gen.FakeAIServiceClient)
+	fake.GeneratePaintedPageFunc = func(_ context.Context, req gen.GeneratePaintedPageRequest) (*gen.GeneratePaintedPageResponse, error) {
+		return &gen.GeneratePaintedPageResponse{
+			JobID: req.JobID, ImageURL: "http://storage/painted.png", Variant: gen.GeneratePaintedPageResponseVariantDirectFromBrief,
+			LetteringSubjects: subjects, LetteringSubjectsSource: source,
+		}, nil
+	}
+	requests := []gen.LetteringLayoutRequest{}
+	fake.LayoutLetteringFunc = func(_ context.Context, req gen.LetteringLayoutRequest) (*gen.LetteringLayout, error) {
+		requests = append(requests, req)
+		return &gen.LetteringLayout{Version: "lettering-layout-v1", PageID: req.Document.PageID, PageAspect: req.Document.PageAspect, Bubbles: []gen.LetteringBubble{}, Issues: []gen.LetteringIssue{}}, nil
+	}
+	return handler, repo, pg.ID, &requests
+}
+
+func paintOverlayPage(t *testing.T, handler http.Handler, pageID string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
+	req.Header.Set("X-User-ID", "owner")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+}
+
+func TestPaintedPageCachesVisionSubjectsAndReusesThemForLaterLayouts(t *testing.T) {
+	face := gen.LetteringSubject{Kind: gen.LetteringSubjectKind("face"), Confidence: 0.9, Character: strPtr("Nia"), Rect: gen.LetteringUnitRect{X: 0.2, Y: 0.1, Width: 0.1, Height: 0.1}}
+	boxes := []gen.LetteringSubject{face}
+	source := gen.Vision
+	handler, repo, pageID, requests := overlayPaintedPageFixture(t, &boxes, &source)
+
+	paintOverlayPage(t, handler, pageID)
+
+	last := (*requests)[len(*requests)-1]
+	if last.Subjects == nil || len(*last.Subjects) != 1 || (*last.Subjects)[0].Character == nil || *(*last.Subjects)[0].Character != "Nia" {
+		t.Fatalf("layout after painting did not receive the vision boxes: %+v", last.Subjects)
+	}
+	saved, _ := repo.GetPage(context.Background(), pageID)
+	var state gen.PageLetteringState
+	if err := json.Unmarshal(saved.Lettering, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.SubjectsSource == nil || *state.SubjectsSource != gen.Vision || state.Subjects == nil || len(*state.Subjects) != 1 {
+		t.Fatalf("subject boxes were not cached with the stored layout: %+v", state)
+	}
+
+	// A later edit recomputes the layout from the cached boxes, without another vision call.
+	panel, _ := repo.GetPanel(context.Background(), saved.PanelIDs[0])
+	body := strings.NewReader(`{"text":"Follow the light!"}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/pages/"+pageID+"/lettering/utterances/"+panel.ID+"-dialogue-0/text", body)
+	req.Header.Set("X-User-ID", "owner")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	again := (*requests)[len(*requests)-1]
+	if again.Subjects == nil || len(*again.Subjects) != 1 {
+		t.Fatalf("a text edit lost the cached subject boxes: %+v", again.Subjects)
+	}
+}
+
+func TestPaintedPageSubjectFallbackKeepsHeuristicsAndStillLetters(t *testing.T) {
+	source := gen.Fallback
+	handler, repo, pageID, requests := overlayPaintedPageFixture(t, nil, &source)
+
+	paintOverlayPage(t, handler, pageID)
+
+	last := (*requests)[len(*requests)-1]
+	if last.Subjects != nil {
+		t.Fatalf("a failed detection must not send empty boxes that disable the heuristics: %+v", last.Subjects)
+	}
+	saved, _ := repo.GetPage(context.Background(), pageID)
+	var state gen.PageLetteringState
+	if err := json.Unmarshal(saved.Lettering, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.SubjectsSource == nil || *state.SubjectsSource != gen.Fallback || state.Subjects != nil {
+		t.Fatalf("the fallback was not recorded on the stored layout: %+v", state)
+	}
+}
+
+func strPtr(s string) *string { return &s }

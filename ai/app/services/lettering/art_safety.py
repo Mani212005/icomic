@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from io import BytesIO
 
 import numpy as np
@@ -15,15 +16,28 @@ from .geometry import Box
 # confidence only adds placement cost, so a golden sky mistaken for a face is cheap.
 HARD_FACE_CONFIDENCE = 0.85
 BIRD_CONFIDENCE = 0.7
+# Subject boxes supplied by the vision step (or hand-marked fixtures) are hard no-go areas
+# from this confidence upward; weaker boxes only add cost.
+HARD_SUBJECT_CONFIDENCE = 0.5
+# Breathing room kept around every hard box: detected boxes are never tight, and two sources
+# (a vision call and a human) rarely agree to the pixel.
+HARD_MARGIN = 0.004
+SUBJECT_KINDS = ("face", "hand", "bird", "object")
+HARD_KINDS = ("face", "hand", "bird")
 
 
 @dataclass(frozen=True)
 class Subject:
-    """A detected face, bird/prop or figure in page-normalized coordinates."""
+    """A detected face, hand, bird/prop or figure in page-normalized coordinates.
+
+    `character` names the character a face (or hand) belongs to when the vision step could
+    tell, so a speech tail can point at its own speaker.
+    """
 
     box: Box
     kind: str
     confidence: float
+    character: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +85,35 @@ class ArtSafetyMap:
             )
             for face in self.face_boxes
         )
+
+
+def with_subjects(base: ArtSafetyMap | None, subjects: Sequence[Subject]) -> ArtSafetyMap:
+    """Replace colour heuristics with explicit subject boxes, keeping detail (edge) scoring.
+
+    Boxes from the vision step replace the face/brass/silhouette heuristics entirely; the
+    local detail maps still describe how calm each slot is. Without pixels the map is flat.
+    """
+    if base is None:
+        base = _flat_map()
+    zeros = np.zeros_like(base.subject_integral)
+    # Faces, hands and birds are never covered. Key objects (lamps, boats) only add cost.
+    hard = tuple(
+        s.box for s in subjects if s.kind in HARD_KINDS and s.confidence >= HARD_SUBJECT_CONFIDENCE
+    )
+    return replace(
+        base,
+        subject_integral=zeros,
+        gold_integral=zeros,
+        gold_pixel_integral=zeros,
+        face_boxes=hard,
+        subjects=tuple(subjects),
+    )
+
+
+def _flat_map() -> ArtSafetyMap:
+    """A perfectly calm map with no subjects, for pages without art pixels."""
+    zeros = np.zeros((73, 49), dtype=np.float64)
+    return ArtSafetyMap(48, 72, zeros, zeros, zeros, zeros, (), (), zeros)
 
 
 def _components(mask: np.ndarray) -> list[tuple[int, int, int, int, int]]:
@@ -418,7 +461,7 @@ def place_in_calm_art(
                     if (
                         (y, x) >= floor
                         and not any(candidate.overlaps(b, gap) for b in occupied)
-                        and not safety.intersects_face(candidate, aspect, margin=0.004)
+                        and not safety.intersects_face(candidate, aspect, margin=HARD_MARGIN)
                         and safety.busy_fraction(candidate, aspect) <= MAX_BUSY
                     ):
                         cost = slot_cost(candidate, panel or region, safety, aspect)

@@ -1,0 +1,252 @@
+{
+ "source": "saved painted page live-4; boxes hand-marked, page-normalized (x, y, width, height)",
+ "document": {
+  "art_mode": "text_free",
+  "page_aspect": 0.6666666666666666,
+  "page_id": "31185542-f2a9-446e-9a17-db484a7cc69e",
+  "panels": [
+   {
+    "order": 0,
+    "panel_id": "50f31fca-b5f8-49bb-9a21-5fc2777f7071",
+    "rect": {
+     "height": 0.475,
+     "width": 0.46249999999999997,
+     "x": 0.03,
+     "y": 0.02
+    },
+    "reserved_zones": [
+     {
+      "height": 0.551,
+      "width": 0.92,
+      "x": 0.04,
+      "y": 0.04
+     }
+    ],
+    "utterances": [
+     {
+      "kind": "narration",
+      "order": 0,
+      "text": "During storm Nia finds tiny brass bird beside lamp.",
+      "utterance_id": "50f31fca-b5f8-49bb-9a21-5fc2777f7071-narration"
+     }
+    ]
+   },
+   {
+    "order": 1,
+    "panel_id": "ac3d0dd2-1dfd-4f8d-b8aa-e98f1a6676ad",
+    "rect": {
+     "height": 0.475,
+     "width": 0.46249999999999997,
+     "x": 0.5075,
+     "y": 0.02
+    },
+    "reserved_zones": [
+     {
+      "height": 0.551,
+      "width": 0.92,
+      "x": 0.04,
+      "y": 0.04
+     }
+    ],
+    "utterances": [
+     {
+      "kind": "narration",
+      "order": 0,
+      "text": "It glows and flutters toward dark sea to lost boat.",
+      "utterance_id": "ac3d0dd2-1dfd-4f8d-b8aa-e98f1a6676ad-narration"
+     }
+    ]
+   },
+   {
+    "order": 2,
+    "panel_id": "3aa6609d-1d4e-40fb-ae2a-06db9913c31a",
+    "rect": {
+     "height": 0.475,
+     "width": 0.46249999999999997,
+     "x": 0.03,
+     "y": 0.505
+    },
+    "reserved_zones": [
+     {
+      "height": 0.664,
+      "width": 0.92,
+      "x": 0.04,
+      "y": 0.04
+     }
+    ],
+    "utterances": [
+     {
+      "kind": "narration",
+      "order": 0,
+      "text": "Bird shines gold as Nia guides boat safely home.",
+      "utterance_id": "3aa6609d-1d4e-40fb-ae2a-06db9913c31a-narration"
+     },
+     {
+      "kind": "speech",
+      "order": 1,
+      "text": "Follow my light!",
+      "utterance_id": "3aa6609d-1d4e-40fb-ae2a-06db9913c31a-dialogue-0",
+      "speaker": "Nia"
+     }
+    ]
+   },
+   {
+    "order": 3,
+    "panel_id": "1668e3b5-d899-4697-ab97-a592238db147",
+    "rect": {
+     "height": 0.475,
+     "width": 0.46249999999999997,
+     "x": 0.5075,
+     "y": 0.505
+    },
+    "reserved_zones": [
+     {
+      "height": 0.678,
+      "width": 0.92,
+      "x": 0.04,
+      "y": 0.04
+     }
+    ],
+    "utterances": [
+     {
+      "kind": "narration",
+      "order": 0,
+      "text": "At sunrise she opens window and releases bird skyward.",
+      "utterance_id": "1668e3b5-d899-4697-ab97-a592238db147-narration"
+     },
+     {
+      "kind": "speech",
+      "order": 1,
+      "text": "Fly free, little friend.",
+      "utterance_id": "1668e3b5-d899-4697-ab97-a592238db147-dialogue-0",
+      "speaker": "Nia"
+     }
+    ]
+   }
+  ],
+  "version": "lettering-v1"
+ },
+ "subjects": [
+  {
+   "kind": "face",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.176,
+    0.164,
+    0.183,
+    0.122
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 1.0,
+   "character": null,
+   "rect": [
+    0.363,
+    0.271,
+    0.074,
+    0.047
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.234,
+    0.333,
+    0.078,
+    0.047
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.324,
+    0.341,
+    0.05,
+    0.036
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 1.0,
+   "character": null,
+   "rect": [
+    0.703,
+    0.133,
+    0.184,
+    0.096
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.098,
+    0.615,
+    0.102,
+    0.06
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.191,
+    0.646,
+    0.086,
+    0.044
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 1.0,
+   "character": null,
+   "rect": [
+    0.188,
+    0.721,
+    0.109,
+    0.049
+   ]
+  },
+  {
+   "kind": "face",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.602,
+    0.677,
+    0.125,
+    0.073
+   ]
+  },
+  {
+   "kind": "bird",
+   "confidence": 1.0,
+   "character": null,
+   "rect": [
+    0.762,
+    0.622,
+    0.109,
+    0.039
+   ]
+  },
+  {
+   "kind": "hand",
+   "confidence": 1.0,
+   "character": "Nia",
+   "rect": [
+    0.816,
+    0.859,
+    0.078,
+    0.044
+   ]
+  }
+ ]
+}

@@ -519,8 +519,57 @@
           "type": "string",
           "nullable": true,
           "description": "Trusted object-storage URL for the text-free painted page."
+        },
+        "subjects": {
+          "type": "array",
+          "nullable": true,
+          "description": "Cached subject boxes. When present they replace the colour heuristics.",
+          "items": {
+            "$ref": "#/$defs/LetteringSubject"
+          }
         }
       }
+    },
+    "LetteringSubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A face, hand, bird or key object on the painted page, as a page-normalized box (x, y, width, height of the whole page image, top-left origin).",
+      "required": [
+        "kind",
+        "rect",
+        "confidence"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "face",
+            "hand",
+            "bird",
+            "object"
+          ]
+        },
+        "rect": {
+          "$ref": "#/$defs/LetteringUnitRect"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "character": {
+          "type": "string",
+          "description": "Name of the character a face or hand belongs to, when known."
+        }
+      }
+    },
+    "LetteringSubjectsSource": {
+      "type": "string",
+      "description": "vision means the boxes came from one vision call and replace the colour heuristics; fallback means that call failed or returned junk and the heuristics were used.",
+      "enum": [
+        "vision",
+        "fallback"
+      ]
     }
   }
 }

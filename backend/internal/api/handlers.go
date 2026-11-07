@@ -2310,12 +2310,18 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pg.LetteringMode == "overlay" {
-		if err := s.refreshLetteringAfterPaint(r.Context(), pg); err != nil {
+		previous := append(json.RawMessage(nil), pg.Lettering...)
+		if err := s.refreshLetteringAfterPaint(r.Context(), pg, paintedSubjects(paintedResp)); err != nil {
 			writeError(w, http.StatusBadGateway, "Failed to place lettering over painted art")
 			return
 		}
 		if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to save art-aware lettering")
+			return
+		}
+		// UpdatePage never writes the lettering column: persist the art-aware layout, with
+		// its cached subject boxes, through the compare-and-save every other edit uses.
+		if !s.saveLettering(w, r, pg, previous) {
 			return
 		}
 	}

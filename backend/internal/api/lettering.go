@@ -47,14 +47,33 @@ func (s *Server) refreshLettering(ctx context.Context, pg *domain.Page) error {
 }
 
 func (s *Server) refreshLetteringWithPanel(ctx context.Context, pg *domain.Page, replacement *domain.Panel) error {
-	return s.refreshLetteringWithPanelAndArt(ctx, pg, replacement, false)
+	return s.refreshLetteringWithPanelAndArt(ctx, pg, replacement, false, nil)
 }
 
-func (s *Server) refreshLetteringAfterPaint(ctx context.Context, pg *domain.Page) error {
-	return s.refreshLetteringWithPanelAndArt(ctx, pg, nil, true)
+// pageSubjects are the vision step's boxes for one painted page, cached with its layout so
+// every later layout (text edits, zone edits) is deterministic and free.
+type pageSubjects struct {
+	boxes  []gen.LetteringSubject
+	source gen.LetteringSubjectsSource
 }
 
-func (s *Server) refreshLetteringWithPanelAndArt(ctx context.Context, pg *domain.Page, replacement *domain.Panel, forceArtLayout bool) error {
+// paintedSubjects reads the subject boxes returned with a painted page, if detection ran.
+func paintedSubjects(resp *gen.GeneratePaintedPageResponse) *pageSubjects {
+	if resp == nil || resp.LetteringSubjectsSource == nil {
+		return nil
+	}
+	found := &pageSubjects{source: *resp.LetteringSubjectsSource}
+	if resp.LetteringSubjects != nil {
+		found.boxes = *resp.LetteringSubjects
+	}
+	return found
+}
+
+func (s *Server) refreshLetteringAfterPaint(ctx context.Context, pg *domain.Page, subjects *pageSubjects) error {
+	return s.refreshLetteringWithPanelAndArt(ctx, pg, nil, true, subjects)
+}
+
+func (s *Server) refreshLetteringWithPanelAndArt(ctx context.Context, pg *domain.Page, replacement *domain.Panel, forceArtLayout bool, subjects *pageSubjects) error {
 	if pg.LetteringMode != "overlay" {
 		return nil
 	}
@@ -81,7 +100,7 @@ func (s *Server) refreshLetteringWithPanelAndArt(ctx context.Context, pg *domain
 			return nil
 		}
 	}
-	return s.computeLettering(ctx, pg, doc, overrides, zones)
+	return s.computeLettering(ctx, pg, doc, overrides, zones, subjects)
 }
 
 // sourceLetteringDocument reads current text/zones without invoking layout.
@@ -149,11 +168,15 @@ func (s *Server) sourceLetteringDocument(ctx context.Context, pg *domain.Page, r
 	return doc, nil
 }
 
+// letteringZoneMaxHeight caps a reserved zone at about a third of the panel. A zone is only a
+// hint about where the art left calm space; placement searches the whole panel when it is full.
+const letteringZoneMaxHeight = 0.35
+
 func letteringZoneHeight(characters, utterances int) float64 {
-	return min(0.8, 0.55+float64(max(0, characters-50))*0.001+float64(max(0, utterances-1))*0.10)
+	return min(letteringZoneMaxHeight, 0.25+float64(max(0, characters-50))*0.001+float64(max(0, utterances-1))*0.05)
 }
 
-func (s *Server) computeLettering(ctx context.Context, pg *domain.Page, doc gen.LetteringDocument, overrides map[string]gen.LetteringOverride, zoneOverrides map[string][]gen.LetteringUnitRect) error {
+func (s *Server) computeLettering(ctx context.Context, pg *domain.Page, doc gen.LetteringDocument, overrides map[string]gen.LetteringOverride, zoneOverrides map[string][]gen.LetteringUnitRect, subjects *pageSubjects) error {
 	if zoneOverrides == nil {
 		zoneOverrides = map[string][]gen.LetteringUnitRect{}
 	}
@@ -180,13 +203,33 @@ func (s *Server) computeLettering(ctx context.Context, pg *domain.Page, doc gen.
 	if pg.PaintedPageImageURL != "" {
 		artURL = &pg.PaintedPageImageURL
 	}
-	result, err := s.AIClient.LayoutLettering(ctx, gen.LetteringLayoutRequest{
-		Document: effective, ArtImageURL: artURL,
-	})
+	if subjects == nil {
+		// Reuse the boxes cached with the previous layout instead of calling vision again.
+		if old, err := letteringState(pg); err == nil && old.SubjectsSource != nil {
+			subjects = &pageSubjects{source: *old.SubjectsSource}
+			if old.Subjects != nil {
+				subjects.boxes = *old.Subjects
+			}
+		}
+	}
+	request := gen.LetteringLayoutRequest{Document: effective, ArtImageURL: artURL}
+	if subjects != nil && subjects.source == gen.Vision && len(subjects.boxes) > 0 {
+		request.Subjects = &subjects.boxes
+	}
+	result, err := s.AIClient.LayoutLettering(ctx, request)
 	if err != nil {
 		return err
 	}
-	pg.Lettering, err = json.Marshal(gen.PageLetteringState{Version: "page-lettering-v1", Input: doc, Overrides: retained, ZoneOverrides: zoneOverrides, Layout: *result})
+	state := gen.PageLetteringState{Version: "page-lettering-v1", Input: doc, Overrides: retained, ZoneOverrides: zoneOverrides, Layout: *result}
+	if subjects != nil {
+		source := subjects.source
+		state.SubjectsSource = &source
+		if len(subjects.boxes) > 0 {
+			boxes := subjects.boxes
+			state.Subjects = &boxes
+		}
+	}
+	pg.Lettering, err = json.Marshal(state)
 	return err
 }
 
@@ -343,7 +386,7 @@ func (s *Server) PatchLetteringZones(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) saveLetteringPatch(w http.ResponseWriter, r *http.Request, pg *domain.Page, state *gen.PageLetteringState) {
 	previous := append(json.RawMessage(nil), pg.Lettering...)
-	if err := s.computeLettering(r.Context(), pg, state.Input, state.Overrides, state.ZoneOverrides); err != nil {
+	if err := s.computeLettering(r.Context(), pg, state.Input, state.Overrides, state.ZoneOverrides, nil); err != nil {
 		writeError(w, 502, "Failed to compute lettering")
 		return
 	}

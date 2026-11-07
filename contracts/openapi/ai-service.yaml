@@ -1028,6 +1028,13 @@ components:
             $ref: '#/components/schemas/LetteringOverride'
         layout:
           $ref: '#/components/schemas/LetteringLayout'
+        subjects:
+          type: array
+          description: Cached subject boxes, so a later layout is deterministic and free.
+          items:
+            $ref: '#/components/schemas/LetteringSubject'
+        subjects_source:
+          $ref: '#/components/schemas/LetteringSubjectsSource'
     PatchLetteringOverrideRequest:
       type: object
       additionalProperties: false
@@ -1263,6 +1270,16 @@ components:
         provenance_metadata:
           type: object
           additionalProperties: true
+        lettering_subjects:
+          type: array
+          nullable: true
+          description: Subject boxes for overlay lettering; absent when detection is off.
+          items:
+            $ref: '#/components/schemas/LetteringSubject'
+        lettering_subjects_source:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/LetteringSubjectsSource'
 
     ColourRegionSuggestion:
       type: object
@@ -1831,6 +1848,41 @@ components:
         - missing_zone
         - no_calm_zone
         - baked_in_art
+    LetteringSubject:
+      type: object
+      additionalProperties: false
+      description: >-
+        A face, hand, bird or key object on the painted page, as a page-normalized box
+        (x, y, width, height of the whole page image, top-left origin).
+      required:
+        - kind
+        - rect
+        - confidence
+      properties:
+        kind:
+          type: string
+          enum:
+            - face
+            - hand
+            - bird
+            - object
+        rect:
+          $ref: '#/components/schemas/LetteringUnitRect'
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        character:
+          type: string
+          description: Name of the character a face or hand belongs to, when known.
+    LetteringSubjectsSource:
+      type: string
+      description: >-
+        vision means the boxes came from one vision call and replace the colour heuristics;
+        fallback means that call failed or returned junk and the heuristics were used.
+      enum:
+        - vision
+        - fallback
     LetteringLayoutRequest:
       type: object
       additionalProperties: false
@@ -1843,6 +1895,12 @@ components:
           type: string
           nullable: true
           description: Trusted object-storage URL for the text-free painted page.
+        subjects:
+          type: array
+          nullable: true
+          description: Cached subject boxes. When present they replace the colour heuristics.
+          items:
+            $ref: '#/components/schemas/LetteringSubject'
     LetteringBubble:
       type: object
       additionalProperties: false
