@@ -18,7 +18,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LetteringDocument'
+              $ref: '#/components/schemas/LetteringLayoutRequest'
       responses:
         '200':
           description: Replacement vector layout
@@ -1617,7 +1617,20 @@ components:
         - collision
         - tail_crosses_text
         - missing_zone
+        - no_calm_zone
         - baked_in_art
+    LetteringLayoutRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - document
+      properties:
+        document:
+          $ref: '#/components/schemas/LetteringDocument'
+        art_image_url:
+          type: string
+          nullable: true
+          description: Trusted object-storage URL for the text-free painted page.
     LetteringBubble:
       type: object
       additionalProperties: false

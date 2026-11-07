@@ -3,7 +3,10 @@
 `ai/app/services/lettering/` is a hermetic vector layout library. It accepts
 `LetteringDocument` and returns `LetteringLayout`; `layout_bytes` produces canonical
 UTF-8 JSON. Stage 2 connects it to new page generation and versioned page storage.
-The engine never accepts images, opens pixels, or calls a provider. The editor draws and edits this vector layer. PDF export draws the same stored vector layer.
+The document contains no image bytes or URL. The internal layout request may supply
+the stored text-free painted image URL; the service reads it through object storage
+and analyzes pixels with Pillow and NumPy, without a provider call. The editor draws
+and edits the resulting vector layer. PDF export draws that same stored vector layer.
 
 ## Enablement and legacy safety
 
@@ -26,7 +29,7 @@ keep their existing comic content streams. The flag remains off by default.
 ## Composition and text-free rendering
 
 The baked render brief and its v1/v4/v5 fixtures are unchanged. Overlay requests use
-`page-render-brief-v5-overlay` with an explicit portrait 2:3 aspect, page-normalized
+`page-render-brief-v6-overlay` with an explicit portrait 2:3 aspect, page-normalized
 panel rectangles, and panel-local safe zones. One/two panels use a column; larger
 pages use two columns in array order, with the last odd panel spanning both.
 Page margins are 3% horizontal/2% vertical, gutters 1.5% horizontal/1% vertical.
@@ -34,8 +37,15 @@ Page margins are 3% horizontal/2% vertical, gutters 1.5% horizontal/1% vertical.
 Each nonempty panel initially reserves an upper band at `(0.04, 0.04)` with width
 `0.92`. Its height is `min(0.55, 0.34 + max(0, characters-50)*0.001 +
 max(0, utterances-1)*0.06)`. Counts include narration and speech. The art prompt
-requires faces, heads, hands and key action below these bands, with sky, wall or
-empty background inside them. This is a composition rule, not a face detector.
+requests a large low-detail empty sky, sea or wall pocket at the outer top of each
+dialogue panel, away from faces, mouths and the main character silhouette, with a
+clear path for each speech tail. After painting, the layout service scores local edge
+density and variance, detects face-like warm-color clusters, and searches within
+reserved zones for the nearest calm position. Subject detail is a no-go area even
+when it is not recognized as a face. If no calm face-safe position exists, the layout
+records `no_calm_zone`; export requires review instead of drawing the flagged layer
+over the art. This deterministic image analysis complements the prompt rule and
+does not call a provider.
 Unrenderable/crowded text keeps review issues; the system never shrinks below
 14 pt to hide a mismatch. Editorial zone edits can instead reserve an empty side.
 
@@ -50,7 +60,10 @@ The ordered utterances, kinds and speakers are sent only to the deterministic
 layout endpoint. The image brief removes dialogue/narration fields and contains
 only geometry/zones plus visual story inputs. Its policy explicitly requests
 **TEXT-FREE art: no speech bubbles, no captions, no lettering, no numbers, no signs
-with readable text**. Draft and painted stages use the same geometry; legacy ink
+with readable text, and no letters, words, numbers, signs, labels, symbols, writing
+or glyph-like marks on props and scrolls**. Dialogue panels request a large low-detail
+empty pocket at the outer top, away from faces and mouths, with a clear tail path.
+Draft and painted stages use the same geometry; legacy ink
 never receives an overlay document. No image options or extra provider calls are
 added. The fake image adapter returns a portrait 256x384 text-free stand-in for
 this mode; baked fake output is unchanged.
@@ -72,7 +85,9 @@ covers both source text edits and manual placement edits. Lettering-only writes
 compare the previous layer and update only JSONB, so concurrent edits return 409
 for reload/retry without overwriting images or another placement. Ordinary image
 writes cannot change lettering mode/state. Reads and generation reconcile changed
-source input after an interrupted text update, recomputing only when it differs.
+source input after an interrupted text update. Painted-page generation also
+recomputes layout against the newly stored art when the lettering document is
+unchanged.
 
 The public contract is `contracts/openapi/lettering-api.yaml`; payload schemas and
 Go/Python generated models share `contracts/openapi/ai-service.yaml`:
@@ -126,14 +141,15 @@ narration or an unknown speaker. The engine does not infer labels, strip prefixe
 rewrite source dialogue, or resolve names. An optional speaker anchor identifies
 where the tail points in that panel. Panels supply geometry from the page layout
 and explicitly reserved safe zones. Empty zones produce `missing_zone` and no
-bubble: the library never guesses that key art is safe to cover.
+bubble. When painted art is available, deterministic image analysis also rejects
+face and subject regions and marks layouts that have no calm placement for review.
 
 `art_mode` is required. Future integrations must classify existing art as
 `baked_in`; this mode always returns an empty draw list and `baked_in_art`, even if
 utterances are present. Only explicitly `text_free` artwork is eligible. A result
 is a complete replacement layer for its page, never an increment to append to an
-older layer. This integration stores vectors only; it cannot apply an image overlay. The engine never reads or writes
-image pixels, and the source-image hash regression test enforces that boundary.
+older layer. The service reads art only for placement safety and never changes
+source pixels; source-image hash regressions enforce that boundary.
 
 ## Coordinates and renderer contract
 
@@ -370,7 +386,7 @@ There is no raster lettering layer and no image recompression caused by letterin
 The cover remains an art-only preview; the comic page contains the lettering.
 
 Missing/stale layouts or any unresolved review issue (including overflow, collision,
-out-of-panel, missing zones, unsupported scripts and minimum-size violations) omit
+out-of-panel, missing zones, no calm art zone, unsupported scripts and minimum-size violations) omit
 the invalid lettering layer. The export POST result includes typed `warnings` with
 `page_number`, `code` (`stale_lettering` or `lettering_review_required`), `message`
 and review `flags`. The export screen shows these messages. The PDF places a

@@ -365,6 +365,7 @@
         "collision",
         "tail_crosses_text",
         "missing_zone",
+        "no_calm_zone",
         "baked_in_art"
       ]
     },
@@ -503,6 +504,23 @@
         }
       },
       "description": "Serializable draw list, never append it to a previous result. All coordinates and bounds are page-normalized. Review issues are authoritative even when a bubble cannot be emitted. No renderer needs to wrap or place text again."
+    },
+    "LetteringLayoutRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document"
+      ],
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/LetteringDocument"
+        },
+        "art_image_url": {
+          "type": "string",
+          "nullable": true,
+          "description": "Trusted object-storage URL for the text-free painted page."
+        }
+      }
     }
   }
 }

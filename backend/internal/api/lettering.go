@@ -41,12 +41,20 @@ func letteringDocument(pg *domain.Page) *gen.LetteringDocument {
 
 // Geometry is an explicit composition contract shared with the art prompt. Two
 // columns, with a full-width final odd panel; one/two panels use a single column.
-// Faces/action must be staged below the upper reserved band, not detected later.
+// The prompt reserves the upper band, then image analysis checks actual placement.
 func (s *Server) refreshLettering(ctx context.Context, pg *domain.Page) error {
 	return s.refreshLetteringWithPanel(ctx, pg, nil)
 }
 
 func (s *Server) refreshLetteringWithPanel(ctx context.Context, pg *domain.Page, replacement *domain.Panel) error {
+	return s.refreshLetteringWithPanelAndArt(ctx, pg, replacement, false)
+}
+
+func (s *Server) refreshLetteringAfterPaint(ctx context.Context, pg *domain.Page) error {
+	return s.refreshLetteringWithPanelAndArt(ctx, pg, nil, true)
+}
+
+func (s *Server) refreshLetteringWithPanelAndArt(ctx context.Context, pg *domain.Page, replacement *domain.Panel, forceArtLayout bool) error {
 	if pg.LetteringMode != "overlay" {
 		return nil
 	}
@@ -69,7 +77,7 @@ func (s *Server) refreshLetteringWithPanel(ctx context.Context, pg *domain.Page,
 	if old != nil {
 		before, _ := json.Marshal(old.Input)
 		after, _ := json.Marshal(doc)
-		if bytes.Equal(before, after) {
+		if bytes.Equal(before, after) && !forceArtLayout {
 			return nil
 		}
 	}
@@ -164,7 +172,13 @@ func (s *Server) computeLettering(ctx context.Context, pg *domain.Page, doc gen.
 			}
 		}
 	}
-	result, err := s.AIClient.LayoutLettering(ctx, effective)
+	var artURL *string
+	if pg.PaintedPageImageURL != "" {
+		artURL = &pg.PaintedPageImageURL
+	}
+	result, err := s.AIClient.LayoutLettering(ctx, gen.LetteringLayoutRequest{
+		Document: effective, ArtImageURL: artURL,
+	})
 	if err != nil {
 		return err
 	}

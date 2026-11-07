@@ -18,6 +18,7 @@ from ...gen.models import (
     LetteringTextLine,
     LetteringUtterance,
 )
+from .art_safety import ArtSafetyMap, analyze_art, place_in_calm_art
 from .geometry import Box, ellipse_contains, place, polygon_hits_box
 from .typography import Run, select_font, shape, wrap
 
@@ -164,16 +165,26 @@ def _lines(d: Draft, aspect: float) -> tuple[list[LetteringTextLine], list[Box]]
     return lines, boxes
 
 
-def _tail(d: Draft, panel: Box, texts: list[Box]) -> tuple[list[tuple[float, float]], list[Box]]:
+def _tail(
+    d: Draft,
+    panel: Box,
+    texts: list[Box],
+    inferred_anchor: tuple[float, float] | None = None,
+) -> tuple[list[tuple[float, float]], list[Box]]:
     u, b = d.utterance, d.box
     if u.kind in {"narration", "caption"}:
         return [], []
     anchor = (
-        u.placement.tail_anchor if u.placement and u.placement.tail_anchor else u.speaker_anchor
+        u.placement.tail_anchor
+        if u.placement and u.placement.tail_anchor
+        else (u.speaker_anchor or inferred_anchor)
     )
     cx, _cy = b.center
     if anchor:
-        ax, ay = _local_point(anchor, panel)
+        if isinstance(anchor, tuple):
+            ax, ay = panel.x + anchor[0] * panel.width, panel.y + anchor[1] * panel.height
+        else:
+            ax, ay = _local_point(anchor, panel)
     else:
         # Unknown speakers get a short downward cue, never a needle to the frame.
         ax, ay = cx + b.width * 0.15, min(panel.bottom, b.bottom + 0.025)
@@ -256,7 +267,11 @@ def _tail(d: Draft, panel: Box, texts: list[Box]) -> tuple[list[tuple[float, flo
 
 
 def _layout_panel(
-    panel: LetteringPanel, aspect: float, cfg: LayoutConfig, result: LetteringLayout
+    panel: LetteringPanel,
+    aspect: float,
+    cfg: LayoutConfig,
+    result: LetteringLayout,
+    art_safety: ArtSafetyMap | None = None,
 ) -> None:
     p = Box(panel.rect.x * aspect, panel.rect.y, panel.rect.width * aspect, panel.rect.height)
     zones = sorted((_local_rect(z, p) for z in panel.reserved_zones), key=lambda z: (z.y, z.x))
@@ -282,13 +297,45 @@ def _layout_panel(
     ]
     occupied = pinned[:]
     floor = (-math.inf, -math.inf)
+    skipped_utterances = set()
+    panel_faces = []
+    if art_safety:
+        panel_rect = Box(panel.rect.x, panel.rect.y, panel.rect.width, panel.rect.height)
+        panel_faces = [face for face in art_safety.face_boxes if panel_rect.overlaps(face)]
     for d in drafts:
         u = d.utterance
         if u.placement and (u.placement.rect or u.placement.center):
             continue
         edge = u.caption_edge if u.kind in {"caption", "narration"} else None
-        candidate = place(d.box, zones, occupied, cfg.gap, edge, floor)
+        preferred = place(d.box, zones, occupied, cfg.gap, edge, floor)
+        if art_safety and preferred is not None:
+            art_zones = [*zones, p]
+            candidate, no_calm_zone = place_in_calm_art(
+                d.box,
+                art_zones,
+                occupied,
+                cfg.gap,
+                edge,
+                floor,
+                preferred,
+                art_safety,
+                aspect,
+            )
+            if no_calm_zone:
+                d.flags.append("no_calm_zone")
+        else:
+            candidate = preferred
         if candidate is None:
+            if art_safety:
+                skipped_utterances.add(u.utterance_id)
+                result.issues.append(
+                    LetteringIssue(
+                        panel_id=panel.panel_id,
+                        utterance_id=u.utterance_id,
+                        flag="no_calm_zone",
+                    )
+                )
+                continue
             zone = zones[0]
             y = zone.bottom - d.box.height if edge == "bottom" else zone.y
             candidate = Box(zone.x, y, d.box.width, d.box.height)
@@ -296,12 +343,20 @@ def _layout_panel(
         d.box = candidate
         occupied.append(candidate)
         floor = max(floor, (candidate.y, candidate.x))
+    if skipped_utterances:
+        drafts = [d for d in drafts if d.utterance.utterance_id not in skipped_utterances]
     rendered = [_lines(d, aspect) for d in drafts]
     all_text = [box for _, boxes in rendered for box in boxes]
     for i, (d, (lines, texts)) in enumerate(zip(drafts, rendered)):
         if not p.contains(d.box) or any(not p.contains(t) for t in texts):
             d.flags.append("out_of_panel")
-        if not any(z.contains(d.box) for z in zones):
+        if not any(z.contains(d.box) for z in zones) and (
+            not art_safety
+            or (
+                d.utterance.placement
+                and (d.utterance.placement.rect or d.utterance.placement.center)
+            )
+        ):
             d.flags.append("outside_reserved_zone")
         inner = Box(
             d.box.x + cfg.padding,
@@ -316,7 +371,25 @@ def _layout_panel(
             d.flags.append("overflow")
         if any(d.box.overlaps(other.box) for j, other in enumerate(drafts) if i != j):
             d.flags.append("collision")
-        tail, circles = _tail(d, p, all_text)
+        inferred_anchor = None
+        if (
+            art_safety
+            and d.utterance.kind in {"speech", "thought"}
+            and not d.utterance.speaker_anchor
+        ):
+            centers = [face.center for face in panel_faces]
+            if centers:
+                center = min(
+                    centers,
+                    key=lambda point: (
+                        (point[0] - d.box.center[0]) ** 2 + (point[1] - d.box.center[1]) ** 2
+                    ),
+                )
+                inferred_anchor = (
+                    (center[0] * aspect - p.x) / p.width,
+                    (center[1] - p.y) / p.height,
+                )
+        tail, circles = _tail(d, p, all_text, inferred_anchor)
         if any(not p.contains(c) for c in circles) or any(
             not (p.x <= x <= p.right and p.y <= y <= p.bottom) for x, y in tail
         ):
@@ -363,7 +436,11 @@ def source_digest(document: LetteringDocument) -> str:
     ).hexdigest()
 
 
-def layout_page(document: LetteringDocument, config: LayoutConfig | None = None) -> LetteringLayout:
+def layout_page(
+    document: LetteringDocument,
+    config: LayoutConfig | None = None,
+    art_image: bytes | None = None,
+) -> LetteringLayout:
     """Compute a fresh draw list without mutating the input.
 
     Invalid identity/geometry raises ValueError; unrenderable or crowded lettering
@@ -384,8 +461,9 @@ def layout_page(document: LetteringDocument, config: LayoutConfig | None = None)
     if document.art_mode == "baked_in":
         result.issues.append(LetteringIssue(panel_id="", utterance_id="", flag="baked_in_art"))
         return result
+    art_safety = analyze_art(art_image) if art_image else None
     for panel in sorted(document.panels, key=lambda p: p.order):
-        _layout_panel(panel, document.page_aspect, config, result)
+        _layout_panel(panel, document.page_aspect, config, result, art_safety)
     return result
 
 

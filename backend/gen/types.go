@@ -196,6 +196,7 @@ const (
 	Collision            LetteringFlag = "collision"
 	EmptyText            LetteringFlag = "empty_text"
 	MissingZone          LetteringFlag = "missing_zone"
+	NoCalmZone           LetteringFlag = "no_calm_zone"
 	OutOfPanel           LetteringFlag = "out_of_panel"
 	OutsideReservedZone  LetteringFlag = "outside_reserved_zone"
 	Overflow             LetteringFlag = "overflow"
@@ -216,6 +217,8 @@ func (e LetteringFlag) Valid() bool {
 	case EmptyText:
 		return true
 	case MissingZone:
+		return true
+	case NoCalmZone:
 		return true
 	case OutOfPanel:
 		return true
@@ -753,6 +756,15 @@ type LetteringLayout struct {
 // LetteringLayoutVersion defines model for LetteringLayout.Version.
 type LetteringLayoutVersion string
 
+// LetteringLayoutRequest defines model for LetteringLayoutRequest.
+type LetteringLayoutRequest struct {
+	// ArtImageURL Trusted object-storage URL for the text-free painted page.
+	ArtImageURL *string `json:"art_image_url,omitempty"`
+
+	// Document Standalone opt-in lettering input. Existing page art is baked_in and must never receive a second lettering layer. No image pixels or image URLs are accepted.
+	Document LetteringDocument `json:"document"`
+}
+
 // LetteringOverride Panel-local normalized coordinates; rect takes precedence over center. Exact overrides may be outside the panel and are flagged, never clamped. Scale changes font size, never below the configured print minimum.
 type LetteringOverride struct {
 	Center     *LetteringPoint `json:"center,omitempty"`
@@ -1034,7 +1046,7 @@ type GeneratePaintedPageJSONRequestBody = GeneratePaintedPageRequest
 type GeneratePanelTextJSONRequestBody = GeneratePanelTextRequest
 
 // LayoutLetteringJSONRequestBody defines body for LayoutLettering for application/json ContentType.
-type LayoutLetteringJSONRequestBody = LetteringDocument
+type LayoutLetteringJSONRequestBody = LetteringLayoutRequest
 
 // ModeratePromptJSONRequestBody defines body for ModeratePrompt for application/json ContentType.
 type ModeratePromptJSONRequestBody = ModeratePromptRequest

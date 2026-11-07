@@ -276,6 +276,60 @@ func TestLineArtEndpoint_DefaultsToDirectFromBriefPaintedFinish(t *testing.T) {
 	}
 }
 
+func TestPaintedPageRegeneratesOverlayLayoutWithStoredArtURL(t *testing.T) {
+	server, handler, repo, _, pageID := paintedPageFixture(t)
+	ctx := context.Background()
+	legacy, _ := repo.GetPage(ctx, pageID)
+	server.LetteringOverlayEnabled = true
+	pg := &domain.Page{
+		ChapterID:     legacy.ChapterID,
+		PageNumber:    2,
+		PanelIDs:      legacy.PanelIDs,
+		LetteringMode: "overlay",
+	}
+	if err := repo.CreatePage(ctx, pg); err != nil {
+		t.Fatal(err)
+	}
+	pageID = pg.ID
+	panel, _ := repo.GetPanel(ctx, pg.PanelIDs[0])
+	panel.Dialogue = "Nia: Follow me!"
+	if err := repo.UpdatePanel(ctx, panel); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := server.AIClient.(*gen.FakeAIServiceClient)
+	generated := false
+	fake.GeneratePaintedPageFunc = func(_ context.Context, req gen.GeneratePaintedPageRequest) (*gen.GeneratePaintedPageResponse, error) {
+		generated = true
+		return &gen.GeneratePaintedPageResponse{
+			JobID: req.JobID, ImageURL: "http://storage/painted.png", Variant: gen.GeneratePaintedPageResponseVariantDirectFromBrief,
+		}, nil
+	}
+	var layoutRequest *gen.LetteringLayoutRequest
+	fake.LayoutLetteringFunc = func(_ context.Context, req gen.LetteringLayoutRequest) (*gen.LetteringLayout, error) {
+		layoutRequest = &req
+		return &gen.LetteringLayout{Version: "lettering-layout-v1", PageID: req.Document.PageID, PageAspect: req.Document.PageAspect, Bubbles: []gen.LetteringBubble{}, Issues: []gen.LetteringIssue{}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
+	req.Header.Set("X-User-ID", "owner")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	if !generated {
+		t.Fatalf("painted page generation was skipped: %s", rec.Body.String())
+	}
+	if layoutRequest == nil || layoutRequest.ArtImageURL == nil || *layoutRequest.ArtImageURL != "http://storage/painted.png" {
+		t.Fatalf("art-aware layout request did not receive the saved painted page URL: %+v", layoutRequest)
+	}
+	saved, err := repo.GetPage(ctx, pageID)
+	if err != nil || len(saved.Lettering) == 0 {
+		t.Fatalf("art-aware lettering state was not stored: %v", err)
+	}
+}
+
 func TestLineArtEndpointKeepsInkExplicit(t *testing.T) {
 	server, handler, repo, _, pageID := paintedPageFixture(t)
 	fake := server.AIClient.(*gen.FakeAIServiceClient)

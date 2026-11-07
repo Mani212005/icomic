@@ -40,8 +40,8 @@ from .gen.models import (
     GeneratePanelTextResponse,
     HealthResponse,
     JobStatusResponse,
-    LetteringDocument,
     LetteringLayout,
+    LetteringLayoutRequest,
     ModeratePromptRequest,
     ModeratePromptResponse,
     StoreColourImageRequest,
@@ -282,9 +282,14 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         )
 
     @app.post("/internal/v1/layout-lettering", response_model=LetteringLayout)
-    def layout_lettering(req: LetteringDocument):
+    def layout_lettering(req: LetteringLayoutRequest):
         try:
-            return layout_page(req)
+            art_image = wired_adapters.storage.get(req.art_image_url) if req.art_image_url else None
+            return layout_page(req.document, art_image=art_image)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=422, detail="Stored lettering art was not found"
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

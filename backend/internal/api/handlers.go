@@ -2302,6 +2302,16 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Failed to save page")
 		return
 	}
+	if pg.LetteringMode == "overlay" {
+		if err := s.refreshLetteringAfterPaint(r.Context(), pg); err != nil {
+			writeError(w, http.StatusBadGateway, "Failed to place lettering over painted art")
+			return
+		}
+		if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to save art-aware lettering")
+			return
+		}
+	}
 	actualCost := s.aiActualCost(r.Context(), job.ID)
 	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
