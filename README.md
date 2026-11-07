@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/brand/04-crossing-pen-mark.svg" alt="Icomic fountain pen crossing an ink panel mark" width="72">
+  <img src="docs/assets/brand/04-drawing-ink-mark.svg" alt="Icomic fountain pen drawing ink out of a panel mark" width="72">
 </p>
 <p align="center">
   <img src="docs/assets/icomics-watercolor-poster.png" alt="Watercolor comic poster for Icomic, with an open book revealing a moonlit city" width="360">

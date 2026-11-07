@@ -28,6 +28,27 @@ test('favicon, touch icon, and web manifest assets are linked and present', () =
   }
 });
 
+test('active mark, favicon, and app icon are the Drawing Ink sources', () => {
+  const brandDir = path.join(repo, 'docs/assets/brand');
+  const read = (dir, name) => readFileSync(path.join(dir, name), 'utf8');
+  for (const [active, concept] of [['mark', 'mark'], ['favicon', 'favicon'], ['app-icon', 'app-icon']]) {
+    assert.equal(read(path.join(staticDir, 'brand'), `${active}.svg`), read(brandDir, `04-drawing-ink-${concept}.svg`), `${active}.svg must match the Drawing Ink alternate`);
+  }
+  const favicon = read(path.join(staticDir, 'brand'), 'favicon.svg');
+  const ink = favicon.match(/stroke="#C47F6F" stroke-width="(\d+)" stroke-linecap="round"/);
+  assert.ok(ink && Number(ink[1]) >= 11, 'favicon ink line must stay thick enough for 16 px');
+  assert.match(favicon, /viewBox="1 6 110 110"/, 'favicon must keep the tight crop');
+  assert.match(read(path.join(staticDir, 'brand'), 'mark.svg'), /drawing-ink/, 'active mark must be Drawing Ink');
+  assert.match(readFileSync(path.join(repo, 'README.md'), 'utf8'), /04-drawing-ink-mark\.svg/, 'README must show the active mark');
+  const pdf = readFileSync(path.join(repo, 'ai/app/services/pdf.py'), 'utf8');
+  assert.match(pdf, /0\.77 0\.50 0\.44 RG 2\.5 w 1 J/, 'PDF cover mark must draw the red ink line');
+  for (const [file, size] of [['favicon-32.png', 32], ['apple-touch-icon.png', 180], ['icon-192.png', 192], ['icon-512.png', 512]]) {
+    const png = readFileSync(path.join(staticDir, file));
+    assert.equal(png.readUInt32BE(16), size, `${file} width`);
+    assert.equal(png.readUInt32BE(20), size, `${file} height`);
+  }
+});
+
 test('brand SVG concepts stay valid, self-contained, and under the size budget', () => {
   const brandDir = path.join(repo, 'docs/assets/brand');
   const files = readdirSync(brandDir).filter((name) => name.endsWith('.svg'));
