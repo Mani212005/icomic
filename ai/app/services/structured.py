@@ -9,9 +9,15 @@ from ..costs import GENERATION_POLICIES, STORY_INPUT_TOKEN_LIMIT
 from ..provider_output import ProviderOutputError, reject_schema_echo
 
 OVERLAY_PANEL_TEXT_POLICY = (
-    "For every panel, keep dialogue and narration to at most 12 words each. "
-    "Use at most two short speech turns and one concise caption; do not narrate visible action "
-    "or describe the picture. Preserve only essential story information."
+    "Write text for the actual A4 overlay layout: default lettering is 35 pt and may reduce "
+    "to a documented 18 pt minimum. "
+    "Each panel reserves a 0.92-wide upper band whose height "
+    "starts at 0.55 and grows with text demand. Keep each speech turn to at most 12 words, "
+    "use at most two turns, and keep the single narration caption to at most 14 words. "
+    "Shorten with care to preserve the story's essential event and intent; never omit an event "
+    "or silently truncate text. The shaped-text fit check rejects a panel if its text cannot "
+    "fit the actual A4 reserved zone at or above 18 pt. Do not narrate visible action or "
+    "describe the picture."
 )
 
 
@@ -63,5 +69,13 @@ def complete_json(
     try:
         Draft202012Validator(schema).validate(parsed)
     except ValidationError as exc:
+        if (
+            overlay_lettering
+            and operation == "panels"
+            and exc.validator == "pattern"
+            and exc.path
+            and exc.path[-1] in {"dialogue", "narration"}
+        ):
+            raise ProviderOutputError(operation, "overlay_text_budget") from exc
         raise ProviderOutputError(operation, "schema_mismatch") from exc
     return parsed

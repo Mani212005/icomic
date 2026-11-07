@@ -1,5 +1,6 @@
 """Deterministic, opt-in vector lettering. Never accepts or modifies page pixels."""
 
+import itertools
 import json
 import math
 from dataclasses import dataclass
@@ -25,18 +26,23 @@ from .typography import Run, select_font, shape, wrap
 
 @dataclass(frozen=True)
 class LayoutConfig:
-    # 35pt / 841.89pt A4 height keeps glyphs near 55px on 1280x1920 art.
-    # Never shrink below the print-readable minimum.
-    minimum_font_size: float = 35 / 841.89
+    minimum_font_size: float = 18 / 841.89
     font_size: float = 35 / 841.89
+    font_size_step: float = 2 / 841.89
     padding: float = 0.006
     gap: float = 0.012
 
     def __post_init__(self):
-        values = (self.minimum_font_size, self.font_size, self.padding, self.gap)
+        values = (
+            self.minimum_font_size,
+            self.font_size,
+            self.font_size_step,
+            self.padding,
+            self.gap,
+        )
         if (
             not all(math.isfinite(v) and v > 0 for v in values)
-            or self.minimum_font_size < 35 / 841.89
+            or self.minimum_font_size < 18 / 841.89
             or self.font_size < self.minimum_font_size
         ):
             raise ValueError("Invalid print size, padding or gap")
@@ -97,10 +103,17 @@ def _validate(document: LetteringDocument) -> None:
             orders.add(utterance.order)
 
 
-def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfig) -> Draft:
+def _draft(
+    u: LetteringUtterance,
+    panel: Box,
+    zones: list[Box],
+    cfg: LayoutConfig,
+    font_size: float | None = None,
+    max_width_fraction: float | None = None,
+) -> Draft:
     font_id, flags = select_font(u.text)
     requested = cfg.font_size * (u.placement.size_scale or 1) if u.placement else cfg.font_size
-    size = max(cfg.minimum_font_size, requested)
+    size = max(cfg.minimum_font_size, font_size if font_size is not None else requested)
     if requested < cfg.minimum_font_size:
         flags.append("below_minimum")
     ellipse = u.kind in {"speech", "thought"}
@@ -113,9 +126,9 @@ def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfi
         + cfg.padding * 2,
     )
     if u.kind in {"narration", "caption"}:
-        width = min(widest, panel.width * 0.94)
+        width = min(widest, panel.width * (max_width_fraction or 0.62))
     elif u.kind == "speech":
-        width = min(widest, panel.width * 0.45)
+        width = min(widest, panel.width * (max_width_fraction or 0.38))
     if u.placement and u.placement.rect:
         width = u.placement.rect.width * panel.width
     available = max(size, width / factor - 2 * cfg.padding)
@@ -134,6 +147,40 @@ def _draft(u: LetteringUtterance, panel: Box, zones: list[Box], cfg: LayoutConfi
             x, y = _local_point(u.placement.center, panel)
             box = Box(x - width / 2, y - height / 2, width, height)
     return Draft(u, box, font_id, size, runs, step, flags)
+
+
+def _font_sizes(u: LetteringUtterance, cfg: LayoutConfig) -> list[float]:
+    requested = cfg.font_size * (u.placement.size_scale or 1) if u.placement else cfg.font_size
+    requested = max(cfg.minimum_font_size, requested)
+    if u.placement and u.placement.rect:
+        return [requested]
+    sizes = []
+    size = requested
+    while size > cfg.minimum_font_size + 1e-9:
+        sizes.append(size)
+        size = max(cfg.minimum_font_size, size - cfg.font_size_step)
+    sizes.append(cfg.minimum_font_size)
+    return sizes
+
+
+def _draft_candidates(
+    utterance: LetteringUtterance,
+    panel: Box,
+    zones: list[Box],
+    config: LayoutConfig,
+) -> list[Draft]:
+    """Try readable sizes from requested down to the documented print floor."""
+    if utterance.kind in {"narration", "caption"}:
+        widths = (0.62, 0.50, 0.40, 0.32)
+    elif utterance.kind == "speech":
+        widths = (0.62, 0.55, 0.48, 0.38)
+    else:
+        widths = (None,)
+    return [
+        _draft(utterance, panel, zones, config, size, width)
+        for size in _font_sizes(utterance, config)
+        for width in widths
+    ]
 
 
 def _lines(d: Draft, aspect: float) -> tuple[list[LetteringTextLine], list[Box]]:
@@ -167,6 +214,20 @@ def _lines(d: Draft, aspect: float) -> tuple[list[LetteringTextLine], list[Box]]
             )
         )
     return lines, boxes
+
+
+def _text_fits(draft: Draft, aspect: float, padding: float) -> bool:
+    _, ink_boxes = _lines(draft, aspect)
+    inner = Box(
+        draft.box.x + padding,
+        draft.box.y + padding,
+        max(1e-9, draft.box.width - 2 * padding),
+        max(1e-9, draft.box.height - 2 * padding),
+    )
+    return all(inner.contains(box) for box in ink_boxes) and (
+        draft.utterance.kind not in {"speech", "thought"}
+        or all(ellipse_contains(draft.box, box) for box in ink_boxes)
+    )
 
 
 def _tail(
@@ -294,85 +355,142 @@ def _layout_panel(
             # Unsupported text is refused rather than emitting a misleading tofu bubble.
             continue
         drafts.append(_draft(u, p, zones, cfg))
-    pinned = [
-        d.box
-        for d in drafts
-        if d.utterance.placement and (d.utterance.placement.rect or d.utterance.placement.center)
-    ]
-    occupied = pinned[:]
-    floor = (-math.inf, -math.inf)
-    skipped_utterances = set()
     panel_faces = []
     if art_safety:
         panel_rect = Box(panel.rect.x, panel.rect.y, panel.rect.width, panel.rect.height)
         panel_faces = [face for face in art_safety.face_boxes if panel_rect.overlaps(face)]
-    for d in drafts:
-        u = d.utterance
-        if u.placement and (u.placement.rect or u.placement.center):
-            continue
-        edge = u.caption_edge if u.kind in {"caption", "narration"} else None
-        preferred = place(d.box, zones, occupied, cfg.gap, edge, floor)
-        if preferred is not None and u.kind in {"speech", "thought"} and panel_faces:
-            speaker_anchor = (
-                u.placement.tail_anchor
-                if u.placement and u.placement.tail_anchor
-                else u.speaker_anchor
-            )
-            if speaker_anchor:
-                speaker_x = (
-                    p.x + speaker_anchor[0] * p.width
-                    if isinstance(speaker_anchor, tuple)
-                    else _local_point(speaker_anchor, p)[0]
+    pinned_drafts = [
+        d
+        for d in drafts
+        if d.utterance.placement and (d.utterance.placement.rect or d.utterance.placement.center)
+    ]
+    pinned_ids = {d.utterance.utterance_id for d in pinned_drafts}
+    # A center override fixes the center, while letting long text shrink to the
+    # documented minimum. Explicit rectangles remain exact and may be flagged.
+    for index, draft in enumerate(pinned_drafts):
+        placement = draft.utterance.placement
+        if placement and placement.center and not placement.rect:
+            for candidate in _draft_candidates(draft.utterance, p, zones, cfg):
+                if _text_fits(candidate, aspect, cfg.padding):
+                    pinned_drafts[index] = candidate
+                    break
+    pinned = [draft.box for draft in pinned_drafts]
+    automatic = [d for d in drafts if d.utterance.utterance_id not in pinned_ids]
+
+    def arrange(order: tuple[Draft, ...]):
+        blockers = pinned[:]
+        chosen: list[Draft] = []
+        for original in order:
+            u = original.utterance
+            edge = u.caption_edge if u.kind in {"caption", "narration"} else None
+            selected = None
+            for candidate_draft in _draft_candidates(u, p, zones, cfg):
+                preferred = place(
+                    candidate_draft.box, zones, blockers, cfg.gap, edge, (-math.inf, -math.inf)
                 )
-            else:
-                speaker_face = min(
-                    panel_faces,
-                    key=lambda face: (
-                        (face.center[0] * aspect - preferred.center[0]) ** 2
-                        + (face.center[1] - preferred.center[1]) ** 2
-                    ),
-                )
-                speaker_x = speaker_face.center[0] * aspect
-            zone = min(zones, key=lambda candidate: abs(candidate.y - preferred.y))
-            on_left = speaker_x <= p.center[0]
-            side_x = zone.x if on_left else zone.right - d.box.width
-            preferred = Box(side_x, preferred.y, d.box.width, d.box.height)
-        if art_safety and preferred is not None:
-            candidate, no_calm_zone = place_in_calm_art(
-                d.box,
-                [*zones, p],
-                occupied,
-                cfg.gap,
-                edge,
-                floor,
-                preferred,
-                art_safety,
-                aspect,
-            )
-            if no_calm_zone:
-                d.flags.append("no_calm_zone")
-        else:
-            candidate = preferred
-        if candidate is None:
-            if art_safety:
-                skipped_utterances.add(u.utterance_id)
-                result.issues.append(
-                    LetteringIssue(
-                        panel_id=panel.panel_id,
-                        utterance_id=u.utterance_id,
-                        flag="no_calm_zone",
+                if preferred is None:
+                    continue
+                if u.kind in {"speech", "thought"} and panel_faces:
+                    speaker_anchor = u.speaker_anchor
+                    if speaker_anchor:
+                        speaker_x = (
+                            p.x + speaker_anchor[0] * p.width
+                            if isinstance(speaker_anchor, tuple)
+                            else _local_point(speaker_anchor, p)[0]
+                        )
+                    else:
+                        speaker_face = min(
+                            panel_faces,
+                            key=lambda face: (
+                                (face.center[0] * aspect - preferred.center[0]) ** 2
+                                + (face.center[1] - preferred.center[1]) ** 2
+                            ),
+                        )
+                        speaker_x = speaker_face.center[0] * aspect
+                    zone = min(zones, key=lambda candidate: abs(candidate.y - preferred.y))
+                    side_x = (
+                        zone.right - candidate_draft.box.width
+                        if speaker_x >= p.center[0]
+                        else zone.x
                     )
-                )
+                    side_candidate = Box(
+                        side_x, preferred.y, candidate_draft.box.width, candidate_draft.box.height
+                    )
+                    if zone.contains(side_candidate) and not any(
+                        side_candidate.overlaps(blocker, cfg.gap) for blocker in blockers
+                    ):
+                        preferred = side_candidate
+                no_calm_zone = False
+                if art_safety:
+                    candidate, no_calm_zone = place_in_calm_art(
+                        candidate_draft.box,
+                        zones,
+                        blockers,
+                        cfg.gap,
+                        edge,
+                        (-math.inf, -math.inf),
+                        preferred,
+                        art_safety,
+                        aspect,
+                    )
+                    if candidate is None:
+                        continue
+                else:
+                    candidate = preferred
+                candidate_draft.box = candidate
+                if not _text_fits(candidate_draft, aspect, cfg.padding):
+                    continue
+                if no_calm_zone:
+                    candidate_draft.flags.append("no_calm_zone")
+                selected = candidate_draft
+                break
+            if selected is None:
                 continue
-            zone = zones[0]
-            y = zone.bottom - d.box.height if edge == "bottom" else zone.y
-            candidate = Box(zone.x, y, d.box.width, d.box.height)
-            d.flags.append("overflow")
-        d.box = candidate
-        occupied.append(candidate)
-        floor = max(floor, (candidate.y, candidate.x))
-    if skipped_utterances:
-        drafts = [d for d in drafts if d.utterance.utterance_id not in skipped_utterances]
+            chosen.append(selected)
+            blockers.append(selected.box)
+        return chosen
+
+    # Panels usually have one caption and one or two turns. Search all orders so
+    # a tall speech bubble cannot be starved by a caption placed first.
+    orders = list(itertools.permutations(automatic)) if len(automatic) <= 4 else [tuple(automatic)]
+    arrangements = [arranged for order in orders if (arranged := arrange(order)) is not None]
+    if arrangements:
+        chosen = max(
+            arrangements,
+            key=lambda arrangement: (
+                len(arrangement),
+                sum(d.size for d in arrangement),
+                -sum(d.box.width * d.box.height for d in arrangement),
+            ),
+        )
+        placed_drafts = pinned_drafts + chosen
+        placed_ids = {d.utterance.utterance_id for d in chosen}
+        for d in automatic:
+            if d.utterance.utterance_id not in placed_ids:
+                flags = ["no_calm_zone"] if art_safety else ["overflow", "outside_reserved_zone"]
+                if "below_minimum" in d.flags:
+                    flags.append("below_minimum")
+                result.issues.extend(
+                    LetteringIssue(
+                        panel_id=panel.panel_id, utterance_id=d.utterance.utterance_id, flag=flag
+                    )
+                    for flag in flags
+                )
+    else:
+        # Preserve any pinned geometry for review. Automatic items are omitted
+        # instead of saving a known collision or overflowing layout.
+        placed_drafts = pinned_drafts
+        for d in automatic:
+            flags = ["no_calm_zone"] if art_safety else ["overflow", "outside_reserved_zone"]
+            if "below_minimum" in d.flags:
+                flags.append("below_minimum")
+            result.issues.extend(
+                LetteringIssue(
+                    panel_id=panel.panel_id, utterance_id=d.utterance.utterance_id, flag=flag
+                )
+                for flag in flags
+            )
+    drafts = placed_drafts
     rendered = [_lines(d, aspect) for d in drafts]
     all_text = [box for _, boxes in rendered for box in boxes]
     for i, (d, (lines, texts)) in enumerate(zip(drafts, rendered)):
@@ -422,7 +540,8 @@ def _layout_panel(
             not (p.x <= x <= p.right and p.y <= y <= p.bottom) for x, y in tail
         ):
             d.flags.append("out_of_panel")
-        flags = sorted(set(d.flags))
+        review_flags = sorted(set(d.flags))
+        flags = [flag for flag in review_flags if flag != "no_calm_zone"]
         bubble = LetteringBubble(
             panel_id=panel.panel_id,
             utterance_id=d.utterance.utterance_id,
@@ -447,7 +566,7 @@ def _layout_panel(
         result.bubbles.append(bubble)
         result.issues.extend(
             LetteringIssue(panel_id=panel.panel_id, utterance_id=d.utterance.utterance_id, flag=f)
-            for f in flags
+            for f in review_flags
         )
 
 

@@ -18,6 +18,7 @@ class ArtSafetyMap:
     busy_integral: np.ndarray
     subject_integral: np.ndarray
     gold_integral: np.ndarray
+    gold_pixel_integral: np.ndarray
     face_boxes: tuple[Box, ...]
 
     def _fraction(self, integral: np.ndarray, box: Box, aspect: float) -> float:
@@ -37,9 +38,22 @@ class ArtSafetyMap:
     def gold_fraction(self, box: Box, aspect: float) -> float:
         return self._fraction(self.gold_integral, box, aspect)
 
-    def intersects_face(self, box: Box, aspect: float) -> bool:
+    def gold_pixel_fraction(self, box: Box, aspect: float) -> float:
+        return self._fraction(self.gold_pixel_integral, box, aspect)
+
+    def intersects_face(self, box: Box, aspect: float, margin: float = 0.0) -> bool:
         page_box = Box(box.x / aspect, box.y, box.width / aspect, box.height)
-        return any(page_box.overlaps(face) for face in self.face_boxes)
+        return any(
+            page_box.overlaps(
+                Box(
+                    face.x - margin,
+                    face.y - margin,
+                    face.width + 2 * margin,
+                    face.height + 2 * margin,
+                )
+            )
+            for face in self.face_boxes
+        )
 
 
 def _components(mask: np.ndarray) -> list[tuple[int, int, int, int, int]]:
@@ -99,12 +113,29 @@ def analyze_art(image_bytes: bytes) -> ArtSafetyMap:
     for x0, y0, x1, y1, area in _components(skin_cells):
         w, h = (x1 - x0) * cell, (y1 - y0) * cell
         ratio = w / max(h, 1)
-        if w < width * 0.015 or h < height * 0.015:
+        if w > width * 0.24 or h > height * 0.20:
+            # Skin-colored pixels can connect from a face through a hand/body.
+            # Keep a conservative upper-center head region for that figure.
+            component_top = y0 * cell
+            face_top = (
+                max(0, component_top - h * 0.12) if component_top > height * 0.5 else component_top
+            )
+            face_left = max(0, x0 * cell + w * 0.25) / width
+            face_top /= height
+            face_right = min(width, x0 * cell + w * 0.94) / width
+            face_bottom = min(height, y0 * cell + h * 0.65) / height
+            faces.append(Box(face_left, face_top, face_right - face_left, face_bottom - face_top))
             continue
+        if w < width * 0.03 or h < height * 0.03:
+            continue
+        # Reject torso, hand and lighting components. The skin-color mask can
+        # span several warm pixels, so only face-sized components become hard
+        # exclusions; metallic props are protected by the separate gold mask.
         if w > width * 0.24 or h > height * 0.20 or not 0.38 <= ratio <= 1.65:
             continue
-        # Allow hairline, jaw and small gaps in painted skin clusters.
-        pad_x, pad_y = w * 0.55, h * 0.80
+        # Allow a modest jaw/hairline margin. Large padding merged unrelated warm
+        # regions across whole panels and falsely marked every top pocket as a face.
+        pad_x, pad_y = w * 0.18, h * 0.24
         left = max(0, x0 * cell - pad_x) / width
         top = max(0, y0 * cell - pad_y) / height
         right = min(width, x1 * cell + pad_x) / width
@@ -136,9 +167,8 @@ def analyze_art(image_bytes: bytes) -> ArtSafetyMap:
         & (gray >= 0.48)
         & (color_range >= 0.20)
     )
-    # Bright gold art has soft, chromatic glow around the metallic silhouette.
-    # Keep that halo connected before filling component bounds, then add a 12px
-    # margin at the runner's 1280px source width (scaled for thumbnail analysis).
+    # Keep coarse component bounds for clear subjects and the local pixel mask
+    # for large connected glows. Both must be clear before a bubble is placed.
     gold_image = Image.fromarray(warm_gold.astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(7))
     gold_mask = np.asarray(gold_image) > 0
     gold_subject = np.zeros((height, width), dtype=np.bool_)
@@ -189,7 +219,11 @@ def analyze_art(image_bytes: bytes) -> ArtSafetyMap:
     subject_integral = subject_integral.cumsum(0).cumsum(1)
     gold_integral = np.pad(gold_subject.astype(np.int32), ((1, 0), (1, 0)))
     gold_integral = gold_integral.cumsum(0).cumsum(1)
-    return ArtSafetyMap(width, height, integral, subject_integral, gold_integral, tuple(faces))
+    gold_pixel_integral = np.pad(gold_mask.astype(np.int32), ((1, 0), (1, 0)))
+    gold_pixel_integral = gold_pixel_integral.cumsum(0).cumsum(1)
+    return ArtSafetyMap(
+        width, height, integral, subject_integral, gold_integral, gold_pixel_integral, tuple(faces)
+    )
 
 
 def place_in_calm_art(
@@ -221,9 +255,10 @@ def place_in_calm_art(
                 if (
                     (y, x) >= floor
                     and not any(candidate.overlaps(b, gap) for b in occupied)
-                    and not safety.intersects_face(candidate, aspect)
-                    and safety.subject_fraction(candidate, aspect) <= 0.20
-                    and safety.gold_fraction(candidate, aspect) <= 0.02
+                    and not safety.intersects_face(candidate, aspect, margin=0.004)
+                    and safety.subject_fraction(candidate, aspect) <= 0.35
+                    and safety.gold_fraction(candidate, aspect) == 0.0
+                    and safety.gold_pixel_fraction(candidate, aspect) <= 0.02
                 ):
                     ratio = safety.busy_fraction(candidate, aspect)
                     distance = (candidate.x - preferred.x) ** 2 + (candidate.y - preferred.y) ** 2
