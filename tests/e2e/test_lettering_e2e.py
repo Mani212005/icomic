@@ -132,11 +132,11 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
         endpoint + "/zones",
         json={
             "panel_id": panel["panel_id"],
-            "reserved_zones": [{"x": 0.05, "y": 0.03, "width": 0.9, "height": 0.5}],
+            "reserved_zones": [{"x": 0.05, "y": 0.03, "width": 0.9, "height": 0.8}],
         },
     )
     assert zones.status_code == 200, zones.text
-    assert zones.json()["lettering"]["input"]["panels"][0]["reserved_zones"][0]["height"] == 0.5
+    assert zones.json()["lettering"]["input"]["panels"][0]["reserved_zones"][0]["height"] == 0.8
     assert api_client.patch(override_url, json={"override": {}}).status_code == 200
     assert (
         utterance["utterance_id"] not in api_client.get(endpoint).json()["lettering"]["overrides"]

@@ -948,7 +948,7 @@ def run_flow(
                 image_url = next(p for p in current if p["id"] == page_id)["painted_page_image_url"]
                 before_hash = hashlib.sha256(fetch_line_art_image(image_url)).hexdigest()
                 edited = json_request(endpoint + f"/utterances/{speech['utterance_id']}/override", "PATCH", {
-                    "override": {"center": {"x": 0.5, "y": 0.32}}
+                    "override": {"center": {"x": 0.5, "y": 0.42}}
                 })["lettering"]
                 if speech["utterance_id"] not in edited["overrides"] or edited["layout"] == state["layout"]:
                     raise E2EError("manual override did not replace stored layout")

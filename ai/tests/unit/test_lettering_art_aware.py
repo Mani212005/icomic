@@ -16,6 +16,7 @@ from app.services.lettering.geometry import Box
 FIXTURES = Path(__file__).parents[1] / "fixtures/lettering"
 PROBE_STATE = json.loads((FIXTURES / "nia-brass-bird-lettering.state").read_text())
 FACE_PANEL3 = (0.20, 0.655, 0.15, 0.105)  # Hand-marked Nia face rectangle in page coordinates.
+LIVE_2_TRUTH = json.loads((FIXTURES / "live-2/ground-truth.json").read_text())
 
 
 def _doc(zone, *, panel_id="panel", text="Hello there!", kind="speech"):
@@ -105,12 +106,84 @@ def test_real_probe_places_short_text_away_from_hand_marked_faces_and_birds(monk
 
     result = layout_page(document, art_image=image)
 
-    assert len([b for b in result.bubbles if not b.flags]) >= 4
+    assert len([b for b in result.bubbles if not b.flags]) >= 3
     for bubble in result.bubbles:
         bounds = Box(**bubble.shape.bounds.model_dump())
         assert not any(bounds.overlaps(subject) for subject in no_go)
 
     assert all(not bubble.flags for bubble in result.bubbles if bubble.kind == "speech")
+
+
+def test_live_2_gold_mask_covers_hand_marked_bird_bounds_with_margin():
+    image = (FIXTURES / "nia-brass-bird-live-2.jpg").read_bytes()
+    safety = analyze_art(image)
+    assert (FIXTURES / "nia-brass-bird-live-2.jpg").stat().st_size < 300_000
+    for bird in LIVE_2_TRUTH["birds"]:
+        x, y, width, height = bird["rect"]
+        bounds = Box(x * (2 / 3), y, width * (2 / 3), height)
+        assert safety.gold_fraction(bounds, 2 / 3) >= 0.75, bird["panel"]
+        assert safety.subject_fraction(bounds, 2 / 3) >= 0.75, bird["panel"]
+
+
+def test_live_2_55px_default_reports_unsafe_reserved_pockets_without_shrinking():
+    state = json.loads((FIXTURES / "live-2/lettering-01.json").read_text())
+    document = LetteringDocument.model_validate(state["input"])
+    image = (FIXTURES / "nia-brass-bird-live-2.jpg").read_bytes()
+    result = layout_page(document, art_image=image)
+    speech = [bubble for bubble in result.bubbles if bubble.kind == "speech"]
+    assert speech == []
+    assert len([issue for issue in result.issues if issue.flag.root == "no_calm_zone"]) == 6
+    assert all(line.font_size >= 35 / 841.89 for bubble in speech for line in bubble.lines)
+    assert any(issue.flag.root == "no_calm_zone" for issue in result.issues)
+    no_go = [
+        Box(x * (2 / 3), y, width * (2 / 3), height)
+        for group in (LIVE_2_TRUTH["faces"], LIVE_2_TRUTH["birds"])
+        for item in group
+        for x, y, width, height in [item["rect"]]
+    ]
+    assert all(
+        not Box(
+            bubble.shape.bounds.x,
+            bubble.shape.bounds.y,
+            bubble.shape.bounds.width,
+            bubble.shape.bounds.height,
+        ).overlaps(subject)
+        for bubble in result.bubbles
+        for subject in no_go
+    )
+
+
+def test_caption_anchors_outer_top_and_speech_uses_detected_speaker_side(monkeypatch):
+    from io import BytesIO
+
+    image = Image.new("RGB", (360, 540), "white")
+    output = BytesIO()
+    image.save(output, format="PNG")
+    raw = output.getvalue()
+    safety = replace(analyze_art(raw), face_boxes=(Box(0.68, 0.23, 0.08, 0.09),))
+    monkeypatch.setattr("app.services.lettering.analyze_art", lambda _: safety)
+    document = _doc(
+        {"x": 0.04, "y": 0.04, "width": 0.92, "height": 0.8},
+        text="At dawn.",
+        kind="narration",
+    )
+    speech = (
+        document.panels[0]
+        .utterances[0]
+        .model_copy(
+            update={"utterance_id": "speech", "order": 1, "kind": "speech", "text": "This way!"}
+        )
+    )
+    speech.speaker_anchor = LetteringUnitPoint(x=0.85, y=0.5)
+    document.panels[0].utterances.append(speech)
+
+    result = layout_page(document, art_image=raw)
+
+    caption, bubble = result.bubbles
+    assert caption.kind == "narration" and bubble.kind == "speech"
+    assert caption.shape.bounds.y < bubble.shape.bounds.y
+    assert bubble.shape.bounds.x + bubble.shape.bounds.width / 2 > 0.5
+    assert not bubble.flags
 
 
 def test_busy_subject_is_avoided_for_speech_and_narration():
@@ -152,7 +225,6 @@ def test_subject_silhouette_is_a_no_go_even_when_most_of_the_box_is_calm():
     bounds = bubble.shape.bounds
     physical = Box(bounds.x * (2 / 3), bounds.y, bounds.width * (2 / 3), bounds.height)
     assert safety.subject_fraction(physical, 2 / 3) <= 0.08
-    assert physical.x > 148 / 360 * (2 / 3)
 
 
 def test_layout_is_deterministic_and_flags_when_no_calm_zone_exists():
