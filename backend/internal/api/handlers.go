@@ -30,13 +30,14 @@ import (
 )
 
 type JSONResponse struct {
-	Status            string      `json:"status,omitempty"`
-	Data              interface{} `json:"data,omitempty"`
-	Error             string      `json:"error,omitempty"`
-	Message           string      `json:"message,omitempty"`
-	Code              string      `json:"code,omitempty"`
-	Retryable         bool        `json:"retryable,omitempty"`
-	RetryAfterSeconds *float64    `json:"retry_after_seconds,omitempty"`
+	Status            string                 `json:"status,omitempty"`
+	Data              interface{}            `json:"data,omitempty"`
+	Error             string                 `json:"error,omitempty"`
+	Message           string                 `json:"message,omitempty"`
+	Code              string                 `json:"code,omitempty"`
+	Details           map[string]interface{} `json:"details,omitempty"`
+	Retryable         bool                   `json:"retryable,omitempty"`
+	RetryAfterSeconds *float64               `json:"retry_after_seconds,omitempty"`
 }
 
 // Change this one value to select the default finish used by new pages.
@@ -297,7 +298,13 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 	if s.LetteringOverlayEnabled {
 		proj.LetteringMode = "overlay"
 	}
-	if err := s.Repo.CreateProject(r.Context(), proj); err != nil {
+	access := auth.IdentityFromContext(r.Context()).ProjectAccess()
+	if err := s.Repo.CreateProjectForAccount(r.Context(), proj, access); err != nil {
+		var limit *domain.ProjectLimitError
+		if errors.As(err, &limit) {
+			writeProjectLimit(w, limit)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

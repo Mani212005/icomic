@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,8 +30,24 @@ type Repository interface {
 	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
 	GetPlan(ctx context.Context, id string) (*domain.Plan, error)
 
+	// Accounts and sessions (docs/ACCOUNTS.md)
+	GetAccountPolicy(ctx context.Context) (domain.AccountPolicy, error)
+	CountProjects(ctx context.Context, userID string) (int, error)
+	// RegisterGuest upgrades a guest user in place, so its projects stay attached. ErrNotFound when the user is not a guest.
+	RegisterGuest(ctx context.Context, userID, email, passwordHash string) error
+	// ClaimGuestProjects moves a guest's projects to an account, up to the registered ceiling. It is idempotent.
+	ClaimGuestProjects(ctx context.Context, guestID, accountID string) (int, error)
+	CreateSession(ctx context.Context, s *domain.Session) error
+	// GetSessionByTokenHash returns only unexpired, unrevoked sessions.
+	GetSessionByTokenHash(ctx context.Context, tokenHash []byte, now time.Time) (*domain.Session, *domain.User, error)
+	RevokeSession(ctx context.Context, id string) error
+
 	// Projects
+	// CreateProject is the unrestricted primitive for seeding. Request paths use CreateProjectForAccount.
 	CreateProject(ctx context.Context, p *domain.Project) error
+	// CreateProjectForAccount enforces the account project limit atomically with the insert.
+	// It returns *domain.ProjectLimitError when the caller already owns the allowed number.
+	CreateProjectForAccount(ctx context.Context, p *domain.Project, access domain.ProjectAccess) error
 	GetProject(ctx context.Context, id string) (*domain.Project, error)
 	ListProjects(ctx context.Context, userID string) ([]*domain.Project, error)
 	UpdateProject(ctx context.Context, p *domain.Project) error
@@ -96,43 +113,47 @@ type Repository interface {
 
 // InMemoryRepository is a thread-safe repository implementation for hermetic testing.
 type InMemoryRepository struct {
-	mu           sync.RWMutex
-	users        map[string]*domain.User
-	usersByEmail map[string]string
-	plans        map[string]*domain.Plan
-	projects     map[string]*domain.Project
-	chapters     map[string]*domain.Chapter
-	characters   map[string]*domain.Character
-	panels       map[string]*domain.Panel
-	pages        map[string]*domain.Page
-	palettes     map[string]*domain.ColourPalette
-	regions      map[string][]*domain.ColourRegion
-	approvals    []*domain.StageApproval
-	jobs         map[string]*domain.GenerationJob
-	jobsByIdemp  map[string]string
-	ledger       []*domain.CreditLedger
-	exports      map[string]*domain.Export
-	userBalances map[string]float64
+	mu            sync.RWMutex
+	users         map[string]*domain.User
+	usersByEmail  map[string]string
+	plans         map[string]*domain.Plan
+	projects      map[string]*domain.Project
+	chapters      map[string]*domain.Chapter
+	characters    map[string]*domain.Character
+	panels        map[string]*domain.Panel
+	pages         map[string]*domain.Page
+	palettes      map[string]*domain.ColourPalette
+	regions       map[string][]*domain.ColourRegion
+	approvals     []*domain.StageApproval
+	jobs          map[string]*domain.GenerationJob
+	jobsByIdemp   map[string]string
+	ledger        []*domain.CreditLedger
+	exports       map[string]*domain.Export
+	userBalances  map[string]float64
+	sessions      map[string]*domain.Session
+	accountPolicy domain.AccountPolicy
 }
 
 func NewInMemoryRepository() *InMemoryRepository {
 	repo := &InMemoryRepository{
-		users:        make(map[string]*domain.User),
-		usersByEmail: make(map[string]string),
-		plans:        make(map[string]*domain.Plan),
-		projects:     make(map[string]*domain.Project),
-		chapters:     make(map[string]*domain.Chapter),
-		characters:   make(map[string]*domain.Character),
-		panels:       make(map[string]*domain.Panel),
-		pages:        make(map[string]*domain.Page),
-		palettes:     make(map[string]*domain.ColourPalette),
-		regions:      make(map[string][]*domain.ColourRegion),
-		approvals:    make([]*domain.StageApproval, 0),
-		jobs:         make(map[string]*domain.GenerationJob),
-		jobsByIdemp:  make(map[string]string),
-		ledger:       make([]*domain.CreditLedger, 0),
-		exports:      make(map[string]*domain.Export),
-		userBalances: make(map[string]float64),
+		users:         make(map[string]*domain.User),
+		usersByEmail:  make(map[string]string),
+		plans:         make(map[string]*domain.Plan),
+		projects:      make(map[string]*domain.Project),
+		chapters:      make(map[string]*domain.Chapter),
+		characters:    make(map[string]*domain.Character),
+		panels:        make(map[string]*domain.Panel),
+		pages:         make(map[string]*domain.Page),
+		palettes:      make(map[string]*domain.ColourPalette),
+		regions:       make(map[string][]*domain.ColourRegion),
+		approvals:     make([]*domain.StageApproval, 0),
+		jobs:          make(map[string]*domain.GenerationJob),
+		jobsByIdemp:   make(map[string]string),
+		ledger:        make([]*domain.CreditLedger, 0),
+		exports:       make(map[string]*domain.Export),
+		userBalances:  make(map[string]float64),
+		sessions:      make(map[string]*domain.Session),
+		accountPolicy: domain.DefaultAccountPolicy(),
 	}
 
 	repo.plans["free"] = &domain.Plan{
@@ -153,7 +174,8 @@ func (m *InMemoryRepository) CreateUser(_ context.Context, u *domain.User) error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.usersByEmail[u.Email]; exists {
+	emailKey := strings.ToLower(u.Email)
+	if _, exists := m.usersByEmail[emailKey]; exists && u.Email != "" {
 		return ErrDuplicateKey
 	}
 	if u.ID == "" {
@@ -168,9 +190,12 @@ func (m *InMemoryRepository) CreateUser(_ context.Context, u *domain.User) error
 		u.PlanID = "free"
 	}
 
+	u.AccountKind = domain.ParseAccountKind(string(u.AccountKind))
 	cpy := *u
 	m.users[u.ID] = &cpy
-	m.usersByEmail[u.Email] = u.ID
+	if u.Email != "" {
+		m.usersByEmail[emailKey] = u.ID
+	}
 	if _, ok := m.userBalances[u.ID]; !ok {
 		m.userBalances[u.ID] = 100.0
 	}
@@ -193,7 +218,7 @@ func (m *InMemoryRepository) GetUserByEmail(_ context.Context, email string) (*d
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	id, ok := m.usersByEmail[email]
+	id, ok := m.usersByEmail[strings.ToLower(email)]
 	if !ok {
 		return nil, ErrNotFound
 	}
@@ -218,7 +243,11 @@ func (m *InMemoryRepository) GetPlan(_ context.Context, id string) (*domain.Plan
 func (m *InMemoryRepository) CreateProject(_ context.Context, p *domain.Project) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.storeProjectLocked(p)
+	return nil
+}
 
+func (m *InMemoryRepository) storeProjectLocked(p *domain.Project) {
 	if p.ID == "" {
 		p.ID = uuid.NewString()
 	}
@@ -232,7 +261,6 @@ func (m *InMemoryRepository) CreateProject(_ context.Context, p *domain.Project)
 	p.UpdatedAt = now
 	cpy := *p
 	m.projects[p.ID] = &cpy
-	return nil
 }
 
 func (m *InMemoryRepository) GetProject(_ context.Context, id string) (*domain.Project, error) {

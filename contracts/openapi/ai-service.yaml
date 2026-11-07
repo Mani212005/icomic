@@ -391,6 +391,130 @@ paths:
         '429':
           $ref: '#/components/responses/ImageBudgetExceeded'
 
+  /api/v1/auth/me:
+    get:
+      summary: Read the current account
+      description: Public Go API. Returns a null account for an anonymous visitor. For a cookie session the response carries the per-session CSRF token, which the client echoes in X-CSRF-Token on every state-changing request.
+      operationId: getAccount
+      responses:
+        '200':
+          description: Current account or null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+
+  /api/v1/auth/guest:
+    post:
+      summary: Start a browser-bound guest session
+      description: Public Go API. Sets the httpOnly SameSite=Lax session cookie. A guest may own exactly one project. An existing session is returned unchanged with 200.
+      operationId: startGuestSession
+      responses:
+        '200':
+          description: Existing session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '201':
+          description: Guest session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '403':
+          $ref: '#/components/responses/AuthError'
+        '429':
+          $ref: '#/components/responses/AuthError'
+
+  /api/v1/auth/signup:
+    post:
+      summary: Create an account
+      description: Public Go API. A guest session is upgraded in place, so the guest's project is claimed. The session is rotated. Passwords need at least 10 characters and have no composition rules.
+      operationId: signUp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthCredentials'
+      responses:
+        '201':
+          description: Account created and signed in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/AuthError'
+        '403':
+          $ref: '#/components/responses/AuthError'
+        '409':
+          $ref: '#/components/responses/AuthError'
+        '429':
+          $ref: '#/components/responses/AuthError'
+
+  /api/v1/auth/signin:
+    post:
+      summary: Sign in
+      description: Public Go API. Unknown email and wrong password return the same 401 with the same work done. Failed attempts are limited per email and per IP. A guest session's project is attached to the account, up to the registered ceiling.
+      operationId: signIn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthCredentials'
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '401':
+          $ref: '#/components/responses/AuthError'
+        '403':
+          $ref: '#/components/responses/AuthError'
+        '429':
+          $ref: '#/components/responses/AuthError'
+
+  /api/v1/auth/signout:
+    post:
+      summary: Sign out
+      description: Public Go API. Revokes the session on the server and clears the cookie. Requires X-CSRF-Token when a session exists.
+      operationId: signOut
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Signed out
+        '403':
+          $ref: '#/components/responses/AuthError'
+
+  /api/v1/projects:
+    post:
+      summary: Create a project
+      description: Public Go API. Guests may own exactly one project and registered accounts up to a configurable ceiling (default 100). The check and the insert share one transaction under a per-user advisory lock.
+      operationId: createProject
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Project created
+        '403':
+          description: Project limit reached for this account, or the CSRF token is missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectLimitError'
+
 components:
   responses:
     ImageBudgetExceeded:
@@ -408,6 +532,12 @@ components:
               value:
                 code: daily_image_limit_reached
                 error: 'user image generation quota exceeded: daily image limit reached'
+    AuthError:
+      description: Stable-coded account error (invalid_request, invalid_email, weak_password, email_taken, invalid_credentials, login_rate_limited, origin_not_allowed, csrf_invalid).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthErrorResponse'
     BadRequest:
       description: Invalid request parameters or body
       content:
@@ -428,6 +558,88 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    AccountKind:
+      type: string
+      description: Any identity without a registered account is a guest.
+      enum: [guest, registered]
+    Account:
+      type: object
+      required: [kind, email, project_count, project_limit]
+      properties:
+        kind:
+          $ref: '#/components/schemas/AccountKind'
+        email:
+          type: string
+          nullable: true
+          description: Null for a guest.
+        project_count:
+          type: integer
+          minimum: 0
+        project_limit:
+          type: integer
+          nullable: true
+          minimum: 0
+          description: Projects this account may own. Null when exempt (the dev identity).
+        csrf_token:
+          type: string
+          description: Per-session token for X-CSRF-Token. Absent for header-authenticated callers.
+    AccountResponse:
+      type: object
+      required: [account]
+      properties:
+        account:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Account'
+        claimed_projects:
+          type: integer
+          minimum: 1
+          description: Present on sign-in when a guest's projects were attached to the account.
+    AuthCredentials:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          maxLength: 254
+        password:
+          type: string
+          minLength: 10
+          maxLength: 256
+          format: password
+    AuthErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [invalid_request, invalid_email, weak_password, email_taken, invalid_credentials, login_rate_limited, origin_not_allowed, csrf_invalid, INTERNAL_ERROR]
+        message:
+          type: string
+        retryable:
+          type: boolean
+          default: false
+        retry_after_seconds:
+          type: number
+          nullable: true
+          minimum: 0
+    ProjectLimitError:
+      type: object
+      required: [code, message, details]
+      properties:
+        code:
+          type: string
+          enum: [project_limit_reached, csrf_invalid]
+        message:
+          type: string
+        details:
+          type: object
+          properties:
+            account_kind:
+              $ref: '#/components/schemas/AccountKind'
+            limit:
+              type: integer
+              minimum: 0
     ImageBudgetError:
       type: object
       required: [error]

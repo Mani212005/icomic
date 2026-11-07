@@ -19,6 +19,7 @@ Go API service for Icomic (docs/ARCHITECTURE.md section 7).
   - Hashed user IDs (SHA-256) attached to external model calls per Meta API terms.
 - **Authentication & Security**:
   - Pluggable `auth.Authenticator` architecture with `BearerTokenAuthenticator` (bearer token authentication middleware with strict ownership verification) and `DevAuthenticator` (development mode header-based authentication, enabled only when `DEV_AUTH_ENABLED=true`).
+  - Accounts (`internal/accounts`, `docs/ACCOUNTS.md`): guest sessions, email and password sign-up and sign-in with argon2id, server-side revocable sessions in an `HttpOnly` `SameSite=Lax` cookie, per-session CSRF token, sign-in rate limiting, and a project limit (guest 1, registered up to 100) enforced inside the creating transaction. The dev identity is registered and unlimited.
   - Strict resource ownership checks across all project, chapter, character, panel, page, and export endpoints.
 - **Pluggable Policy Seams for Captain Decisions**:
   - Image Hosting (`auth.ImageHostingSeam`): Pluggable media resolver with `/media` serving or proxying route (`DefaultImageHosting`). Documented `TODO(captain)`.

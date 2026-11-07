@@ -37,7 +37,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 			}
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-User-ID, Idempotency-Key")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-User-ID, Idempotency-Key, X-CSRF-Token")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 
 		if r.Method == http.MethodOptions {
@@ -52,9 +52,13 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 // authMiddleware enforces authentication using the configured Authenticator.
 func (s *Server) authMiddleware(pattern string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, err := s.Authenticator.Authenticate(r)
+		identity, err := auth.IdentityOf(s.Authenticator, r)
+		userID := identity.UserID
 		if err != nil || userID == "" {
 			writeError(w, http.StatusUnauthorized, "unauthorized: authentication required")
+			return
+		}
+		if !s.checkSessionCSRF(w, r, identity) {
 			return
 		}
 		if !s.admit(w, "user:"+domain.HashUserID(userID), s.Limits.RequestsPerUser) {
@@ -63,7 +67,7 @@ func (s *Server) authMiddleware(pattern string, next http.HandlerFunc) http.Hand
 		if !s.validatePublicRequest(w, r, pattern) {
 			return
 		}
-		ctx := auth.WithUserID(r.Context(), userID)
+		ctx := auth.WithIdentity(r.Context(), identity)
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -82,6 +86,9 @@ func (s *Server) NewRouter() http.Handler {
 	// Media (serves or proxies stored media per ImageHostingSeam)
 	mux.HandleFunc("GET /media/{path...}", s.ServeMedia)
 	mux.HandleFunc("GET /media", s.ServeMedia)
+
+	// Accounts: guest session, sign up, sign in, sign out, current account
+	s.registerAccountRoutes(mux)
 
 	// Projects
 	handle("POST /api/v1/projects", s.CreateProject)

@@ -10,8 +10,9 @@ SET name = EXCLUDED.name,
     entitlements = EXCLUDED.entitlements;
 
 -- Seed default development user for local development and testing
-INSERT INTO users (id, email, password_hash, plan_id, created_at, updated_at) VALUES
-('00000000-0000-0000-0000-000000000001', 'dev@icomic.local', '$2a$10$wN9P31K9LpQn88bWq4KqreD/4aUa240GZc5R9lHjEaZ9a.Z7yN.2G', 'pro', NOW(), NOW())
+-- The dev identity is a registered account, so it is never limited to one project (docs/ACCOUNTS.md).
+INSERT INTO users (id, email, password_hash, account_kind, plan_id, created_at, updated_at) VALUES
+('00000000-0000-0000-0000-000000000001', 'dev@icomic.local', '$2a$10$wN9P31K9LpQn88bWq4KqreD/4aUa240GZc5R9lHjEaZ9a.Z7yN.2G', 'registered', 'pro', NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
 -- Seed initial credit balance for default dev user (nullable project_id and generation_job_id)

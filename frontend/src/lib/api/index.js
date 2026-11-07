@@ -54,14 +54,14 @@ export function getApiConfig() {
 
 export function createDefaultClient(options = {}) {
 	if (isDemoBuild()) {
-		return new MockApiClient(options);
+		return new MockApiClient({ accounts: true, ...options });
 	}
 
 	const config = getApiConfig();
 	const useMock = options.useMock !== undefined ? options.useMock : config.useMock;
 
 	if (useMock) {
-		return new MockApiClient(options);
+		return new MockApiClient({ accounts: true, ...options });
 	}
 
 	return new ApiClient({

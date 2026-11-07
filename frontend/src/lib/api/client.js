@@ -2,6 +2,8 @@
 export class ApiClient {
 
 	constructor(options = {}) {
+		this.account = null;
+		this.csrfToken = null;
 		if (typeof options === 'string') {
 			this.baseUrl = options.replace(/\/+$/, '');
 			this.devMode = false;
@@ -73,8 +75,14 @@ export class ApiClient {
 			headers['Authorization'] = `Bearer ${this.token}`;
 		}
 
+		const method = (options.method || 'GET').toUpperCase();
+		if (this.csrfToken && method !== 'GET' && !headers['X-CSRF-Token']) {
+			headers['X-CSRF-Token'] = this.csrfToken;
+		}
+
 		const res = await fetch(url, {
 			...options,
+			credentials: 'include',
 			headers
 		});
 
@@ -83,9 +91,11 @@ export class ApiClient {
 			let errorCode;
 			let retryable = false;
 			let retryAfterSeconds;
+			let details;
 			try {
 				const errorJson = await res.json();
 				errorCode = errorJson?.code;
+				details = errorJson?.details;
 				retryable = errorJson?.retryable === true;
 				retryAfterSeconds = errorJson?.retry_after_seconds;
 				if (errorJson && (errorJson.message || errorJson.error)) {
@@ -97,6 +107,7 @@ export class ApiClient {
 			const error = new Error(errorMessage);
 			error.status = res.status;
 			error.code = errorCode;
+			error.details = details;
 			error.retryable = retryable;
 			error.retry_after_seconds = retryAfterSeconds;
 			throw error;
@@ -111,6 +122,41 @@ export class ApiClient {
 			}
 		}
 		return res;
+	}
+
+	// Accounts: cookie session plus per-session CSRF token. The token lives in memory only.
+	remember(res) {
+		this.account = res?.account ?? null;
+		this.csrfToken = this.account?.csrf_token ?? null;
+		return res;
+	}
+
+	async getAccount() {
+		return this.remember(await this.request('/api/v1/auth/me')).account ?? null;
+	}
+
+	async startGuest() {
+		return this.remember(await this.request('/api/v1/auth/guest', { method: 'POST' })).account;
+	}
+
+	// A guest session is created lazily, when the visitor first needs one.
+	async ensureSession() {
+		return (await this.getAccount()) || this.startGuest();
+	}
+
+	async signUp(email, password) {
+		const body = JSON.stringify({ email, password });
+		return this.remember(await this.request('/api/v1/auth/signup', { method: 'POST', body }));
+	}
+
+	async signIn(email, password) {
+		const body = JSON.stringify({ email, password });
+		return this.remember(await this.request('/api/v1/auth/signin', { method: 'POST', body }));
+	}
+
+	async signOut() {
+		await this.request('/api/v1/auth/signout', { method: 'POST' });
+		this.remember(null);
 	}
 
 	async checkHealth() {

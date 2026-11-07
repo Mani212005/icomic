@@ -324,6 +324,12 @@ Failure or cancellation alone retains usage. A full ledger refund deletes that j
 
 ---
 
+### 5.6 Accounts and Project Limit
+
+Identity resolves through the `auth.Authenticator` seam, which now also yields an account kind (`auth.IdentityAuthenticator`): cookie sessions yield the stored `guest` or `registered` kind, and the dev identity yields `registered` with no project limit. A guest owns exactly one project and a registered user up to a configurable ceiling (default 100), both read from the singleton `account_policy` row. `CreateProjectForAccount` checks and inserts in one transaction under a per-user advisory lock, so concurrent creates cannot both pass. Sessions are server-side and revocable, the cookie is `HttpOnly` and `SameSite=Lax`, and state-changing cookie requests need a per-session CSRF token. See `docs/ACCOUNTS.md` for the model, the single place to flip a user, the threat notes, and what is not built yet (password reset email, account deletion, retention).
+
+---
+
 ## 6. Test Strategy
 
 ### 6.1 Principles

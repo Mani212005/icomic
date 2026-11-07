@@ -14,14 +14,15 @@ func ValidFinishPreset(preset string) bool {
 	}
 }
 
-// User represents a registered system user (SPEC 9).
+// User represents a system user (SPEC 9). Guests have no email or password hash.
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	PlanID       string    `json:"plan_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string      `json:"id"`
+	Email        string      `json:"email"`
+	PasswordHash string      `json:"-"`
+	AccountKind  AccountKind `json:"account_kind"`
+	PlanID       string      `json:"plan_id"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
 }
 
 // Plan represents an access entitlement tier (SPEC 9, 11.5).

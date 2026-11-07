@@ -3,13 +3,14 @@ package auth
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+
+	"icomic/backend/internal/domain"
 )
 
 var (
@@ -49,6 +50,16 @@ func (a *DevAuthenticator) Authenticate(r *http.Request) (string, error) {
 		return a.DefaultUserID, nil
 	}
 	return "", ErrUnauthorized
+}
+
+// AuthenticateIdentity maps every dev identity to a registered account that is exempt from
+// the project limit, so local and e2e runs are never throttled. There is no session, so no CSRF token.
+func (a *DevAuthenticator) AuthenticateIdentity(r *http.Request) (Identity, error) {
+	uid, err := a.Authenticate(r)
+	if err != nil {
+		return Identity{}, err
+	}
+	return Identity{UserID: uid, Kind: domain.AccountRegistered, Unlimited: true}, nil
 }
 
 // TokenManager defines session token generation and verification.
@@ -132,15 +143,21 @@ func NewCompositeAuthenticator(primary, secondary Authenticator) *CompositeAuthe
 }
 
 func (c *CompositeAuthenticator) Authenticate(r *http.Request) (string, error) {
+	id, err := c.AuthenticateIdentity(r)
+	return id.UserID, err
+}
+
+// AuthenticateIdentity keeps the kind and session details of whichever authenticator accepts the request.
+func (c *CompositeAuthenticator) AuthenticateIdentity(r *http.Request) (Identity, error) {
 	if c.Primary != nil {
-		if uid, err := c.Primary.Authenticate(r); err == nil && uid != "" {
-			return uid, nil
+		if id, err := IdentityOf(c.Primary, r); err == nil && id.UserID != "" {
+			return id, nil
 		}
 	}
 	if c.Secondary != nil {
-		return c.Secondary.Authenticate(r)
+		return IdentityOf(c.Secondary, r)
 	}
-	return "", ErrUnauthorized
+	return Identity{}, ErrUnauthorized
 }
 
 // ImageHostingSeam defines the pluggable policy seam for image hosting (SPEC 1.4, ARCHITECTURE 9).
@@ -171,16 +188,6 @@ func (h *DefaultImageHosting) ResolveURL(rawKeyOrURL string) string {
 		return rawKeyOrURL
 	}
 	return h.BaseURL + "/" + rawKeyOrURL
-}
-
-// Password utilities
-func HashPassword(password string) string {
-	sum := sha256.Sum256([]byte("icomic_salt:" + password))
-	return hex.EncodeToString(sum[:])
-}
-
-func CheckPassword(password, hash string) bool {
-	return HashPassword(password) == hash
 }
 
 // Context helpers

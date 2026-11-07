@@ -42,6 +42,27 @@ class TestContracts(unittest.TestCase):
         for path in required_paths:
             self.assertIn(path, spec["paths"], f"Expected path {path} in OpenAPI spec")
 
+    def test_account_error_codes_in_go_match_the_contract(self):
+        """Every stable account error code the Go API emits must be listed in the contract."""
+        import re
+
+        spec = yaml.safe_load((CONTRACTS_DIR / "openapi/ai-service.yaml").read_text())
+        schemas = spec["components"]["schemas"]
+        documented = set(schemas["AuthErrorResponse"]["properties"]["code"]["enum"])
+        backend = CONTRACTS_DIR.parent / "backend/internal"
+        handlers = (backend / "api/accounts.go").read_text()
+        service = (backend / "accounts/service.go").read_text()
+        emitted = set(re.findall(r'writeCodedError\(w, [^,]+, "([A-Za-z_]+)"', handlers))
+        emitted |= set(re.findall(r'Code: "([A-Za-z_]+)"', handlers))
+        emitted |= set(re.findall(r'(?:RateLimitedCode|InvalidCredentialCode)\s*=\s*"([a-z_]+)"', service))
+        emitted.discard("project_limit_reached")
+        self.assertTrue(emitted, "expected to find account error codes in the Go source")
+        self.assertEqual(emitted - documented, set(), "Go emits codes missing from AuthErrorResponse")
+        limit_codes = set(schemas["ProjectLimitError"]["properties"]["code"]["enum"])
+        domain = (backend / "domain/accounts.go").read_text()
+        self.assertIn('ProjectLimitReachedCode = "project_limit_reached"', domain)
+        self.assertIn("project_limit_reached", limit_codes)
+
     def test_lettering_schema_matches_openapi_and_validates_fixtures(self):
         schema = json.loads((CONTRACTS_DIR / "schemas/lettering.schema.json").read_text())
         jsonschema.Draft202012Validator.check_schema(schema)
