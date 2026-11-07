@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from app.gen.models import LetteringDocument, LetteringOverride
+from app.gen.models import LetteringDocument, LetteringOverride, LetteringUnitPoint
 from app.services.lettering import layout_page
 from app.services.lettering.art_safety import analyze_art
 from app.services.lettering.geometry import Box
@@ -63,6 +63,54 @@ def test_real_probe_refuses_panel_three_speech_without_hand_marked_face_clearanc
     assert any(
         issue.panel_id == panel_id and issue.flag.root == "no_calm_zone" for issue in result.issues
     )
+
+
+def test_real_probe_places_short_text_away_from_hand_marked_faces_and_birds(monkeypatch):
+    document = LetteringDocument.model_validate(PROBE_STATE["input"])
+    short_text = [
+        "Storm.",
+        "Bird!",
+        "A boat.",
+        "This way!",
+        "Home!",
+        "Fly!",
+    ]
+    for text, utterance in zip(short_text, [u for p in document.panels for u in p.utterances]):
+        utterance.text = text
+    document.panels[2].utterances[1].speaker_anchor = LetteringUnitPoint(x=0.32, y=0.39)
+    document.panels[3].utterances[1].speaker_anchor = LetteringUnitPoint(x=0.42, y=0.39)
+    image = (FIXTURES / "nia-brass-bird-raw.jpg").read_bytes()
+    safety = analyze_art(image)
+
+    # Hand-labeled normalized image rectangles: Nia faces in 1, 3, 4 and birds in 1-4.
+    no_go = [
+        Box(0.164, 0.133, 0.142, 0.101),
+        Box(0.125, 0.635, 0.109, 0.097),
+        Box(0.648, 0.635, 0.115, 0.103),
+        Box(0.233, 0.557, 0.169, 0.115),
+        Box(0.588, 0.078, 0.312, 0.194),
+        Box(0.383, 0.788, 0.102, 0.040),
+        Box(0.777, 0.724, 0.204, 0.151),
+    ]
+    monkeypatch.setattr(
+        "app.services.lettering.analyze_art",
+        lambda _: replace(
+            safety,
+            face_boxes=(
+                *safety.face_boxes,
+                *no_go,
+            ),
+        ),
+    )
+
+    result = layout_page(document, art_image=image)
+
+    assert len([b for b in result.bubbles if not b.flags]) >= 4
+    for bubble in result.bubbles:
+        bounds = Box(**bubble.shape.bounds.model_dump())
+        assert not any(bounds.overlaps(subject) for subject in no_go)
+
+    assert all(not bubble.flags for bubble in result.bubbles if bubble.kind == "speech")
 
 
 def test_busy_subject_is_avoided_for_speech_and_narration():

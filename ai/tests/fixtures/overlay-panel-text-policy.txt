@@ -1,0 +1,1 @@
+For every panel, keep dialogue and narration to at most 12 words each. Use at most two short speech turns and one concise caption; do not narrate visible action or describe the picture. Preserve only essential story information.

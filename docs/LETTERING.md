@@ -41,11 +41,15 @@ requests a large low-detail empty sky, sea or wall pocket at the outer top of ea
 dialogue panel, away from faces, mouths and the main character silhouette, with a
 clear path for each speech tail. After painting, the layout service scores local edge
 density and variance, detects face-like warm-color clusters, and searches within
-reserved zones for the nearest calm position. Subject detail is a no-go area even
-when it is not recognized as a face. If no calm face-safe position exists, the layout
-records `no_calm_zone`; export requires review instead of drawing the flagged layer
-over the art. This deterministic image analysis complements the prompt rule and
-does not call a provider.
+reserved zones for a calm position. Subject detail is a no-go area even when it is
+not recognized as a face. In overlay mode, panel text generation limits dialogue
+and captions to 12 words each, allows at most two short speech turns and one caption,
+and omits picture-description narration. The parser rejects text beyond that limit;
+layout overflow remains a review flag and lettering is never shrunk below 14 pt.
+If no calm face-safe position exists, the layout records `no_calm_zone`; the exporter
+withholds that utterance and any other unsafe bubbles, draws independently safe
+bubbles, and adds a visible review warning. Other layout issues withhold the layer.
+This deterministic image analysis complements the prompt rule and does not call a provider.
 Unrenderable/crowded text keeps review issues; the system never shrinks below
 14 pt to hide a mismatch. Editorial zone edits can instead reserve an empty side.
 
@@ -385,9 +389,11 @@ reordered vowel signs. Text stays selectable/searchable in supporting PDF reader
 There is no raster lettering layer and no image recompression caused by lettering.
 The cover remains an art-only preview; the comic page contains the lettering.
 
-Missing/stale layouts or any unresolved review issue (including overflow, collision,
-out-of-panel, missing zones, no calm art zone, unsupported scripts and minimum-size violations) omit
-the invalid lettering layer. The export POST result includes typed `warnings` with
+Missing/stale layouts or unresolved issues other than omitted `no_calm_zone` utterances
+(including overflow, collision, out-of-panel, missing zones, unsupported scripts and
+minimum-size violations) omit the lettering layer. When safe bubbles remain beside
+an omitted no-calm utterance, the PDF draws those bubbles and warns about the withheld
+text. The export POST result includes typed `warnings` with
 `page_number`, `code` (`stale_lettering` or `lettering_review_required`), `message`
 and review `flags`. The export screen shows these messages. The PDF places a
 visible `LETTERING NOT EXPORTED` note under the art, so a downloaded review copy

@@ -523,7 +523,8 @@ class PdfWriter:
             script_height = 55 + script_rows * 13 + panel_gaps * 4 if has_script else 0
             note_lines = []
             if warning:
-                note = f"LETTERING NOT EXPORTED - {warning.code}: {warning.message}"
+                label = "LETTERING REVIEW REQUIRED" if layout else "LETTERING NOT EXPORTED"
+                note = f"{label} - {warning.code}: {warning.message}"
                 note_lines = textwrap.wrap(note, width=max(18, int((self.width - 100) / 4.8)))
                 script_height = max(45, len(note_lines) * 10 + 15)
 

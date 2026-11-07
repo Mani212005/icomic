@@ -60,6 +60,7 @@ class PanelService:
         characters: list[str],
         panel_count: int = 4,
         chapter_script: str = "",
+        overlay_lettering: bool = False,
     ) -> list[PanelTextItem]:
         if panel_count < 1:
             raise ValueError("Panel count must be at least 1.")
@@ -85,6 +86,7 @@ class PanelService:
                     "characters": characters,
                 },
                 schema.json_schema(),
+                overlay_lettering=overlay_lettering,
             )
             page_panels = schema.validate_python(result)
             if len(page_panels) != count:
@@ -92,6 +94,13 @@ class PanelService:
                     f"Expected {count} panels on page {page_index + 1}, received {len(page_panels)}"
                 )
             for item in page_panels:
+                dialogue_turns = [line for line in item.dialogue.splitlines() if line.strip()]
+                if overlay_lettering and (
+                    len(dialogue_turns) > 2
+                    or any(len(line.split()) > 12 for line in dialogue_turns)
+                    or len(item.narration.split()) > 12
+                ):
+                    raise ValueError("Overlay panel dialogue and captions are limited to 12 words")
                 item.panel_number = len(panels) + 1
                 item.image_prompt = (
                     f"{item.image_prompt.rstrip()}\n\n{IMAGE_ONLY_INSTRUCTIONS}".strip()

@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import math
 import mimetypes
+import os
 import posixpath
 import uuid
 from contextlib import asynccontextmanager
@@ -275,6 +276,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             characters=req.characters,
             panel_count=req.panel_count,
             chapter_script=req.chapter_script,
+            overlay_lettering=os.getenv("LETTERING_OVERLAY_ENABLED", "false").lower() == "true",
         )
         return GeneratePanelTextResponse(
             job_id=str(req.job_id),

@@ -149,6 +149,19 @@ def test_review_flags_produce_typed_warning_and_pdf_note(flag):
     assert b"/FontFile2" not in pdf
 
 
+def test_no_calm_omission_warns_but_exports_other_safe_bubbles():
+    p = page()
+    p["lettering"]["layout"]["issues"] = [
+        {"panel_id": "panel-1", "utterance_id": "withheld", "flag": "no_calm_zone"}
+    ]
+    pdf, writer = build([p])
+    assert writer.warnings[0].flags[0].root == "no_calm_zone"
+    assert "Some lettering was withheld" in extract(pdf)
+    assert "LETTERING REVIEW REQUIRED" in extract(pdf)
+    assert "LETTERING NOT EXPORTED" not in extract(pdf)
+    assert b"/FontFile2" in pdf
+
+
 def test_missing_layer_is_visible_and_baked_pages_ignore_any_layer():
     p = page()
     p.pop("lettering")

@@ -11,6 +11,7 @@ from app.costs import STORY_INPUT_TOKEN_LIMIT, STORY_OUTPUT_TOKEN_LIMIT
 from app.services.pacing import chapter_count, panel_count, split_text
 from app.services.panel import PanelService
 from app.services.script import ScriptService
+from app.services.structured import OVERLAY_PANEL_TEXT_POLICY
 
 FIXTURE = Path(__file__).resolve().parents[3] / "tests/fixtures/the_tide_clock.txt"
 
@@ -79,6 +80,27 @@ def test_long_fixture_preserves_all_source_and_bounds_each_response():
     for messages, kwargs in adapter.calls:
         assert sum(len(m.content.encode()) for m in messages) <= STORY_INPUT_TOKEN_LIMIT
         assert kwargs["max_tokens"] == STORY_OUTPUT_TOKEN_LIMIT
+
+
+def test_overlay_panel_prompt_is_short_and_provider_text_limit_is_enforced():
+    class LongDialogue(FakeLanguageAdapter):
+        def complete(self, model, messages, **kwargs):
+            self.messages = messages
+            value = json.loads(super().complete(model, messages, **kwargs))
+            value[0]["dialogue"] = (
+                "This dialogue has more than twelve words and should be rejected by the parser now."
+            )
+            return json.dumps(value)
+
+    adapter = LongDialogue()
+    with pytest.raises(ValueError, match="limited to 12 words"):
+        PanelService(adapter).generate_panel_text(
+            1, "Title", "Source", [], panel_count=1, overlay_lettering=True
+        )
+    system = adapter.messages[0].content
+    expected = (Path(__file__).parents[1] / "fixtures/overlay-panel-text-policy.txt").read_text()
+    assert OVERLAY_PANEL_TEXT_POLICY + "\n" == expected
+    assert OVERLAY_PANEL_TEXT_POLICY in system
 
 
 @pytest.mark.parametrize("response", ["[", "[]"])

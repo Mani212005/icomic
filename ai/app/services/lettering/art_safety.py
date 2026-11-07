@@ -17,6 +17,7 @@ class ArtSafetyMap:
     height: int
     busy_integral: np.ndarray
     subject_integral: np.ndarray
+    gold_integral: np.ndarray
     face_boxes: tuple[Box, ...]
 
     def _fraction(self, integral: np.ndarray, box: Box, aspect: float) -> float:
@@ -32,6 +33,9 @@ class ArtSafetyMap:
 
     def subject_fraction(self, box: Box, aspect: float) -> float:
         return self._fraction(self.subject_integral, box, aspect)
+
+    def gold_fraction(self, box: Box, aspect: float) -> float:
+        return self._fraction(self.gold_integral, box, aspect)
 
     def intersects_face(self, box: Box, aspect: float) -> bool:
         page_box = Box(box.x / aspect, box.y, box.width / aspect, box.height)
@@ -66,7 +70,7 @@ def _components(mask: np.ndarray) -> list[tuple[int, int, int, int, int]]:
 
 
 def analyze_art(image_bytes: bytes) -> ArtSafetyMap:
-    """Build a coarse busy map and face-like warm-cluster exclusions."""
+    """Build a calmness map and conservative subject exclusions."""
     with Image.open(BytesIO(image_bytes)) as source:
         image = source.convert("RGB")
         image.thumbnail((480, 720), Image.Resampling.LANCZOS)
@@ -75,8 +79,8 @@ def analyze_art(image_bytes: bytes) -> ArtSafetyMap:
     red, green, blue = rgb.astype(np.int16).transpose(2, 0, 1)
     skin = (
         (red > 42)
-        & (red - green > 5)
-        & (green - blue > 2)
+        & (red - green > 15)
+        & (green - blue > 8)
         & (red > green * 1.025)
         & (red - green < 100)
         & (green - blue < 100)
@@ -95,12 +99,12 @@ def analyze_art(image_bytes: bytes) -> ArtSafetyMap:
     for x0, y0, x1, y1, area in _components(skin_cells):
         w, h = (x1 - x0) * cell, (y1 - y0) * cell
         ratio = w / max(h, 1)
-        if w < width * 0.025 or h < height * 0.025:
+        if w < width * 0.015 or h < height * 0.015:
             continue
         if w > width * 0.24 or h > height * 0.20 or not 0.38 <= ratio <= 1.65:
             continue
         # Allow hairline, jaw and small gaps in painted skin clusters.
-        pad_x, pad_y = w * 0.20, h * 0.18
+        pad_x, pad_y = w * 0.55, h * 0.80
         left = max(0, x0 * cell - pad_x) / width
         top = max(0, y0 * cell - pad_y) / height
         right = min(width, x1 * cell + pad_x) / width
@@ -117,13 +121,68 @@ def analyze_art(image_bytes: bytes) -> ArtSafetyMap:
     mean_square = np.asarray(squared.filter(ImageFilter.BoxBlur(8)), dtype=np.float32) / 255
     local_variance = np.maximum(0, mean_square - mean * mean)
     color_range = (rgb.max(axis=2).astype(np.float32) - rgb.min(axis=2)) / 255
-    high_contrast_subject = (color_range >= 0.35) & (gray <= 0.78)
-    dark_saturated_silhouette = (color_range >= 0.25) & (gray <= 0.60)
-    busy = (edge_density >= 0.13) | (local_variance >= 0.012) | high_contrast_subject
+    # Calmness depends only on local detail and variation. Brightness alone must
+    # not make a dark, smooth background look busy (or a bright sky look unsafe).
+    busy = (edge_density >= 0.13) | (local_variance >= 0.012)
     integral = np.pad(busy.astype(np.int32), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
-    subject_integral = np.pad(dark_saturated_silhouette.astype(np.int32), ((1, 0), (1, 0)))
+
+    # Exclude connected warm metallic highlights such as the brass bird and
+    # bright props. A dilated mask catches their immediate silhouettes.
+    warm_gold = (
+        (rgb[:, :, 0] >= 135)
+        & (rgb[:, :, 1] >= 85)
+        & (rgb[:, :, 0] > rgb[:, :, 1] * 1.08)
+        & (rgb[:, :, 1] > rgb[:, :, 2] * 1.22)
+        & (gray >= 0.48)
+        & (color_range >= 0.18)
+    )
+    gold_image = Image.fromarray(warm_gold.astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(9))
+    gold_mask = np.asarray(gold_image) > 0
+    gold_subject = np.zeros((height, width), dtype=np.bool_)
+    for x0, y0, x1, y1, area in _components(gold_mask):
+        box_w, box_h = x1 - x0, y1 - y0
+        if (
+            width * height * 0.0002 <= area <= width * height * 0.10
+            and box_w <= width * 0.35
+            and box_h <= height * 0.35
+        ):
+            gold_subject[y0:y1, x0:x1] = True
+
+    # Large coherent edge components approximate figure silhouettes without
+    # classifying dark pixels as people. Bounding-box fill protects the interior.
+    edge_mask = edge_density >= 0.28
+    silhouette = np.zeros((height, width), dtype=np.bool_)
+    for x0, y0, x1, y1, area in _components(edge_mask):
+        box_w, box_h = x1 - x0, y1 - y0
+        bounds_area = box_w * box_h
+        if (
+            area >= width * height * 0.006
+            and bounds_area <= width * height * 0.50
+            and box_w >= width * 0.12
+            and box_h >= height * 0.12
+        ):
+            pad_x, pad_y = round(box_w * 0.05), round(box_h * 0.05)
+            silhouette[
+                max(0, y0 - pad_y) : min(height, y1 + pad_y),
+                max(0, x0 - pad_x) : min(width, x1 + pad_x),
+            ] = True
+
+    # Bright, chromatic connected highlights protect lanterns and sun glints.
+    highlights = (gray >= 0.88) & (color_range >= 0.08)
+    highlight_image = Image.fromarray(highlights.astype(np.uint8) * 255).filter(
+        ImageFilter.MaxFilter(7)
+    )
+    highlight_mask = np.asarray(highlight_image) > 0
+    highlight_subject = np.zeros((height, width), dtype=np.bool_)
+    for x0, y0, x1, y1, area in _components(highlight_mask):
+        if width * height * 0.0001 <= area <= width * height * 0.03:
+            highlight_subject[y0:y1, x0:x1] = True
+    subject = gold_subject | silhouette | highlight_subject
+    subject_integral = np.pad(subject.astype(np.int32), ((1, 0), (1, 0)))
     subject_integral = subject_integral.cumsum(0).cumsum(1)
-    return ArtSafetyMap(width, height, integral, subject_integral, tuple(faces))
+    gold_integral = np.pad(gold_subject.astype(np.int32), ((1, 0), (1, 0)))
+    gold_integral = gold_integral.cumsum(0).cumsum(1)
+    return ArtSafetyMap(width, height, integral, subject_integral, gold_integral, tuple(faces))
 
 
 def place_in_calm_art(
@@ -156,7 +215,8 @@ def place_in_calm_art(
                     (y, x) >= floor
                     and not any(candidate.overlaps(b, gap) for b in occupied)
                     and not safety.intersects_face(candidate, aspect)
-                    and safety.subject_fraction(candidate, aspect) <= 0.01
+                    and safety.subject_fraction(candidate, aspect) <= 0.20
+                    and safety.gold_fraction(candidate, aspect) <= 0.02
                 ):
                     ratio = safety.busy_fraction(candidate, aspect)
                     distance = (candidate.x - preferred.x) ** 2 + (candidate.y - preferred.y) ** 2
@@ -164,9 +224,9 @@ def place_in_calm_art(
                     candidates.append((ratio, distance, y, x, candidate))
                 x += step_x
             y += step_y
-    calm = [candidate for candidate in candidates if candidate[0] <= 0.20]
+    calm = [candidate for candidate in candidates if candidate[0] <= 0.75]
     if calm:
-        _, _, _, _, box = min(calm, key=lambda item: (item[1], item[0], item[2], item[3]))
+        _, _, _, _, box = min(calm, key=lambda item: (item[0], item[1], item[2], item[3]))
         return box, False
     if face_safe:
         _, _, _, box = min(
