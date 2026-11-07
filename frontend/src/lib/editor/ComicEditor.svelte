@@ -2,35 +2,22 @@
 	import { tick } from 'svelte';
 	import ErrorBanner from './ErrorBanner.svelte';
 	import { stageList, quoteStages } from './stages.js';
-	import Icon from '#lib/design/Icon.svelte';
-	import ColourEditor from '#lib/colour/ColourEditor.svelte';
-	import LetteringPreview from '#lib/lettering/LetteringPreview.svelte';
-	import { LetteringSession } from '#lib/lettering/session.js';
-	import ExportView from '#lib/export/ExportView.svelte';
-	import { pollJob } from '#lib/api/jobPolling.js';
+	import { Icon, BetaTag, revealCards } from '#lib/design/shell.js';
+	import { ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob } from './features.js';
 	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote } from '#lib/api/types.js';
 	const INK_VARIANT = 'ink';
 
 	export let project;
 	export let apiClient;
 	export let activeStage = STAGES.SCRIPT;
-	let stageNavOpen = false;
-	let stageDrawerToggle;
+	export let onProgress = null;
 	let exportCompleted = false;
-	async function selectStage(id) {
+	export async function selectStage(id) {
 		activeStage = id;
-		stageNavOpen = false;
-		if (stageDrawerToggle?.offsetParent) stageDrawerToggle.focus();
 		if (id === STAGES.PANELS) {
 			await tick();
 			await Promise.all([...letteringSessions.values()].map((session) => session.pendingRequest));
 			await reloadProjectData();
-		}
-	}
-	function handleStageNavKeydown(event) {
-		if (event.key === 'Escape' && stageNavOpen) {
-			stageNavOpen = false;
-			stageDrawerToggle.focus();
 		}
 	}
 	function markExported() {
@@ -128,7 +115,6 @@
 	}
 
 
-	$: currentStage = stageList.find((stage) => stage.id === activeStage);
 	$: stageCompleted = {
 		[STAGES.SCRIPT]: characters.length > 0,
 		[STAGES.CHARACTERS]: allCharactersApproved,
@@ -139,6 +125,7 @@
 		[STAGES.COLOUR]: allColoursApproved,
 		[STAGES.EXPORT]: exportCompleted
 	};
+	$: onProgress?.(stageCompleted);
 
 	$: effectiveScript = project ? (project.original_script || project.script || '') : '';
 	$: scriptWordCount = effectiveScript ? effectiveScript.trim().split(/\s+/).filter(Boolean).length : 0;
@@ -172,7 +159,6 @@
 		lastProjectId = project.id;
 		letteringSessions = new Map();
 		exportCompleted = false;
-		stageNavOpen = false;
 		reloadProjectData();
 	}
 
@@ -527,31 +513,8 @@
 	}
 </script>
 
-<div class="comic-editor-container">
+<div class="comic-editor-container" use:revealCards>
 
-	<aside class="stage-sidebar">
-		<button class="stage-drawer-toggle" on:keydown={handleStageNavKeydown} bind:this={stageDrawerToggle} aria-expanded={stageNavOpen} aria-controls="stage-navigation" on:click={() => stageNavOpen = !stageNavOpen}>
-			<Icon name={currentStage.id} size={22} />
-			<span>{currentStage.label}</span>
-			<span class="drawer-chevron" class:open={stageNavOpen}><Icon name="arrow" size={18} /></span>
-		</button>
-	<nav id="stage-navigation" class="stepper-nav" class:open={stageNavOpen} aria-label="Stages">
-		{#each stageList as stage}
-			<button
-				class="step-item"
-				on:keydown={handleStageNavKeydown}
-				class:active={activeStage === stage.id}
-				class:complete={stageCompleted[stage.id]}
-				aria-current={activeStage === stage.id ? 'step' : undefined}
-				on:click={() => selectStage(stage.id)}
-			>
-				<Icon name={stage.id} size={22} />
-				<span class="step-title">{stage.label}</span>
-				{#if stageCompleted[stage.id]}<span class="completion-mark"><Icon name="check" label="Complete" size={15} /></span>{/if}
-			</button>
-		{/each}
-	</nav>
-	</aside>
 	<div class="stage-workspace">
 
 	{#if isJobActive}
@@ -666,7 +629,7 @@
 								<div class="char-title-row">
 									<h3>{char.name} <span class="age-badge">{char.visual_attributes?.age_range || char.age_range || ''}</span></h3>
 									{#if char.is_sample || char.sample_label}
-										<span class="sample-tag">Sample</span>
+										<BetaTag />
 									{/if}
 									<button class="edit-icon-btn" on:click={() => startEditChar(char)}><Icon name="edit" size={18} /> Edit</button>
 								</div>
@@ -869,7 +832,7 @@
 						<div class="card-title-row">
 							<h3>#{page.page_number}</h3>
 							{#if page.is_sample || page.sample_label}
-								<span class="sample-tag">Sample</span>
+								<BetaTag />
 							{/if}
 						</div>
 						<div class="img-container" class:overlay-preview={page.lettering_mode === 'overlay'}>
@@ -959,7 +922,7 @@
 						<div class="card-title-row">
 							<h3>#{page.page_number}</h3>
 							{#if page.is_sample || page.sample_label}
-								<span class="sample-tag">Sample</span>
+								<BetaTag />
 							{/if}
 						</div>
 						<div class="img-container" class:overlay-preview={page.lettering_mode === 'overlay'}>

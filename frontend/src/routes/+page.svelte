@@ -1,8 +1,7 @@
 <script>
 	import '#lib/design/theme.css';
-	import { focusDialog } from '#lib/design/dialog.js';
-	import Icon from '#lib/design/Icon.svelte';
 	import ComicEditor from '#lib/editor/ComicEditor.svelte';
+	import { Icon, focusDialog, AppHeader, AppFooter, Hamburger, Sidebar, StageNav, stageList } from '#lib/design/shell.js';
 	import { createDefaultClient, formatApiError } from '#lib/api/index.js';
 	import { AGE_TERMS_ADVISORY } from '#lib/config/policies.js';
 	import { onMount } from 'svelte';
@@ -29,6 +28,24 @@
 	};
 
 	let activeStage = 'script';
+	let stageCompleted = {};
+	let editor;
+	let sidebar;
+	let sidebarOpen = false;
+	let hamburger = null;
+
+	function trackProgress(completed) {
+		stageCompleted = completed;
+	}
+
+	function toggleSidebar() {
+		sidebar.toggle();
+	}
+
+	function selectStage(event) {
+		if (editor) editor.selectStage(event.detail);
+		else activeStage = event.detail;
+	}
 
 	async function loadProjects() {
 		isLoadingProjects = true;
@@ -149,27 +166,25 @@
 
 <div class="app-layout">
 
-	<header class="navbar">
-		<div class="brand">
-			<img class="brand-mark" src="/brand/mark.svg" alt="" />
-			<img class="brand-wordmark" src="/brand/wordmark.svg" alt="Icomic" />
-		</div>
+	<AppHeader>
+		<svelte:fragment slot="leading">
+			<Hamburger bind:button={hamburger} open={sidebarOpen} controls="app-sidebar" on:click={toggleSidebar} />
+		</svelte:fragment>
 
-		<div class="nav-status">
-			<div class="status-pill global-pill">
-
-				<Icon name="globe" size={14} /><span>Global</span>
-			</div>
-
-			<div class="status-pill advisory-pill" title={AGE_TERMS_ADVISORY}>
-				<Icon name="lock" size={14} /><span class="advisory-text">18+ Advisory</span>
-			</div>
-
-			{#if authMode === 'mock'}
-				<div class="status-pill mock-pill">
-					<Icon name="mock" size={14} /><span class="badge blue">Sample</span>
+		<svelte:fragment slot="status">
+			<div class="nav-status">
+				<div class="status-pill global-pill">
+					<Icon name="globe" size={14} /><span class="pill-text">Global</span>
 				</div>
-			{:else if authMode === 'dev'}
+
+				<div class="status-pill advisory-pill" title={AGE_TERMS_ADVISORY}>
+					<Icon name="lock" size={14} /><span class="pill-text">18+ Advisory</span>
+				</div>
+			</div>
+		</svelte:fragment>
+
+		<svelte:fragment slot="account">
+			{#if authMode === 'dev'}
 				<div class="status-pill dev-pill">
 					<span class="indicator green"></span>
 					<span class="dev-label">Dev</span>
@@ -179,14 +194,18 @@
 					<span class="indicator green"></span>
 					<span>Token</span>
 				</div>
-			{:else}
+			{:else if authMode !== 'mock'}
 				<div class="status-pill unauth-pill">
 					<span class="indicator amber"></span>
 					<span class="unauth-label">Signed out</span>
 				</div>
 			{/if}
-		</div>
-	</header>
+		</svelte:fragment>
+	</AppHeader>
+
+	<Sidebar bind:this={sidebar} bind:open={sidebarOpen} id="app-sidebar" label="Menu" trigger={hamburger} disabled={showCreateModal}>
+		<StageNav stages={stageList} active={activeStage} completed={stageCompleted} disabled={!activeProject} on:select={selectStage} />
+	</Sidebar>
 
 	{#if !isAuthenticated && authMode !== 'mock'}
 		<div class="unauth-banner" role="alert">
@@ -286,9 +305,11 @@
 			</div>
 		{:else if activeProject}
 			<ComicEditor
+				bind:this={editor}
 				project={activeProject}
 				{apiClient}
 				bind:activeStage
+				onProgress={trackProgress}
 			/>
 		{:else}
 			<div class="empty-state-card">
@@ -299,6 +320,8 @@
 			</div>
 		{/if}
 	</main>
+
+	<AppFooter />
 
 	{#if showCreateModal}
 		<div
