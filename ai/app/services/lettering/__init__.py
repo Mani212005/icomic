@@ -469,14 +469,15 @@ def _layout_panel(
     if arrangements:
         chosen = max(
             arrangements,
+            # Rounded so that mirrored arrangements tie identically on every platform and
+            # the first order in reading order wins, rather than float rounding noise.
             key=lambda arrangement: (
                 len(arrangement),
-                -sum(d.cost for d in arrangement) if art_safety else 0,
-                sum(d.size for d in arrangement),
-                -sum(d.box.width * d.box.height for d in arrangement),
+                round(-sum(d.cost for d in arrangement), 6) if art_safety else 0,
+                round(sum(d.size for d in arrangement), 9),
+                round(-sum(d.box.width * d.box.height for d in arrangement), 9),
             ),
         )
-        chosen = sorted(chosen, key=lambda d: d.utterance.order)
         placed_drafts = pinned_drafts + chosen
         placed_ids = {d.utterance.utterance_id for d in chosen}
         for d in automatic:

@@ -305,8 +305,9 @@ def test_caption_anchors_outer_top_and_speech_uses_detected_speaker_side(monkeyp
 
     result = layout_page(document, art_image=raw)
 
-    caption, bubble = result.bubbles
-    assert caption.kind == "narration" and bubble.kind == "speech"
+    assert len(result.bubbles) == 2
+    caption = next(b for b in result.bubbles if b.kind == "narration")
+    bubble = next(b for b in result.bubbles if b.kind == "speech")
     assert caption.shape.bounds.y < 0.1  # Anchored to the outer top of the panel.
     assert not Box(**caption.shape.bounds.model_dump()).overlaps(
         Box(**bubble.shape.bounds.model_dump())
