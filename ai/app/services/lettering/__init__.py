@@ -19,7 +19,7 @@ from ...gen.models import (
     LetteringTextLine,
     LetteringUtterance,
 )
-from .art_safety import ArtSafetyMap, analyze_art, place_in_calm_art
+from .art_safety import SIZE_COST, ArtSafetyMap, analyze_art, place_in_calm_art
 from .geometry import Box, ellipse_contains, place, polygon_hits_box
 from .typography import Run, select_font, shape, wrap
 
@@ -57,6 +57,7 @@ class Draft:
     runs: list[tuple[str, Run]]
     step: float
     flags: list[str]
+    cost: float = 0.0
 
 
 def _local_rect(rect, panel: Box) -> Box:
@@ -384,6 +385,10 @@ def _layout_panel(
             u = original.utterance
             edge = u.caption_edge if u.kind in {"caption", "narration"} else None
             selected = None
+            best_objective = math.inf
+            requested = (
+                cfg.font_size * (u.placement.size_scale or 1) if u.placement else cfg.font_size
+            )
             for candidate_draft in _draft_candidates(u, p, zones, cfg):
                 preferred = place(
                     candidate_draft.box, zones, blockers, cfg.gap, edge, (-math.inf, -math.inf)
@@ -420,9 +425,9 @@ def _layout_panel(
                         side_candidate.overlaps(blocker, cfg.gap) for blocker in blockers
                     ):
                         preferred = side_candidate
-                no_calm_zone = False
+                objective = 0.0
                 if art_safety:
-                    candidate, no_calm_zone = place_in_calm_art(
+                    candidate, cost = place_in_calm_art(
                         candidate_draft.box,
                         zones,
                         blockers,
@@ -432,18 +437,25 @@ def _layout_panel(
                         preferred,
                         art_safety,
                         aspect,
+                        p,
                     )
                     if candidate is None:
                         continue
+                    shortfall = max(0.0, requested - candidate_draft.size) / max(
+                        requested - cfg.minimum_font_size, 1e-9
+                    )
+                    objective = cost + SIZE_COST * shortfall
                 else:
                     candidate = preferred
                 candidate_draft.box = candidate
                 if not _text_fits(candidate_draft, aspect, cfg.padding):
                     continue
-                if no_calm_zone:
-                    candidate_draft.flags.append("no_calm_zone")
-                selected = candidate_draft
-                break
+                if not art_safety:
+                    selected = candidate_draft
+                    break
+                if objective < best_objective:
+                    best_objective, selected = objective, candidate_draft
+                    candidate_draft.cost = objective
             if selected is None:
                 continue
             chosen.append(selected)
@@ -459,10 +471,12 @@ def _layout_panel(
             arrangements,
             key=lambda arrangement: (
                 len(arrangement),
+                -sum(d.cost for d in arrangement) if art_safety else 0,
                 sum(d.size for d in arrangement),
                 -sum(d.box.width * d.box.height for d in arrangement),
             ),
         )
+        chosen = sorted(chosen, key=lambda d: d.utterance.order)
         placed_drafts = pinned_drafts + chosen
         placed_ids = {d.utterance.utterance_id for d in chosen}
         for d in automatic:
