@@ -125,15 +125,57 @@ def test_live_2_gold_mask_covers_hand_marked_bird_bounds_with_margin():
         assert safety.subject_fraction(bounds, 2 / 3) >= 0.75, bird["panel"]
 
 
-def test_live_2_55px_default_reports_unsafe_reserved_pockets_without_shrinking():
+def test_live_3_saved_art_layout_has_no_colliding_or_clipped_bubbles():
+    state = json.loads((FIXTURES / "live-3/lettering-01.json").read_text())
+    document = LetteringDocument.model_validate(state["input"])
+    image = (FIXTURES / "live-3/nia-brass-bird.webp").read_bytes()
+
+    result = layout_page(document, art_image=image)
+
+    assert result.bubbles
+    assert all(not bubble.flags for bubble in result.bubbles)
+    assert not {
+        "collision",
+        "outside_reserved_zone",
+        "overflow",
+    } & {issue.flag.root for issue in result.issues}
+    assert all(line.font_size >= 18 / 841.89 for bubble in result.bubbles for line in bubble.lines)
+    no_go = [
+        Box(x * (2 / 3), y, width * (2 / 3), height)
+        for x, y, width, height in [
+            (0.16, 0.13, 0.20, 0.17),  # upper-left face and hairline
+            (0.63, 0.19, 0.09, 0.12),  # upper-right face
+            (0.77, 0.15, 0.15, 0.12),  # upper-right brass bird
+            (0.29, 0.28, 0.19, 0.15),  # hand and brass bird
+            (0.27, 0.68, 0.17, 0.14),  # lower-left bird
+            (0.03, 0.75, 0.13, 0.16),  # lower-left face and hand
+            (0.73, 0.64, 0.17, 0.14),  # lower-right brass bird
+            (0.43, 0.69, 0.12, 0.13),  # lower-right face
+            (0.88, 0.70, 0.12, 0.15),  # lower-right hand
+        ]
+    ]
+    assert all(
+        not Box(
+            bubble.shape.bounds.x,
+            bubble.shape.bounds.y,
+            bubble.shape.bounds.width,
+            bubble.shape.bounds.height,
+        ).overlaps(subject)
+        for bubble in result.bubbles
+        for subject in no_go
+    )
+
+
+def test_live_2_shrinks_captions_and_withholds_unsafe_speech():
     state = json.loads((FIXTURES / "live-2/lettering-01.json").read_text())
     document = LetteringDocument.model_validate(state["input"])
     image = (FIXTURES / "nia-brass-bird-live-2.jpg").read_bytes()
     result = layout_page(document, art_image=image)
     speech = [bubble for bubble in result.bubbles if bubble.kind == "speech"]
     assert speech == []
-    assert len([issue for issue in result.issues if issue.flag.root == "no_calm_zone"]) == 6
-    assert all(line.font_size >= 35 / 841.89 for bubble in speech for line in bubble.lines)
+    assert len([issue for issue in result.issues if issue.flag.root == "no_calm_zone"]) >= 3
+    assert all(line.font_size >= 18 / 841.89 for bubble in result.bubbles for line in bubble.lines)
+    assert any(line.font_size < 35 / 841.89 for bubble in result.bubbles for line in bubble.lines)
     assert any(issue.flag.root == "no_calm_zone" for issue in result.issues)
     no_go = [
         Box(x * (2 / 3), y, width * (2 / 3), height)

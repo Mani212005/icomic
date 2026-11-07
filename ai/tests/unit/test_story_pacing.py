@@ -93,7 +93,7 @@ def test_overlay_panel_prompt_is_short_and_provider_text_limit_is_enforced():
             return json.dumps(value)
 
     adapter = LongDialogue()
-    with pytest.raises(ValueError, match="limited to 12 words"):
+    with pytest.raises(ValueError, match="12 words per speech turn"):
         PanelService(adapter).generate_panel_text(
             1, "Title", "Source", [], panel_count=1, overlay_lettering=True
         )
@@ -101,6 +101,21 @@ def test_overlay_panel_prompt_is_short_and_provider_text_limit_is_enforced():
     expected = (Path(__file__).parents[1] / "fixtures/overlay-panel-text-policy.txt").read_text()
     assert OVERLAY_PANEL_TEXT_POLICY + "\n" == expected
     assert OVERLAY_PANEL_TEXT_POLICY in system
+
+
+def test_overlay_panel_rejects_captions_over_fourteen_words():
+    class LongCaption(FakeLanguageAdapter):
+        def complete(self, model, messages, **kwargs):
+            value = json.loads(super().complete(model, messages, **kwargs))
+            value[0]["narration"] = (
+                "This caption has more than fourteen words and should be rewritten while preserving the essential story meaning."
+            )
+            return json.dumps(value)
+
+    with pytest.raises(ValueError, match="14 words per narration caption"):
+        PanelService(LongCaption()).generate_panel_text(
+            1, "Title", "Source", [], panel_count=1, overlay_lettering=True
+        )
 
 
 @pytest.mark.parametrize("response", ["[", "[]"])

@@ -43,15 +43,17 @@ with a clear path for each speech tail. After painting, the layout service score
 density and variance, detects face-like warm-color clusters, and searches within
 reserved zones for a calm position. Subject detail is a no-go area even when it is
 not recognized as a face. In overlay mode, panel text generation limits dialogue
-and captions to 12 words each, allows at most two short speech turns and one caption,
-and omits picture-description narration. The parser rejects text beyond that limit;
-layout overflow remains a review flag and lettering is never shrunk below 35 pt.
+and captions to bounded lengths, allows at most two short speech turns and one caption,
+and omits picture-description narration. The parser enforces at most 12 words per
+speech turn and 14 words per caption; the shaped-text fit check rejects text that
+does not fit inside the reserved band. Layout may reduce lettering from 35 pt down
+to the documented 18 pt minimum, but never truncates it.
 If no calm face-safe position exists, the layout records `no_calm_zone`; the exporter
 withholds that utterance and any other unsafe bubbles, draws independently safe
 bubbles, and adds a visible review warning. Other layout issues withhold the layer.
 This deterministic image analysis complements the prompt rule and does not call a provider.
 Unrenderable/crowded text keeps review issues; the system never shrinks below
-35 pt to hide a mismatch. Editorial zone edits can instead reserve an empty side.
+18 pt to hide a mismatch. Editorial zone edits can instead reserve an empty side.
 
 Source narration becomes one narration utterance first. Nonempty explicit dialogue
 lines follow in source order as speech. A leading `Speaker:` is stored separately
@@ -193,12 +195,12 @@ edges. Empty line bounds have a tiny positive extent for serializability.
 ## Layout and review flags
 
 The default font size is 35 pt at A4 height. `LayoutConfig.minimum_font_size` is
-`35 / 841.89` of page height, equivalent to 35 pt on A4 (297 mm), targeting at
-least 55px glyph ink height on 1280x1920 portrait art. Configurations cannot lower
+`18 / 841.89` of page height, equivalent to 18 pt on A4 (297 mm), targeting at
+least 28px glyph ink height on 1280x1920 portrait art. Configurations cannot lower
 that floor. Size scaling below it is clamped to the minimum and flagged
-`below_minimum`. Layout never hides overflow by shrinking lettering. Captions may
-use up to 94% of panel width within their reserved zone; speech bubbles may use up
-to 45% of panel width.
+`below_minimum`. Automatic text may shrink from the default in 2 pt steps, with
+every candidate checked against its shaped ink bounds and reserved zone. Captions
+may use up to 62% of panel width; speech bubbles may use up to 55%.
 Other paper heights scale proportionately; physical print-size requirements for
 other formats must be selected explicitly by their future integration.
 
@@ -217,13 +219,13 @@ center override derives the bubble size normally and centers it on that point.
 Manual rectangles reserve space before automatic placement, even when their
 utterances occur later in reading order.
 
-Automatic placement prefers the centered, inset position in the earliest reserved
-zone row, then follows reading order. Collisions push candidates right or down to previous bubble boundaries
-plus a gap; candidates must fit wholly inside a reserved zone. The search is finite
-and deterministic, without a pixel grid, randomness or mutable document state.
-This is a greedy layout heuristic, not a global packing optimizer. Unresolved
-packing returns explicit `overflow`/`collision` flags for editorial review. Exact
-manual overrides may intentionally violate automatic reading order.
+Automatic placement evaluates a bounded set of font sizes, caption widths and
+utterance orders, scoring complete placements before partial ones. Candidates must
+fit wholly inside a reserved zone and clear known face and subject masks. Busy but
+subject-safe positions can be used with a `no_calm_zone` review warning. The search
+is finite and deterministic, without a pixel grid, randomness or mutable document
+state. Unresolved packing returns explicit `overflow`/`collision` flags for editorial
+review. Exact manual overrides may intentionally violate automatic reading order.
 
 Tails attach to the actual bubble silhouette facing the manual/speaker anchor.
 Automatic speech tails use a broad base and sampled quadratic sides for a short,

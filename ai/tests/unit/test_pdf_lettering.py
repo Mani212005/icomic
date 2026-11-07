@@ -271,6 +271,43 @@ def test_real_probe_layout_pdf_has_extractable_lines_and_allows_image_payloads()
     verify_overlay_pdf(pdf + b" " * 2_000_000, [state["layout"]], 1)
 
 
+def test_live_3_text_free_art_relayouts_and_exports_offline():
+    from app.gen.models import LetteringDocument
+    from app.services.lettering import layout_page
+
+    fixture = FIXTURES / "live-3/lettering-01.json"
+    state = json.loads(fixture.read_text())
+    art = (FIXTURES / "live-3/nia-brass-bird.webp").read_bytes()
+    finished = (FIXTURES / "live-3/finished-art-01.jpg").read_bytes()
+    document = LetteringDocument.model_validate(state["input"])
+    layout = layout_page(document, art_image=art)
+    state["layout"] = layout.model_dump(mode="json")
+    page_data = {
+        "page_number": 1,
+        "page_id": document.page_id,
+        "image_bytes": finished,
+        "original_image_bytes": art,
+        "lettering_mode": "overlay",
+        "finish_preset": "print-heavy",
+        "lettering": state,
+    }
+
+    pdf, writer = build([page_data])
+    extracted = " ".join(extract(pdf).split())
+    lines = [line.text for bubble in layout.bubbles for line in bubble.lines]
+
+    assert layout.bubbles
+    assert not {
+        "collision",
+        "outside_reserved_zone",
+        "overflow",
+    } & {issue.flag.root for issue in layout.issues}
+    assert all(line in extracted for line in lines)
+    assert len(page_streams(pdf)) == 2
+    assert len(pdf) > 100_000
+    assert writer.warnings  # no_calm_zone warnings identify art-safe withheld dialogue
+
+
 @pytest.mark.parametrize("name", ["speech-tail", "narration", "thought", "unicode-devanagari"])
 def test_pdf_render_matches_serialized_layout_raster(name, tmp_path):
     # Independent raster consumes stored glyph outlines and shape union; it never shapes.
