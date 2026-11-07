@@ -1,4 +1,4 @@
-.PHONY: all test lint build check guard-hermetic test-contracts test-migrations test-backend test-backend-realdb test-ai test-frontend test-e2e e2e-comic generate-contract-models check-contract-models install-contract-codegen fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
+.PHONY: all test lint build check bench guard-hermetic test-contracts test-migrations test-backend test-backend-realdb test-ai test-frontend test-e2e e2e-comic generate-contract-models check-contract-models install-contract-codegen fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
 
 OAPI_CODEGEN_VERSION := v2.6.0
 DATAMODEL_CODEGEN_VERSION := 0.89.0
@@ -57,6 +57,10 @@ test-ai:
 
 test-frontend:
 	( cd frontend && npm test )
+
+# Single-process performance baselines for the image paths (not part of CI); BENCH_ARGS picks cases.
+bench:
+	( cd ai && uv run --frozen python tests/bench/bench.py --trace $(BENCH_ARGS) )
 
 test-e2e:
 	( cd ai && uv run --frozen pytest -v -c ../tests/e2e/pytest.ini ../tests/e2e )
