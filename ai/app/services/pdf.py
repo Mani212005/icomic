@@ -20,7 +20,7 @@ from PIL import Image
 
 from ..adapters.storage.port import StoragePort
 from ..gen.models import PageExportItem, PdfLetteringWarning
-from .finish_layer import FinishStrength, finish_image, page_seed
+from .finish_layer import FinishStrength, encode_finished, finish_pixels, page_seed
 from .lettering.pdf import PdfLettering, eligibility
 
 
@@ -131,9 +131,12 @@ def _display_image_payload(image_bytes: bytes) -> tuple[int, int, str, str, byte
         image_bytes.startswith(b"RIFF") and len(image_bytes) >= 12 and image_bytes[8:12] == b"WEBP"
     ):
         with Image.open(BytesIO(image_bytes)) as source:
-            rgba = source.convert("RGBA")
-            rgb = Image.new("RGB", rgba.size, "white")
-            rgb.paste(rgba, mask=rgba.getchannel("A"))
+            if source.mode in ("RGB", "L") and "transparency" not in source.info:
+                rgb = source.convert("RGB")  # opaque: compositing on white is the identity
+            else:
+                rgba = source.convert("RGBA")
+                rgb = Image.new("RGB", rgba.size, "white")
+                rgb.paste(rgba, mask=rgba.getchannel("A"))
             width, height = rgb.size
             # Palette art and small flat illustrations retain their exact pixels.
             flat = source.mode in ("1", "P") or (rgb.getcolors(maxcolors=64) is not None)
@@ -144,6 +147,27 @@ def _display_image_payload(image_bytes: bytes) -> tuple[int, int, str, str, byte
             return width, height, "/DeviceRGB", "DCTDecode", encoded.getvalue()
 
     raise UnsupportedImageMediaError("PDF export supports PNG, JPEG and WebP.")
+
+
+def _finished_display_jpeg(image_bytes: bytes, seed: int, strength: FinishStrength) -> bytes:
+    """Finish a page and encode it as the JPEG display copy embedded in the PDF."""
+    finished = finish_pixels(image_bytes, seed=seed, strength=strength)
+    if finished is None:
+        image = _decode(image_bytes)
+    else:
+        image, image_format = finished
+        if image_format.upper() != "PNG":
+            # Lossy source formats are re-encoded by the finisher; keep that generation loss.
+            image = _decode(encode_finished(image, image_format))
+    display_output = BytesIO()
+    image.convert("RGB").save(display_output, format="JPEG", quality=92, optimize=True)
+    return display_output.getvalue()
+
+
+def _decode(data: bytes) -> Image.Image:
+    with Image.open(BytesIO(data)) as source:
+        source.load()
+        return source.copy()
 
 
 def _image_object(
@@ -235,16 +259,9 @@ class PdfWriter:
                 page_identity = (
                     page.get("page_id") or f"{project_id}/page-{page.get('page_number', idx)}"
                 )
-                finished = finish_image(
-                    image_bytes,
-                    seed=page_seed(f"{page_identity}/{preset}"),
-                    strength=strength,
+                display_bytes = _finished_display_jpeg(
+                    image_bytes, page_seed(f"{page_identity}/{preset}"), strength
                 )
-                with Image.open(BytesIO(finished)) as source:
-                    display_image = source.convert("RGB")
-                    display_output = BytesIO()
-                    display_image.save(display_output, format="JPEG", quality=92, optimize=True)
-                display_bytes = display_output.getvalue()
                 derivative_hash = hashlib.sha256(display_bytes).hexdigest()
                 derivative_key = f"finishes/{page_identity}/{preset}/{derivative_hash}.jpg"
                 if self.storage_adapter is not None:
@@ -321,9 +338,12 @@ class PdfWriter:
         image_bottom = disclosure_y + disclosure_h + 31
         image_max_h = max(0, min(305, image_top - image_bottom))
         cover_image = pages_data[0].get("image_bytes") if pages_data else None
+        cover_source = cover_image
+        cover_payload: tuple[int, int, str, str, bytes] | None = None
         if cover_image and image_max_h >= 72:
             try:
-                img_w, img_h, colorspace, filter_name, payload = _display_image_payload(cover_image)
+                cover_payload = _display_image_payload(cover_image)
+                img_w, img_h, colorspace, filter_name, payload = cover_payload
             except (OSError, ValueError, struct.error, zlib.error):
                 cover_image = None
             else:
@@ -440,7 +460,12 @@ class PdfWriter:
                 img_bytes = _generate_fallback_png()
 
             try:
-                img_w, img_h, colorspace, filter_name, payload = _display_image_payload(img_bytes)
+                if cover_payload is not None and img_bytes is cover_source:
+                    img_w, img_h, colorspace, filter_name, payload = cover_payload
+                else:
+                    img_w, img_h, colorspace, filter_name, payload = _display_image_payload(
+                        img_bytes
+                    )
             except OSError as exc:
                 if img_bytes.startswith(b"RIFF") and img_bytes[8:12] == b"WEBP":
                     raise
@@ -720,28 +745,24 @@ class PdfWriter:
         # -----------------------------------------------------------------
         # Binary Assembly with Cross-Reference Table
         # -----------------------------------------------------------------
-        pdf = bytearray()
-        pdf.extend(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+        parts = [b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"]
+        offset = len(parts[0])
 
         offsets = [0]
         for idx, obj in enumerate(self.objects, start=1):
-            offsets.append(len(pdf))
-            pdf.extend(f"{idx} 0 obj\n".encode())
-            pdf.extend(obj)
-            pdf.extend(b"\nendobj\n")
+            offsets.append(offset)
+            framed = (f"{idx} 0 obj\n".encode(), obj, b"\nendobj\n")
+            parts.extend(framed)
+            offset += sum(len(part) for part in framed)
 
-        xref_offset = len(pdf)
-        pdf.extend(f"xref\n0 {len(self.objects) + 1}\n".encode())
-        pdf.extend(b"0000000000 65535 f \r\n")
-        for off in offsets[1:]:
-            pdf.extend(f"{off:010d} 00000 n \r\n".encode())
-
-        pdf.extend(
+        xref = [f"xref\n0 {len(self.objects) + 1}\n".encode(), b"0000000000 65535 f \r\n"]
+        xref.extend(f"{off:010d} 00000 n \r\n".encode() for off in offsets[1:])
+        xref.append(
             f"trailer\n<< /Size {len(self.objects) + 1} /Root {catalog_id} 0 R /Info {info_id} 0 R >>\n"
-            f"startxref\n{xref_offset}\n%%EOF\n".encode()
+            f"startxref\n{offset}\n%%EOF\n".encode()
         )
-
-        return bytes(pdf)
+        # One join sizes the result exactly; a growing bytearray plus bytes() holds two copies.
+        return b"".join([*parts, *xref])
 
 
 class PdfAssemblyService:

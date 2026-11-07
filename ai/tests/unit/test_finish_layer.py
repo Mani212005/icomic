@@ -3,17 +3,22 @@ from __future__ import annotations
 from hashlib import sha256
 from io import BytesIO
 
+import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.adapters.storage.fake import FakeStorageAdapter
 from app.main import create_app
+from app.services import finish_layer
 from app.services.finish_layer import (
     FinishStrength,
     FinishTreatment,
     finish_image,
+    finish_pixels,
     page_seed,
 )
+from app.services.pdf import _finished_display_jpeg
 
 
 def _encode(image: Image.Image, image_format: str = "PNG") -> bytes:
@@ -137,3 +142,55 @@ def test_registration_offsets_stay_subpixel_to_one_pixel_at_work_width() -> None
         crossing = next(x for x in range(638, 643) if pixels.getpixel((x, 16)) >= 128)
         edges.append(crossing)
     assert max(edges) - min(edges) <= 1
+
+
+def _painted(width: int, height: int) -> Image.Image:
+    rng = np.random.default_rng(11)
+    ramp = np.linspace(40, 230, width, dtype=np.float32)
+    pixels = np.stack([ramp[None, :].repeat(height, 0)] * 3, axis=2)
+    pixels[: height // 3, : width // 3] = (226, 168, 138)  # skin-like block
+    pixels[height // 2 :, width // 2 :] = (20, 20, 30)  # dark flat block
+    pixels += rng.normal(0, 4, pixels.shape)
+    return Image.fromarray(np.clip(pixels, 0, 255).astype(np.uint8), "RGB")
+
+
+@pytest.mark.parametrize("treatment", list(FinishTreatment))
+def test_output_does_not_depend_on_strip_height(monkeypatch, treatment) -> None:
+    source = _encode(_painted(131, 97))  # odd sizes: strips never divide the page evenly
+    expected = finish_image(source, seed="strips", strength="plus", treatment=treatment)
+    for rows in (1, 7, 1000):
+        monkeypatch.setattr(finish_layer, "_STRIP_ROWS", rows)
+        assert finish_image(source, seed="strips", strength="plus", treatment=treatment) == expected
+
+
+def test_min3x3_matches_pil_min_filter_including_borders() -> None:
+    from PIL import ImageFilter
+
+    plane = np.random.default_rng(5).integers(0, 256, (37, 53), dtype=np.uint8)
+    expected = np.asarray(Image.fromarray(plane, "L").filter(ImageFilter.MinFilter(3)))
+    assert np.array_equal(finish_layer._min3x3(plane), expected)
+
+
+def test_pdf_display_copy_skips_the_lossless_round_trip_without_changing_pixels() -> None:
+    source = _encode(_painted(96, 128))
+    seed = page_seed("page-3/print")
+    finished = finish_image(source, seed=seed, strength=FinishStrength.PRINT)
+    via_png = BytesIO()
+    _decode(finished).convert("RGB").save(via_png, format="JPEG", quality=92, optimize=True)
+    assert _finished_display_jpeg(source, seed, FinishStrength.PRINT) == via_png.getvalue()
+
+
+def test_pdf_display_copy_keeps_lossy_source_generation_loss() -> None:
+    source = _encode(_painted(96, 128), "JPEG")
+    seed = page_seed("page-3/print")
+    finished = finish_image(source, seed=seed, strength=FinishStrength.PLUS)
+    via_jpeg = BytesIO()
+    _decode(finished).convert("RGB").save(via_jpeg, format="JPEG", quality=92, optimize=True)
+    assert _finished_display_jpeg(source, seed, FinishStrength.PLUS) == via_jpeg.getvalue()
+
+
+def test_finish_pixels_reports_unchanged_for_off_and_empty_mask() -> None:
+    source = _encode(_painted(40, 40))
+    assert finish_pixels(source, seed=1, strength="off") is None
+    empty = _encode(Image.new("L", (40, 40), 0))
+    assert finish_pixels(source, seed=1, art_mask=empty) is None
