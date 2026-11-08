@@ -119,6 +119,7 @@ func TestUploadColourImagePreservesLineArtAndExportUsesApprovedColour(t *testing
 	if page.ColourImageUploadedAt == nil || !page.ColourImageUploadedAt.After(*page.LineArtApprovedAt) {
 		t.Fatal("upload timestamp was not recorded after line art approval")
 	}
+	seedProvenance(t, repo, pageProjectID(t, repo, pageID), "http://storage/line-art.png")
 	var exportedImageURL string
 	fake.AssemblePdfFunc = func(_ context.Context, req gen.AssemblePdfRequest) (*gen.AssemblePdfResponse, error) {
 		if len(req.Pages) != 1 {

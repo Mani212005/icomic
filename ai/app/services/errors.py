@@ -32,7 +32,14 @@ class JobExecutionError(HTTPException):
         self.error = error
 
 
+class ExportIncompleteError(ValueError):
+    """An export would need art or an attachment that storage no longer holds, or cannot be made."""
+
+
 def classify_error(exc: Exception) -> SafeError:
+    if isinstance(exc, ExportIncompleteError):
+        # Written for the user and free of storage URLs, so it is safe to show verbatim.
+        return SafeError("EXPORT_INCOMPLETE", str(exc), 409)
     if isinstance(exc, MetaContentPolicyError):
         return SafeError(
             "CONTENT_POLICY_REJECTED",

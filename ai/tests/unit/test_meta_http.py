@@ -28,6 +28,7 @@ from app.adapters.meta_http import (
     build_responses_image_request,
     detect_c2pa_markers,
     detect_image_media_type,
+    extract_provenance,
     load_reasoning_config,
     parse_chat_completion_response,
     parse_palette_json,
@@ -178,6 +179,22 @@ def test_parse_responses_image_response_and_provenance_preservation():
     assert provenance["cost_usd"] == DEFAULT_IMAGE_COST_USD
     assert provenance["usage"]["total_tokens"] == 120
     assert result.media_type == "image/png"
+
+
+def test_provider_provenance_is_kept_verbatim_apart_from_derived_diagnostics():
+    raw = {"c2pa": {"signature": "sig-xyz", "nested": {"keep": [1, 2]}}, "vendor_field": "x"}
+    image = b"\x89PNG\r\n\x1a\nno-marker"
+    kept = extract_provenance({"provenance": raw}, image, "muse-image-1.0")
+    assert kept["provider_raw"] == {
+        "c2pa": {"signature": "sig-xyz", "nested": {"keep": [1, 2]}},
+        "vendor_field": "x",
+    }
+    # Derived diagnostics never write back into the provider's object.
+    assert "manifest_marker_detected" not in kept["provider_raw"]["c2pa"]
+    assert kept["c2pa"]["manifest_marker_detected"] is False
+    assert kept["c2pa"]["signature"] == "sig-xyz"
+    # A provider that sent nothing is recorded as sending nothing.
+    assert extract_provenance({}, image, "muse-image-1.0")["provider_raw"] is None
 
 
 def test_detect_image_media_type():

@@ -68,7 +68,8 @@ def verify_pdf_structure(
         b"MANDATORY AI-GENERATION DISCLOSURE",
         b"Meta generative models",
         b"AI-generated",
-        b"Meta C2PA provenance metadata",
+        b"Original Meta image files, with any embedded provenance metadata",
+        b"does not verify C2PA signatures",
     ]
     for term in mandatory_terms:
         assert term in all_content_text, (
@@ -79,7 +80,7 @@ def verify_pdf_structure(
     provenance_terms = [
         b"icomic:provenanceRecords",
         b"icomic:aiDisclosure",
-        b"c2pa",
+        b"<icomic:sourcesPreserved>True</icomic:sourcesPreserved>",
     ]
     for term in provenance_terms:
         assert term in pdf_bytes, (

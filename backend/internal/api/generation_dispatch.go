@@ -123,6 +123,7 @@ func (s *Server) finalizeDraftSketch(ctx context.Context, job *domain.Generation
 	if err := s.Repo.UpdatePage(ctx, pg); err != nil {
 		return "", newSaveError(http.StatusInternalServerError, "Failed to save page", err)
 	}
+	s.recordProvenance(ctx, req.ProjectID, imgURL, resp.ProvenanceMetadata)
 	return imgURL, s.completeGeneration(ctx, job)
 }
 
@@ -140,6 +141,7 @@ func (s *Server) finalizeLineArt(ctx context.Context, job *domain.GenerationJob,
 	if err := s.Repo.UpdatePage(ctx, pg); err != nil {
 		return "", newSaveError(http.StatusInternalServerError, "Failed to save page", err)
 	}
+	s.recordProvenance(ctx, req.ProjectID, imgURL, resp.ProvenanceMetadata)
 	return imgURL, s.completeGeneration(ctx, job)
 }
 
@@ -156,6 +158,7 @@ func (s *Server) finalizePaintedPage(ctx context.Context, job *domain.Generation
 	if err := s.Repo.UpdatePage(ctx, pg); err != nil {
 		return nil, "", newSaveError(http.StatusInternalServerError, "Failed to save page", err)
 	}
+	s.recordProvenance(ctx, req.ProjectID, imgURL, resp.ProvenanceMetadata)
 	if pg.LetteringMode == "overlay" {
 		previous := append(json.RawMessage(nil), pg.Lettering...)
 		if err := s.refreshLetteringAfterPaint(ctx, pg, paintedSubjects(resp)); err != nil {

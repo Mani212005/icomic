@@ -2790,227 +2790,6 @@ func (s *Server) CreditUsage(w http.ResponseWriter, r *http.Request) {
 // Exports
 // -------------------------------------------------------------
 
-// ExportProject handles POST /api/v1/projects/{id}/export
-func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
-	userID := s.getUserID(r)
-	projectID := r.PathValue("id")
-
-	proj, err := s.Repo.GetProject(r.Context(), projectID)
-	if err != nil {
-		writeLookupError(w, err, "Project")
-		return
-	}
-	if proj.UserID != userID {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-
-	if s.AIClient == nil {
-		writeError(w, http.StatusServiceUnavailable, "AI service not available")
-		return
-	}
-
-	chapters, err := s.Repo.ListChapters(r.Context(), proj.ID)
-	if err != nil {
-		writeLookupError(w, err, "Chapter list")
-		return
-	}
-	var exportPages []gen.PageExportItem
-	finishPreset := gen.FinishPreset(proj.FinishPreset)
-	finishPresetExplicit := proj.FinishPresetExplicit
-	for _, ch := range chapters {
-		pages, err := s.Repo.ListPages(r.Context(), ch.ID)
-		if err != nil {
-			writeLookupError(w, err, "Page list")
-			return
-		}
-		for _, pg := range pages {
-			type finishCandidate struct {
-				url         string
-				originalURL *string
-				approvedAt  time.Time
-			}
-			var candidates []finishCandidate
-
-			if pg.LineArtImageURL != "" && pg.LineArtApprovedAt != nil && !domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt) {
-				var orig *string
-				if pg.DraftImageURL != "" {
-					orig = &pg.DraftImageURL
-				}
-				candidates = append(candidates, finishCandidate{
-					url:         pg.LineArtImageURL,
-					originalURL: orig,
-					approvedAt:  *pg.LineArtApprovedAt,
-				})
-			}
-
-			if pg.ColourImageURL != "" && pg.ColourImageUploadedAt != nil {
-				approval, approvalErr := s.Repo.GetLatestApproval(r.Context(), "colour_page", pg.ID)
-				if approvalErr != nil && !errors.Is(approvalErr, db.ErrNotFound) {
-					writeLookupError(w, approvalErr, "Colour approval")
-					return
-				}
-				if approvalErr == nil && approval.ApprovedAt.After(*pg.ColourImageUploadedAt) && !domain.IsApprovalStale(&approval.ApprovedAt, pg.UpdatedAt) {
-					var orig *string
-					if pg.LineArtImageURL != "" {
-						orig = &pg.LineArtImageURL
-					} else if pg.DraftImageURL != "" {
-						orig = &pg.DraftImageURL
-					}
-					candidates = append(candidates, finishCandidate{
-						url:         pg.ColourImageURL,
-						originalURL: orig,
-						approvedAt:  approval.ApprovedAt,
-					})
-				}
-			}
-
-			if pg.PaintedPageImageURL != "" && pg.PaintedPageApprovedAt != nil && !domain.IsApprovalStale(pg.PaintedPageApprovedAt, pg.UpdatedAt) {
-				var orig *string
-				if pg.DraftImageURL != "" {
-					orig = &pg.DraftImageURL
-				} else if pg.LineArtImageURL != "" {
-					orig = &pg.LineArtImageURL
-				}
-				candidates = append(candidates, finishCandidate{
-					url:         pg.PaintedPageImageURL,
-					originalURL: orig,
-					approvedAt:  *pg.PaintedPageApprovedAt,
-				})
-			}
-
-			var imgURL string
-			var originalImageURL *string
-
-			if len(candidates) > 0 {
-				best := candidates[0]
-				for _, cand := range candidates[1:] {
-					if cand.approvedAt.After(best.approvedAt) {
-						best = cand
-					}
-				}
-				imgURL = best.url
-				originalImageURL = best.originalURL
-			} else {
-				if pg.LineArtImageURL != "" {
-					imgURL = pg.LineArtImageURL
-				} else if pg.PaintedPageImageURL != "" {
-					imgURL = pg.PaintedPageImageURL
-				} else if pg.DraftImageURL != "" {
-					imgURL = pg.DraftImageURL
-				} else {
-					imgURL = fmt.Sprintf("pages/%s.png", pg.ID)
-				}
-			}
-			mode := gen.PageExportItemLetteringModeBaked
-			var layer *gen.PageLetteringState
-			stale := false
-			if pg.LetteringMode == "overlay" && pg.LineArtImageURL == "" {
-				mode = gen.PageExportItemLetteringModeOverlay
-				layer, err = letteringState(pg)
-				if err != nil {
-					stale = true
-				} else {
-					current, sourceErr := s.sourceLetteringDocument(r.Context(), pg, nil, layer)
-					if sourceErr != nil {
-						writeLookupError(w, sourceErr, "Lettering source")
-						return
-					}
-					before, _ := json.Marshal(layer.Input)
-					after, _ := json.Marshal(current)
-					stale = !bytes.Equal(before, after)
-				}
-			}
-			panelCount := len(pg.PanelIDs)
-			provenance := map[string]interface{}{"c2pa": true}
-			exportPages = append(exportPages, gen.PageExportItem{
-				PageID:               &pg.ID,
-				FinishPreset:         &finishPreset,
-				FinishPresetExplicit: &finishPresetExplicit,
-				LetteringMode:        &mode,
-				Lettering:            layer,
-				LetteringStale:       &stale,
-				PageNumber:           len(exportPages) + 1,
-				ImageURL:             imgURL,
-				OriginalImageURL:     originalImageURL,
-				PanelCount:           optionalInt(panelCount),
-				ProvenanceMetadata:   &provenance,
-			})
-		}
-	}
-	if len(exportPages) == 0 {
-		panelCount := 1
-		provenance := map[string]interface{}{"c2pa": true}
-		exportPages = append(exportPages, gen.PageExportItem{
-			FinishPreset:         &finishPreset,
-			FinishPresetExplicit: &finishPresetExplicit,
-			PageNumber:           1,
-			ImageURL:             fmt.Sprintf("projects/%s/page_1.png", proj.ID),
-			PanelCount:           &panelCount,
-			ProvenanceMetadata:   &provenance,
-		})
-	}
-
-	hashedUID := domain.HashUserID(userID)
-	idempKey := uuid.NewString()
-
-	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		KillSwitchActive: s.IsKillSwitchActive(),
-		ProjectID:        proj.ID,
-		UserID:           userID,
-		JobType:          "assemble_pdf",
-		Stage:            "export",
-		ModelID:          "pdf-assembler",
-		IdempotencyKey:   idempKey,
-		EstimatedCost:    0.0,
-		HashedUserID:     hashedUID,
-	})
-	if err != nil {
-		writeGenerationError(w, err)
-		return
-	}
-
-	r = r.WithContext(context.WithoutCancel(r.Context()))
-	pdfResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.AssemblePdfResponse, error) {
-		return s.AIClient.AssemblePdf(ctx, gen.AssemblePdfRequest{
-			JobID:                job.ID,
-			HashedUserID:         hashedUID,
-			ProjectID:            proj.ID,
-			Title:                proj.Title,
-			PageSize:             gen.A4,
-			IncludeAIDisclosure:  true,
-			FinishPreset:         &finishPreset,
-			FinishPresetExplicit: &finishPresetExplicit,
-			Pages:                exportPages,
-		})
-	})
-	if err != nil {
-		errMsg := safeGenerationMessage(err)
-		_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-		writeGenerationError(w, err)
-		return
-	}
-
-	exp := &domain.Export{
-		ID:                          uuid.NewString(),
-		ProjectID:                   proj.ID,
-		FileURL:                     pdfResp.PdfURL,
-		Format:                      "pdf",
-		Status:                      "completed",
-		ProvenanceMetadataPreserved: pdfResp.ProvenanceMetadataPreserved,
-		CreatedAt:                   time.Now().UTC(),
-	}
-	if err := s.Repo.CreateExport(r.Context(), exp); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save export: %v", err))
-		return
-	}
-
-	actualCost := s.aiActualCost(r.Context(), job.ID)
-	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
-
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{"export": exp, "job_id": job.ID, "warnings": pdfResp.Warnings})
-}
-
 // GetExport handles GET /api/v1/exports/{id}
 func (s *Server) GetExport(w http.ResponseWriter, r *http.Request) {
 	userID := s.getUserID(r)
@@ -3078,6 +2857,16 @@ func DeriveStorageKey(rawURL string) (string, error) {
 	return norm, nil
 }
 
+// setExportDownloadHeaders names the file and its media type after the export's format.
+func setExportDownloadHeaders(w http.ResponseWriter, exp *domain.Export) {
+	contentType, extension := "application/pdf", "pdf"
+	if exp.Format == exportFormatPNGZip {
+		contentType, extension = "application/zip", "zip"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"comic_%s.%s\"", exp.ProjectID, extension))
+}
+
 // DownloadExport handles GET /api/v1/exports/{id}/download
 func (s *Server) DownloadExport(w http.ResponseWriter, r *http.Request) {
 	userID := s.getUserID(r)
@@ -3113,8 +2902,7 @@ func (s *Server) DownloadExport(w http.ResponseWriter, r *http.Request) {
 		}
 		localPath := filepath.Join(mediaDir, filepath.Clean(fileURL))
 		if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
-			w.Header().Set("Content-Type", "application/pdf")
-			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"comic_%s.pdf\"", exp.ProjectID))
+			setExportDownloadHeaders(w, exp)
 			http.ServeFile(w, r, localPath)
 			return
 		}
@@ -3157,8 +2945,7 @@ func (s *Server) DownloadExport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"comic_%s.pdf\"", exp.ProjectID))
+	setExportDownloadHeaders(w, exp)
 	w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, no-store")

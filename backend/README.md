@@ -4,7 +4,7 @@ Go API service for Icomic (docs/ARCHITECTURE.md section 7).
 
 ## Features and Architecture
 
-- **PostgreSQL Migrations and Schema**: Migration scripts located in `deploy/migrations/` creating all 13 core tables (`plans`, `users`, `projects`, `chapters`, `generation_jobs`, `characters`, `panels`, `pages`, `colour_palettes`, `colour_regions`, `stage_approvals`, `credit_ledger`, `exports`).
+- **PostgreSQL Migrations and Schema**: Migration scripts located in `deploy/migrations/` creating all 13 core tables (`plans`, `users`, `projects`, `chapters`, `generation_jobs`, `characters`, `panels`, `pages`, `colour_palettes`, `colour_regions`, `stage_approvals`, `credit_ledger`, `exports`) plus `artifact_provenance`, the write-once provider provenance for each generated image.
 - **Persistence Behind Repository Interfaces**: Persistence is abstracted behind `db.Repository`. An in-memory fake (`db.InMemoryRepository`) is used for hermetic unit tests with zero external database dependencies. A production PostgreSQL implementation (`db.PostgresRepository`) is selected when `DATABASE_URL` is configured.
 - **Credit Ledger and Cost Management**:
   - One backend pricing configuration supplies image/palette estimate rates, model IDs, generation debits and `POST /api/v1/projects/:id/estimate` quotes.

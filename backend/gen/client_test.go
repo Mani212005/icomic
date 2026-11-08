@@ -544,7 +544,7 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 				PageNumber:         1,
 				ImageURL:           lineArtResp.ImageURL,
 				PanelCount:         intPointer(4),
-				ProvenanceMetadata: mapPointer(map[string]interface{}{"c2pa": true}),
+				ProvenanceMetadata: &lineArtResp.ProvenanceMetadata,
 			},
 		},
 	})
@@ -553,6 +553,34 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 	}
 	if !strings.HasSuffix(pdfResp.PdfURL, ".pdf") || !pdfResp.ProvenanceMetadataPreserved || pdfResp.PageCount != 2 {
 		t.Fatalf("unexpected assemble pdf response: %+v", pdfResp)
+	}
+
+	// A bare marker proves nothing: the same page without its recorded hash is not preserved.
+	unproven, err := client.AssemblePdf(ctx, gen.AssemblePdfRequest{
+		JobID: "dddddddd-dddd-dddd-dddd-ddddddddddd1", HashedUserID: "user-hash-abc",
+		ProjectID: "22222222-2222-2222-2222-222222222222", Title: "Quantum Odyssey",
+		PageSize: gen.A4, IncludeAIDisclosure: true,
+		Pages: []gen.PageExportItem{{
+			PageNumber: 1, ImageURL: lineArtResp.ImageURL,
+			ProvenanceMetadata: mapPointer(map[string]interface{}{"c2pa": true}),
+		}},
+	})
+	if err != nil || unproven.ProvenanceMetadataPreserved {
+		t.Fatalf("unproven provenance reported preserved: %+v, err: %v", unproven, err)
+	}
+
+	// The PNG ZIP format returns an archive and honours the same provenance proof.
+	zipFormat := gen.PngZip
+	zipResp, err := client.AssemblePdf(ctx, gen.AssemblePdfRequest{
+		JobID: "dddddddd-dddd-dddd-dddd-ddddddddddd2", HashedUserID: "user-hash-abc",
+		ProjectID: "22222222-2222-2222-2222-222222222222", Title: "Quantum Odyssey",
+		PageSize: gen.A4, Format: &zipFormat, IncludeAIDisclosure: true,
+		Pages: []gen.PageExportItem{{
+			PageNumber: 1, ImageURL: lineArtResp.ImageURL, ProvenanceMetadata: &lineArtResp.ProvenanceMetadata,
+		}},
+	})
+	if err != nil || !strings.HasSuffix(zipResp.PdfURL, "comic-pages.zip") || !zipResp.ProvenanceMetadataPreserved || zipResp.PageCount != 1 {
+		t.Fatalf("unexpected png zip response: %+v, err: %v", zipResp, err)
 	}
 
 	// Exercise Endpoint 10: GetJobStatus (GET /internal/v1/job/{id}/status)

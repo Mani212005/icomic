@@ -123,6 +123,11 @@ type Repository interface {
 	CreateExport(ctx context.Context, exp *domain.Export) error
 	GetExport(ctx context.Context, id string) (*domain.Export, error)
 	UpdateExport(ctx context.Context, exp *domain.Export) error
+
+	// Artifact provenance: the provider's record for one generated image, written once.
+	SaveArtifactProvenance(ctx context.Context, projectID, imageURL string, provenance map[string]any) error
+	// GetArtifactProvenance returns ErrNotFound when no record exists for the image.
+	GetArtifactProvenance(ctx context.Context, imageURL string) (map[string]any, error)
 }
 
 // InMemoryRepository is a thread-safe repository implementation for hermetic testing.
@@ -143,6 +148,7 @@ type InMemoryRepository struct {
 	jobsByIdemp   map[string]string
 	ledger        []*domain.CreditLedger
 	exports       map[string]*domain.Export
+	provenance    map[string][]byte
 	userBalances  map[string]float64
 	sessions      map[string]*domain.Session
 	accountPolicy domain.AccountPolicy
@@ -165,6 +171,7 @@ func NewInMemoryRepository() *InMemoryRepository {
 		jobsByIdemp:   make(map[string]string),
 		ledger:        make([]*domain.CreditLedger, 0),
 		exports:       make(map[string]*domain.Export),
+		provenance:    make(map[string][]byte),
 		userBalances:  make(map[string]float64),
 		sessions:      make(map[string]*domain.Session),
 		accountPolicy: domain.DefaultAccountPolicy(),
@@ -912,6 +919,34 @@ func (m *InMemoryRepository) GetExport(_ context.Context, id string) (*domain.Ex
 	}
 	cpy := *exp
 	return &cpy, nil
+}
+
+// SaveArtifactProvenance keeps the first record for an image URL, as the table does.
+func (m *InMemoryRepository) SaveArtifactProvenance(_ context.Context, _, imageURL string, provenance map[string]any) error {
+	raw, err := json.Marshal(provenance)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.provenance[imageURL]; !exists {
+		m.provenance[imageURL] = raw
+	}
+	return nil
+}
+
+func (m *InMemoryRepository) GetArtifactProvenance(_ context.Context, imageURL string) (map[string]any, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	raw, ok := m.provenance[imageURL]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	var provenance map[string]any
+	if err := json.Unmarshal(raw, &provenance); err != nil {
+		return nil, err
+	}
+	return provenance, nil
 }
 
 func (m *InMemoryRepository) UpdateExport(_ context.Context, exp *domain.Export) error {

@@ -690,7 +690,18 @@ class PageExportItem(BaseModel):
         description="Stored input differs from the current source panels. Export must flag it without recomputing.",
     )
     panel_count: int | None = None
-    provenance_metadata: dict[str, Any] | None = None
+    provenance_metadata: dict[str, Any] | None = Field(
+        None,
+        description="Provenance recorded when the exported image was generated; its source_hash is checked against the stored provider file.",
+    )
+    ai_generated: bool = Field(
+        True,
+        description="False when the exported image is user-supplied colouring; the preserved AI source is then original_image_url.",
+    )
+    original_provenance_metadata: dict[str, Any] | None = Field(
+        None,
+        description="Provenance recorded for original_image_url, used when ai_generated is false.",
+    )
     panels: list[PanelTextItem] | None = None
     dialogue_text: str | None = None
 
@@ -700,7 +711,11 @@ class AssemblePdfRequest(BaseModel):
     hashed_user_id: str
     project_id: str
     title: str
-    page_size: Literal["A4", "US_Letter", "Custom_Comic"] = "A4"
+    page_size: Literal["A4", "US_Letter", "Custom_Comic"] = Field(
+        "A4",
+        description="PDF page size. Custom_Comic is 6.625 x 10.25 in. PNG ZIP pages keep their native dimensions.",
+    )
+    format: Literal["pdf", "png_zip"] = "pdf"
     finish_preset: FinishPreset | None = Field("off", validate_default=True)
     finish_preset_explicit: bool = False
     include_ai_disclosure: bool = True
@@ -709,8 +724,13 @@ class AssemblePdfRequest(BaseModel):
 
 class AssemblePdfResponse(BaseModel):
     job_id: str
-    pdf_url: str
-    provenance_metadata_preserved: bool
+    pdf_url: str = Field(
+        ..., description="URL of the assembled file, a PDF or, for format png_zip, a ZIP archive."
+    )
+    provenance_metadata_preserved: bool = Field(
+        ...,
+        description="True only when every AI-generated source file is attached byte-identical to the stored provider file whose recorded hash it matches.",
+    )
     page_count: int
     warnings: list[PdfLetteringWarning] | None = None
 

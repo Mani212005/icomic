@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"icomic/backend/gen"
 )
@@ -222,6 +223,9 @@ func TestExportUsesStoredLetteringAndFlagsChangedSourceWithoutLayout(t *testing.
 	pg.LetteringMode = "overlay"
 	pg.LineArtImageURL = ""
 	pg.PaintedPageImageURL = "http://storage/text-free.png"
+	approvedAt := time.Now().UTC().Add(time.Minute)
+	pg.PaintedPageApprovedAt = &approvedAt
+	seedProvenance(t, repo, chapter.ProjectID, "http://storage/text-free.png")
 	pg.Lettering = json.RawMessage(`{"version":"page-lettering-v1","input":{"version":"lettering-v1","art_mode":"text_free","page_id":"old-source","page_aspect":0.6666666666666666,"panels":[]},"overrides":{},"zone_overrides":{},"layout":{"version":"lettering-layout-v1","page_id":"old-source","bubbles":[],"issues":[]}}`)
 	if err := repo.CreatePage(ctx, pg); err != nil {
 		t.Fatal(err)
@@ -237,7 +241,7 @@ func TestExportUsesStoredLetteringAndFlagsChangedSourceWithoutLayout(t *testing.
 			t.Fatalf("stored layer and stale source must be forwarded: %+v", item)
 		}
 		warnings := []gen.PdfLetteringWarning{{PageNumber: 1, Code: gen.StaleLettering, Message: "Review stale lettering"}}
-		return &gen.AssemblePdfResponse{PdfURL: "http://storage/review.pdf", Warnings: &warnings}, nil
+		return &gen.AssemblePdfResponse{PdfURL: "http://storage/review.pdf", ProvenanceMetadataPreserved: true, Warnings: &warnings}, nil
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+chapter.ProjectID+"/export", nil)
 	req.Header.Set("X-User-ID", "owner")
