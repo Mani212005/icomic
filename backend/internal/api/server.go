@@ -20,6 +20,7 @@ type Server struct {
 	Repo                    db.Repository
 	CreditService           credits.CreditService
 	JobService              jobs.JobService
+	Dispatches              db.DispatchStore // durable generation outbox; nil for the in-memory fakes
 	AIClient                gen.AIService
 	Authenticator           auth.Authenticator
 	Accounts                *accounts.Service

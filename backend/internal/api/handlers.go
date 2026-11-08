@@ -595,6 +595,15 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 	}
 
 	idempKey := generationKey(r)
+	aiReq := gen.GenerateCharacterReferenceRequest{
+		HashedUserID:    hashedUID,
+		ProjectID:       proj.ID,
+		CharacterID:     ch.ID,
+		CharacterName:   ch.Name,
+		Prompt:          prompt,
+		ReferenceImages: nil,
+		Style:           style,
+	}
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         ch.ID,
 		DebitAmount:      s.Pricing.ImagePriceUSD,
@@ -607,6 +616,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		IdempotencyKey:   idempKey,
 		EstimatedCost:    s.Pricing.ImagePriceUSD,
 		HashedUserID:     hashedUID,
+		Envelope:         newEnvelope(opCharacterReference, aiReq),
 	})
 	if err != nil {
 		writeGenerationError(w, err)
@@ -624,22 +634,15 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 			GenerationJobID: job.ID,
 			Amount:          s.Pricing.ImagePriceUSD,
 		})
+		s.finishDispatch(r.Context(), job.ID)
 		writeError(w, http.StatusServiceUnavailable, "AI service not available")
 		return
 	}
 
 	r = r.WithContext(context.WithoutCancel(r.Context()))
+	aiReq.JobID = job.ID
 	refResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateCharacterReferenceResponse, error) {
-		return s.AIClient.GenerateCharacterReference(ctx, gen.GenerateCharacterReferenceRequest{
-			JobID:           job.ID,
-			HashedUserID:    hashedUID,
-			ProjectID:       proj.ID,
-			CharacterID:     ch.ID,
-			CharacterName:   ch.Name,
-			Prompt:          prompt,
-			ReferenceImages: nil,
-			Style:           style,
-		})
+		return s.AIClient.GenerateCharacterReference(ctx, aiReq)
 	})
 	if err != nil {
 		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
@@ -650,19 +653,10 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	imgURL := s.ImageHosting.ResolveURL(refResp.ImageURL)
-
-	ch.ReferenceImageURL = imgURL
-	ch.ReferenceImageJobID = &job.ID
-	ch.UpdatedAt = nextCharacterActivity(ch)
-	if err := s.Repo.UpdateCharacter(r.Context(), ch); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save character")
-		return
-	}
-
-	actualCost := s.aiActualCost(r.Context(), job.ID)
-	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	_, imgURL, err := s.finalizeCharacterReference(r.Context(), job, aiReq, refResp)
+	if err != nil {
+		s.releaseDispatch(r.Context(), job.ID)
+		writeSaveError(w, err)
 		return
 	}
 	job, err = s.JobService.GetJob(r.Context(), job.ID)
@@ -1718,6 +1712,20 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 	}
 
 	idempKey := generationKey(r)
+	draftStyle := proj.ArtStyle
+	if draftStyle == "" {
+		draftStyle = "classic-comic"
+	}
+	aiReq := gen.GenerateDraftSketchRequest{
+		HashedUserID:        hashedUID,
+		ProjectID:           proj.ID,
+		PageID:              pg.ID,
+		PageNumber:          pg.PageNumber,
+		LetteringDocument:   letteringDocument(pg),
+		Panels:              panelItems,
+		Style:               draftStyle,
+		CharacterIdentities: characterRenderIdentities(chars),
+	}
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
 		DebitAmount:      s.Pricing.ImagePriceUSD,
@@ -1730,6 +1738,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey:   idempKey,
 		EstimatedCost:    s.Pricing.ImagePriceUSD,
 		HashedUserID:     hashedUID,
+		Envelope:         newEnvelope(opDraftSketch, aiReq),
 	})
 	if err != nil {
 		writeGenerationError(w, err)
@@ -1740,24 +1749,10 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	draftStyle := proj.ArtStyle
-	if draftStyle == "" {
-		draftStyle = "classic-comic"
-	}
-
 	r = r.WithContext(context.WithoutCancel(r.Context()))
+	aiReq.JobID = job.ID
 	draftResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateDraftSketchResponse, error) {
-		return s.AIClient.GenerateDraftSketch(ctx, gen.GenerateDraftSketchRequest{
-			JobID:               job.ID,
-			HashedUserID:        hashedUID,
-			ProjectID:           proj.ID,
-			PageID:              pg.ID,
-			PageNumber:          pg.PageNumber,
-			LetteringDocument:   letteringDocument(pg),
-			Panels:              panelItems,
-			Style:               draftStyle,
-			CharacterIdentities: characterRenderIdentities(chars),
-		})
+		return s.AIClient.GenerateDraftSketch(ctx, aiReq)
 	})
 	if err != nil {
 		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
@@ -1768,21 +1763,10 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imgURL := s.ImageHosting.ResolveURL(draftResp.ImageURL)
-	now := time.Now().UTC()
-
-	pg.DraftImageURL = imgURL
-	pg.DraftImageJobID = &job.ID
-	// Cascade: draft regeneration stales line art approval (SPEC 3.6, 3.7, ARCHITECTURE 5.3)
-	domain.StaleOnDraftRegeneration(pg, now)
-	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save page")
-		return
-	}
-
-	actualCost := s.aiActualCost(r.Context(), job.ID)
-	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	imgURL, err := s.finalizeDraftSketch(r.Context(), job, aiReq, draftResp)
+	if err != nil {
+		s.releaseDispatch(r.Context(), job.ID)
+		writeSaveError(w, err)
 		return
 	}
 	job, err = s.JobService.GetJob(r.Context(), job.ID)
@@ -1952,6 +1936,20 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 	idempKey := generationKey(r)
 	hashedUID := domain.HashUserID(userID)
 
+	lineArtStyle := proj.ArtStyle
+	if lineArtStyle == "" {
+		lineArtStyle = "classic-comic"
+	}
+	aiReq := gen.GenerateLineArtRequest{
+		HashedUserID:        hashedUID,
+		ProjectID:           proj.ID,
+		PageID:              pg.ID,
+		PageNumber:          pg.PageNumber,
+		DraftImageURL:       pg.DraftImageURL,
+		Panels:              panelItems,
+		Style:               lineArtStyle,
+		CharacterIdentities: characterRenderIdentities(chars),
+	}
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
 		DebitAmount:      s.Pricing.ImagePriceUSD,
@@ -1964,6 +1962,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey:   idempKey,
 		EstimatedCost:    s.Pricing.ImagePriceUSD,
 		HashedUserID:     hashedUID,
+		Envelope:         newEnvelope(opLineArt, aiReq),
 	})
 	if err != nil {
 		writeGenerationError(w, err)
@@ -1974,24 +1973,10 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lineArtStyle := proj.ArtStyle
-	if lineArtStyle == "" {
-		lineArtStyle = "classic-comic"
-	}
-
 	r = r.WithContext(context.WithoutCancel(r.Context()))
+	aiReq.JobID = job.ID
 	lineArtResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateLineArtResponse, error) {
-		return s.AIClient.GenerateLineArt(ctx, gen.GenerateLineArtRequest{
-			JobID:               job.ID,
-			HashedUserID:        hashedUID,
-			ProjectID:           proj.ID,
-			PageID:              pg.ID,
-			PageNumber:          pg.PageNumber,
-			DraftImageURL:       pg.DraftImageURL,
-			Panels:              panelItems,
-			Style:               lineArtStyle,
-			CharacterIdentities: characterRenderIdentities(chars),
-		})
+		return s.AIClient.GenerateLineArt(ctx, aiReq)
 	})
 	if err != nil {
 		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
@@ -2002,22 +1987,10 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imgURL := s.ImageHosting.ResolveURL(lineArtResp.ImageURL)
-	now := time.Now().UTC()
-
-	pg.LineArtImageURL = imgURL
-	pg.LineArtImageJobID = &job.ID
-	pg.ColourImageURL = ""
-	pg.ColourImageUploadedAt = nil
-	domain.StaleOnLineArtRegeneration(pg, now)
-	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save page")
-		return
-	}
-
-	actualCost := s.aiActualCost(r.Context(), job.ID)
-	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	imgURL, err := s.finalizeLineArt(r.Context(), job, aiReq, lineArtResp)
+	if err != nil {
+		s.releaseDispatch(r.Context(), job.ID)
+		writeSaveError(w, err)
 		return
 	}
 	job, err = s.JobService.GetJob(r.Context(), job.ID)
@@ -2239,6 +2212,26 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 	idempKey := generationKey(r)
 	hashedUID := domain.HashUserID(userID)
 
+	artStyle := proj.ArtStyle
+	if artStyle == "" {
+		artStyle = "classic-comic"
+	}
+	var draftURL *string
+	if chosenVariant == "draft-conditioned" && pg.DraftImageURL != "" {
+		draftURL = &pg.DraftImageURL
+	}
+	aiReq := gen.GeneratePaintedPageRequest{
+		HashedUserID:        hashedUID,
+		ProjectID:           proj.ID,
+		PageID:              pg.ID,
+		PageNumber:          pg.PageNumber,
+		LetteringDocument:   letteringDocument(pg),
+		DraftImageURL:       draftURL,
+		Panels:              panelItems,
+		Style:               artStyle,
+		Variant:             gen.GeneratePaintedPageRequestVariant(chosenVariant),
+		CharacterIdentities: characterRenderIdentities(allChars),
+	}
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:             pg.ID,
 		AllowDirectFromBrief: chosenVariant == "direct-from-brief",
@@ -2252,6 +2245,7 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey:       idempKey,
 		EstimatedCost:        s.Pricing.ImagePriceUSD,
 		HashedUserID:         hashedUID,
+		Envelope:             newEnvelope(opPaintedPage, aiReq),
 	})
 	if err != nil {
 		writeGenerationError(w, err)
@@ -2262,32 +2256,10 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	artStyle := proj.ArtStyle
-	if artStyle == "" {
-		artStyle = "classic-comic"
-	}
-
 	r = r.WithContext(context.WithoutCancel(r.Context()))
-	variantVal := gen.GeneratePaintedPageRequestVariant(chosenVariant)
-	var draftURL *string
-	if chosenVariant == "draft-conditioned" && pg.DraftImageURL != "" {
-		draftURL = &pg.DraftImageURL
-	}
-
+	aiReq.JobID = job.ID
 	paintedResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GeneratePaintedPageResponse, error) {
-		return s.AIClient.GeneratePaintedPage(ctx, gen.GeneratePaintedPageRequest{
-			JobID:               job.ID,
-			HashedUserID:        hashedUID,
-			ProjectID:           proj.ID,
-			PageID:              pg.ID,
-			PageNumber:          pg.PageNumber,
-			LetteringDocument:   letteringDocument(pg),
-			DraftImageURL:       draftURL,
-			Panels:              panelItems,
-			Style:               artStyle,
-			Variant:             variantVal,
-			CharacterIdentities: characterRenderIdentities(allChars),
-		})
+		return s.AIClient.GeneratePaintedPage(ctx, aiReq)
 	})
 	if err != nil {
 		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
@@ -2298,36 +2270,10 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imgURL := s.ImageHosting.ResolveURL(paintedResp.ImageURL)
-	now := time.Now().UTC()
-
-	pg.PaintedPageImageURL = imgURL
-	pg.PaintedPageImageJobID = &job.ID
-	pg.PaintedPageVariant = chosenVariant
-	domain.StaleOnPaintedPageRegeneration(pg, now)
-	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save page")
-		return
-	}
-	if pg.LetteringMode == "overlay" {
-		previous := append(json.RawMessage(nil), pg.Lettering...)
-		if err := s.refreshLetteringAfterPaint(r.Context(), pg, paintedSubjects(paintedResp)); err != nil {
-			writeError(w, http.StatusBadGateway, "Failed to place lettering over painted art")
-			return
-		}
-		if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to save art-aware lettering")
-			return
-		}
-		// UpdatePage never writes the lettering column: persist the art-aware layout, with
-		// its cached subject boxes, through the compare-and-save every other edit uses.
-		if !s.saveLettering(w, r, pg, previous) {
-			return
-		}
-	}
-	actualCost := s.aiActualCost(r.Context(), job.ID)
-	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	pg, imgURL, err := s.finalizePaintedPage(r.Context(), job, aiReq, paintedResp)
+	if err != nil {
+		s.releaseDispatch(r.Context(), job.ID)
+		writeSaveError(w, err)
 		return
 	}
 	job, err = s.JobService.GetJob(r.Context(), job.ID)
@@ -2486,6 +2432,14 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 	idempKey := generationKey(r)
 	hashedUID := domain.HashUserID(userID)
 
+	aiReq := gen.SuggestColourPaletteRequest{
+		HashedUserID:    hashedUID,
+		ProjectID:       proj.ID,
+		PageID:          pg.ID,
+		LineArtImageURL: lineArtURL,
+		PanelContext:    fmt.Sprintf("Page %d of chapter %d", pg.PageNumber, c.ChapterNumber),
+		Style:           &proj.ArtStyle,
+	}
 	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
 		DebitAmount:      s.Pricing.ColourEstimateUSD,
@@ -2498,6 +2452,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey:   idempKey,
 		EstimatedCost:    s.Pricing.ColourEstimateUSD,
 		HashedUserID:     hashedUID,
+		Envelope:         newEnvelope(opColourPalette, aiReq),
 	})
 	if err != nil {
 		writeGenerationError(w, err)
@@ -2513,16 +2468,9 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r = r.WithContext(context.WithoutCancel(r.Context()))
+	aiReq.JobID = job.ID
 	palResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.SuggestColourPaletteResponse, error) {
-		return s.AIClient.SuggestColourPalette(ctx, gen.SuggestColourPaletteRequest{
-			JobID:           job.ID,
-			HashedUserID:    hashedUID,
-			ProjectID:       proj.ID,
-			PageID:          pg.ID,
-			LineArtImageURL: lineArtURL,
-			PanelContext:    fmt.Sprintf("Page %d of chapter %d", pg.PageNumber, c.ChapterNumber),
-			Style:           &proj.ArtStyle,
-		})
+		return s.AIClient.SuggestColourPalette(ctx, aiReq)
 	})
 	if err != nil {
 		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ColourEstimateUSD); failErr != nil {
@@ -2533,23 +2481,10 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	palette := make(map[string]interface{})
-	for _, item := range palResp.Palette {
-		palette[item.RegionName] = item.HexColor
-	}
-
-	if err := s.Repo.SaveColourPalette(r.Context(), &domain.ColourPalette{
-		PageID:          pageID,
-		SuggestionJobID: &job.ID,
-		Palette:         palette,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save colour palette")
-		return
-	}
-
-	actualCost := s.aiActualCost(r.Context(), job.ID)
-	if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	palette, err := s.finalizeColourPalette(r.Context(), job, aiReq, palResp)
+	if err != nil {
+		s.releaseDispatch(r.Context(), job.ID)
+		writeSaveError(w, err)
 		return
 	}
 
