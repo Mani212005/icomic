@@ -10,7 +10,7 @@ from PIL import Image
 
 
 @pytest.mark.parametrize("go_api_server", [True], indirect=True)
-def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, ai_service, tmp_path):
+def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, tmp_path):
     project = api_client.post(
         "/api/v1/projects",
         json={
@@ -61,9 +61,8 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     )
     assert painted.status_code == 200, painted.text
     image_url = painted.json()["image_url"]
-    # Fake-storage URLs use port 8000; fetch from the owning ephemeral AI service.
-    path = httpx.URL(image_url).path
-    image = httpx.get(ai_service["base_url"] + path).content
+    # The API hands out a short-lived scoped link; the browser fetches the image through it.
+    image = httpx.get(image_url).content
     source_hash = hashlib.sha256(image).hexdigest()
     assert Image.open(BytesIO(image)).size == (256, 384)
     override_url = endpoint + f"/utterances/{utterance['utterance_id']}/override"
@@ -100,10 +99,10 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     finished_url = finished.json()["finished_image_url"]
     assert finished_url.startswith("http")
     raw_url = finished.json()["raw_master_image_url"]
-    raw_bytes = httpx.get(ai_service["base_url"] + httpx.URL(raw_url).path).content
+    raw_bytes = httpx.get(raw_url).content
     assert hashlib.sha256(raw_bytes).hexdigest() == source_hash
     finished_url_again = api_client.post(f"/api/v1/pages/{page_id}/finish?variant=painted")
-    assert finished_url_again.json()["finished_image_url"] == finished_url
+    assert httpx.URL(finished_url_again.json()["finished_image_url"]).path == httpx.URL(finished_url).path
     preset_change = api_client.patch(
         f"/api/v1/projects/{project_id}", json={"finish_preset": "print"}
     )
@@ -141,12 +140,10 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     assert (
         utterance["utterance_id"] not in api_client.get(endpoint).json()["lettering"]["overrides"]
     )
-    assert (
-        hashlib.sha256(httpx.get(ai_service["base_url"] + path).content).hexdigest() == source_hash
-    )
+    assert hashlib.sha256(httpx.get(image_url).content).hexdigest() == source_hash
     pages = api_client.get(f"/api/v1/chapters/{chapter['id']}/pages").json()["pages"]
     saved = next(p for p in pages if p["id"] == page_id)
-    assert saved["painted_page_image_url"] == image_url
+    assert httpx.URL(saved["painted_page_image_url"]).path == httpx.URL(image_url).path
     for field in ["draft_approved_at", "painted_page_approved_at", "updated_at"]:
         assert saved[field] == approved[field]
     source_panel = next(
@@ -159,7 +156,7 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     exported = api_client.post(f"/api/v1/projects/{project_id}/export")
     assert exported.status_code == 202, exported.text
     pdf_url = exported.json()["export"]["file_url"]
-    pdf = httpx.get(ai_service["base_url"] + httpx.URL(pdf_url).path).content
+    pdf = httpx.get(pdf_url).content
     output = tmp_path / "overlay.pdf"
     output.write_bytes(pdf)
     text = subprocess.check_output(["pdftotext", str(output), "-"], text=True)
@@ -175,7 +172,7 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     assert warnings[0]["code"] == "lettering_review_required"
     assert "out_of_panel" in warnings[0]["flags"]
     note_url = flagged.json()["export"]["file_url"]
-    review = httpx.get(ai_service["base_url"] + httpx.URL(note_url).path).content
+    review = httpx.get(note_url).content
     note = subprocess.run(["pdftotext", "-", "-"], input=review, capture_output=True, check=True).stdout.decode()
     assert "LETTERING NOT EXPORTED" in note and "out_of_panel" in note
     # Explicit ink never consumes text-free art.

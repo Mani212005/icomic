@@ -157,6 +157,30 @@ test('ApiClient sends correct HTTP request for projects and operations', async (
 
 		const downloadUrl = client.getExportDownloadUrl('exp-1');
 		assert.equal(downloadUrl, 'http://test-server:8080/api/v1/exports/exp-1/download');
+
+		globalThis.fetch = async (url, options) => {
+			requests.push({ url, options });
+			return { ok: true, status: 200, blob: async () => new Blob(['%PDF-1.4']) };
+		};
+		const authed = new ApiClient({ baseUrl: 'http://test-server:8080', token: 'tok', devMode: true, devUserId: 'dev-user' });
+		const blob = await authed.downloadExport('exp-1');
+		assert.equal(await blob.text(), '%PDF-1.4');
+		const sent = requests[requests.length - 1];
+		assert.equal(sent.url, downloadUrl);
+		assert.equal(sent.options.headers.Authorization, 'Bearer tok');
+		assert.equal(sent.options.headers['X-User-ID'], 'dev-user');
+		assert.equal(sent.options.credentials, 'include');
+
+		const saved = [];
+		globalThis.URL.createObjectURL = (b) => (saved.push(b), 'blob:export');
+		globalThis.URL.revokeObjectURL = () => {};
+		globalThis.document = { createElement: () => ({ click() { saved.push(this.download); } }) };
+		await authed.saveExport('exp-1', 'pdf');
+		assert.equal(saved[1], 'comic.pdf');
+		delete globalThis.document;
+
+		globalThis.fetch = async () => ({ ok: false, status: 403, blob: async () => new Blob([]) });
+		await assert.rejects(() => authed.downloadExport('exp-1'), (error) => error.status === 403);
 	} finally {
 		globalThis.fetch = originalFetch;
 	}

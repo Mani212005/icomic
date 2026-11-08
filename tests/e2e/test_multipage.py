@@ -10,6 +10,11 @@ import pytest
 from conftest import find_free_port, terminate_process, wait_for_health
 
 
+def media_key(url):
+    """Stored artifact identity: the scoped link's query changes with every issue, its path does not."""
+    return urlsplit(url).path if url else url
+
+
 def test_long_comic_has_all_panels_pages_and_pdf_pages(
     compiled_go_server, ai_service, tmp_path, repo_root, monkeypatch
 ):
@@ -72,7 +77,7 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
             sources = {}
 
             def fetch_source(url):
-                response = httpx.get(ai_service["base_url"] + urlsplit(url).path)
+                response = httpx.get(url)
                 response.raise_for_status()
                 return response.content
 
@@ -99,14 +104,18 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
             assert before - after == pytest.approx(0.04)
             updated = saved_pages()
             for number, (old, new) in enumerate(zip(original, updated, strict=True), 1):
-                assert old["draft_image_url"] == new["draft_image_url"]
+                assert media_key(old["draft_image_url"]) == media_key(new["draft_image_url"])
                 assert old["draft_image_job_id"] == new["draft_image_job_id"]
                 if number in selected:
                     assert new["painted_page_image_job_id"] != old.get("painted_page_image_job_id")
                     assert new["painted_page_approved_at"]
                 else:
-                    assert old.get("painted_page_image_url") == new.get("painted_page_image_url")
-            assert original[0]["line_art_image_url"] == updated[0]["line_art_image_url"]
+                    assert media_key(old.get("painted_page_image_url")) == media_key(
+                        new.get("painted_page_image_url")
+                    )
+            assert media_key(original[0]["line_art_image_url"]) == media_key(
+                updated[0]["line_art_image_url"]
+            )
             for url, content in sources.items():
                 assert fetch_source(url) == content
 
@@ -134,8 +143,8 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
             assert after - last_balance == pytest.approx(0.03)
             assert later.pdf_page_count == 13
             assert not any("variant=ink" in path or "/colour/" in path for path in requests)
-            assert (
-                saved_pages()[0]["painted_page_image_url"] == updated[0]["painted_page_image_url"]
+            assert media_key(saved_pages()[0]["painted_page_image_url"]) == media_key(
+                updated[0]["painted_page_image_url"]
             )
         finally:
             terminate_process(proc)

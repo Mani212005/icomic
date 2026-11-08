@@ -14,7 +14,8 @@
 	let exportError = null;
 	let exportWarnings = [];
 	let currentExport = null;
-	let downloadUrl = '';
+	let downloadId = '';
+	let isDownloading = false;
 
 	async function handleExport() {
 		if (!apiClient || !projectId) return;
@@ -22,7 +23,7 @@
 		exportError = '';
 		exportWarnings = [];
 		currentExport = null;
-		downloadUrl = '';
+		downloadId = '';
 
 		try {
 			const res = await apiClient.exportProject(projectId, {
@@ -41,13 +42,25 @@
 
 			if (res.export) {
 				currentExport = res.export;
-				downloadUrl = res.export.download_url || apiClient.getExportDownloadUrl(res.export.id);
+				downloadId = res.export.id;
 				onComplete();
 			}
 		} catch (err) {
 			exportError = formatApiError(err);
 		} finally {
 			isExporting = false;
+		}
+	}
+
+	async function handleDownload() {
+		isDownloading = true;
+		exportError = null;
+		try {
+			await apiClient.saveExport(downloadId, format);
+		} catch (err) {
+			exportError = formatApiError(err);
+		} finally {
+			isDownloading = false;
 		}
 	}
 </script>
@@ -140,10 +153,10 @@
 			{/if}
 		</button>
 
-		{#if downloadUrl}
-			<a class="download-link" href={downloadUrl} target="_blank" rel="noopener noreferrer" download>
+		{#if downloadId}
+			<button class="export-btn download-link" on:click={handleDownload} disabled={isDownloading} aria-busy={isDownloading}>
 				<Icon name="download" size={18} /> Download {format.toUpperCase()}
-			</a>
+			</button>
 		{/if}
 	</div>
 </div>

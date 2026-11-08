@@ -30,8 +30,10 @@ type Server struct {
 	DefaultUserQuota        float64
 	MonthlyUserQuota        float64
 	AllowedOrigin           string
+	PublicBaseURL           string // origin browsers use for media links; empty derives it from the request
 	Limits                  RequestLimits
 	Pricing                 credits.PricingConfig
+	mediaSigner             *mediaSigner
 	admission               requestAdmission
 }
 
@@ -82,6 +84,8 @@ func NewServer(
 		MaxPanelsPerPage:        maxPanelsPerPage,
 		DefaultUserQuota:        80.0,
 		AllowedOrigin:           allowedOrigin,
+		PublicBaseURL:           os.Getenv("MEDIA_PUBLIC_BASE_URL"),
+		mediaSigner:             newMediaSigner(os.Getenv("MEDIA_SIGNING_SECRET")),
 		Limits:                  DefaultRequestLimits(),
 		Pricing:                 credits.DefaultPricing(),
 	}

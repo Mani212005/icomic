@@ -21,8 +21,9 @@ Go API service for Icomic (docs/ARCHITECTURE.md section 7).
   - Pluggable `auth.Authenticator` architecture with `BearerTokenAuthenticator` (bearer token authentication middleware with strict ownership verification) and `DevAuthenticator` (development mode header-based authentication, enabled only when `DEV_AUTH_ENABLED=true`).
   - Accounts (`internal/accounts`, `docs/ACCOUNTS.md`): guest sessions, email and password sign-up and sign-in with argon2id, server-side revocable sessions in an `HttpOnly` `SameSite=Lax` cookie, per-session CSRF token, sign-in rate limiting, and a project limit (guest 1, registered up to 100) enforced inside the creating transaction. The dev identity is registered and unlimited.
   - Strict resource ownership checks across all project, chapter, character, panel, page, and export endpoints.
+  - Owner-authorized media: `GET /media/{key}` needs a short-lived scoped link (minted into every JSON response) or an authenticated owner, checks key ownership, and reads storage through a bounded, redirect-free client (`MEDIA_SIGNING_SECRET`, `MEDIA_PUBLIC_BASE_URL`, `MEDIA_DIR`; see `docs/ARCHITECTURE.md` section 2).
 - **Pluggable Policy Seams for Captain Decisions**:
-  - Image Hosting (`auth.ImageHostingSeam`): Pluggable media resolver with `/media` serving or proxying route (`DefaultImageHosting`). Documented `TODO(captain)`.
+  - Image Hosting (`auth.ImageHostingSeam`): Pluggable media resolver behind the owner-authorized `/media` route (`DefaultImageHosting`). Documented `TODO(captain)`.
 - **CORS Middleware**:
   - Configurable allowed origin (`CORS_ALLOWED_ORIGIN`, defaulting to Svelte development server `http://localhost:5173`), handling preflight `OPTIONS` and credential headers.
 - **Prompt Pre-Moderation**:

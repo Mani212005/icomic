@@ -165,77 +165,6 @@ func (s *Server) ModeratePromptHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeMedia handles GET /media/{path...} serving or proxying media per ImageHostingSeam (SPEC 1.4, ARCHITECTURE 9).
-func (s *Server) ServeMedia(w http.ResponseWriter, r *http.Request) {
-	subPath := r.PathValue("path")
-	if subPath == "" {
-		subPath = strings.TrimPrefix(r.URL.Path, "/media/")
-		subPath = strings.TrimPrefix(subPath, "/media")
-	}
-	subPath = strings.TrimPrefix(subPath, "/")
-	if subPath == "" {
-		writeError(w, http.StatusBadRequest, "Media path required")
-		return
-	}
-
-	resolved := s.ImageHosting.ResolveURL(subPath)
-
-	// Proxy if resolved URL is HTTP/HTTPS
-	if strings.HasPrefix(resolved, "http://") || strings.HasPrefix(resolved, "https://") {
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, resolved, nil)
-		if err == nil {
-			resp, err := http.DefaultClient.Do(req)
-			if err == nil {
-				defer resp.Body.Close()
-				for k, v := range resp.Header {
-					for _, val := range v {
-						w.Header().Add(k, val)
-					}
-				}
-				w.WriteHeader(resp.StatusCode)
-				_, _ = io.Copy(w, resp.Body)
-				return
-			}
-		}
-	}
-
-	// Check local filesystem
-	mediaDir := os.Getenv("MEDIA_DIR")
-	if mediaDir == "" {
-		mediaDir = "./media"
-	}
-	cleanRel := filepath.Clean("/" + subPath)
-	localPath := filepath.Join(mediaDir, cleanRel)
-	if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
-		http.ServeFile(w, r, localPath)
-		return
-	}
-
-	// Proxy to Python fake storage if AI client has BaseURL
-	if s.AIClient != nil {
-		if client, ok := s.AIClient.(*gen.AIServiceClient); ok && client.BaseURL != "" {
-			targetURL := strings.TrimRight(client.BaseURL, "/") + "/storage/fake/" + subPath
-			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
-			if err == nil {
-				resp, err := http.DefaultClient.Do(req)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					defer resp.Body.Close()
-					for k, v := range resp.Header {
-						for _, val := range v {
-							w.Header().Add(k, val)
-						}
-					}
-					w.WriteHeader(resp.StatusCode)
-					_, _ = io.Copy(w, resp.Body)
-					return
-				}
-			}
-		}
-	}
-
-	writeError(w, http.StatusNotFound, "Media not found")
-}
-
 // HealthCheck handles GET /healthz and GET /internal/health
 func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -3220,39 +3149,25 @@ func (s *Server) DownloadExport(w http.ResponseWriter, r *http.Request) {
 		targetURL = "http://localhost:8000/storage/fake/" + key
 	}
 
-	// 3. Proxy request upstream
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "Failed to create upstream request")
+	// 3. Proxy request upstream through the bounded, redirect-free media client
+	resp, err := fetchStored(r.Context(), mediaClient, targetURL)
+	if errors.Is(err, db.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "Export file not found")
 		return
 	}
-
-	httpClient := http.DefaultClient
-	if client, ok := s.AIClient.(*gen.AIServiceClient); ok && client.HTTPClient != nil {
-		httpClient = client.HTTPClient
-	}
-
-	resp, err := httpClient.Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "Failed to retrieve export file from storage")
 		return
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK {
-		w.Header().Set("Content-Type", "application/pdf")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"comic_%s.pdf\"", exp.ProjectID))
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.Copy(w, resp.Body)
-		return
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		writeError(w, http.StatusNotFound, "Export file not found")
-		return
-	}
-
-	writeError(w, http.StatusBadGateway, "Failed to retrieve export file from storage")
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"comic_%s.pdf\"", exp.ProjectID))
+	w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, maxMediaBytes))
 }
 
 // Keep the public failure statuses while the service owns the transaction.
