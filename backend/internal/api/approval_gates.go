@@ -31,7 +31,9 @@ func (s *Server) commitApproval(w http.ResponseWriter, r *http.Request, a *domai
 // so an approval cannot bless art made from superseded text (SPEC 3.5, 3.6). Art without a recorded job
 // cannot be dated and is accepted.
 func (s *Server) pageArtCurrent(ctx context.Context, pg *domain.Page, jobID *string) (bool, error) {
-	if jobID == nil {
+	// Overlay pages letter their text after the art, so text edits do not invalidate it (docs/LETTERING.md).
+	// Telling a text edit from a scene edit needs per-field edit times, which are not stored.
+	if jobID == nil || pg.LetteringMode == "overlay" {
 		return true, nil
 	}
 	job, err := s.JobService.GetJob(ctx, *jobID)

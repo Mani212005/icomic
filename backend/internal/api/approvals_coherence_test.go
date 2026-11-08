@@ -93,6 +93,15 @@ func TestApprovalsRequireTheArtifactTheyApprove(t *testing.T) {
 		t.Fatal("character without a reference image was stamped approved")
 	}
 
+	extra := f.character(t, "")
+	extra.VisualAttributes = map[string]interface{}{"reference_role": "extra"}
+	if err := f.repo.UpdateCharacter(nil, extra); err != nil {
+		t.Fatal(err)
+	}
+	if rec := f.do(t, "POST", "/characters/"+extra.ID+"/approve", ""); rec.Code != http.StatusOK {
+		t.Fatalf("an extra is approved as a profile without an image: HTTP %d %s", rec.Code, rec.Body.String())
+	}
+
 	withImage := f.character(t, "https://storage.example/hero.png")
 	if rec := f.do(t, "POST", "/characters/"+withImage.ID+"/approve", ""); rec.Code != http.StatusOK {
 		t.Fatalf("approve with reference: HTTP %d %s", rec.Code, rec.Body.String())

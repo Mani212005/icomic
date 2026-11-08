@@ -300,9 +300,9 @@ Regeneration rules:
 - Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 
 Approvals describe real artifacts and commit atomically:
-- Approving a character, draft or line art requires that the artifact exists (a reference image, a draft image, a line-art image). An empty approval is refused with HTTP 400.
+- Approving a character, draft or line art requires that the artifact exists (a reference image, a draft image, a line-art image; extras are approved as profiles without an image). An empty approval is refused with HTTP 400.
 - An approval stamps its entity and appends its `stage_approvals` row in one transaction, conditioned on the entity's `updated_at` as validated. If the entity was edited in between, the approval fails with HTTP 409 instead of blessing a changed version.
-- A draft, line art or painted page can only be approved if the job that made it started after the last edit of the page's panels; otherwise the approval is refused with HTTP 409 and the art must be regenerated. Panel edits and panel moves touch `panels.updated_at`, which the page-level gates read.
+- A draft, line art or painted page can only be approved if the job that made it started after the last edit of the page's panels; otherwise the approval is refused with HTTP 409 and the art must be regenerated. Panel edits and panel moves touch `panels.updated_at`, which the page-level gates read. Overlay-lettered pages are exempt from the currency check, because their text is composited after the art.
 - A panel edit and the staling of every page holding the panel commit together.
 
 Page allocation and regeneration are atomic:

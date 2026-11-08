@@ -698,7 +698,8 @@ func (s *Server) ApproveCharacter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ch.ReferenceImageURL == "" {
+	// Extras are approved as profiles only; every other character needs the image it is approving.
+	if ch.ReferenceImageURL == "" && ch.VisualAttributes["reference_role"] != "extra" {
 		writeError(w, http.StatusBadRequest, "Generate a reference image before approving the character")
 		return
 	}
@@ -1306,12 +1307,6 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		pg.LetteringMode = "baked"
 		if s.LetteringOverlayEnabled && proj.LetteringMode == "overlay" {
 			pg.LetteringMode = "overlay"
-			if err := s.refreshLettering(r.Context(), pg); err != nil {
-				errMsg := "Failed to prepare lettering"
-				_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
-				writeError(w, http.StatusInternalServerError, errMsg)
-				return
-			}
 		}
 		pages = append(pages, pg)
 		pageNum++
@@ -1323,6 +1318,21 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 
 	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
+
+	// The layout reads the stored panels, so it follows the commit. A failure here leaves a complete
+	// revision whose layout is recomputed by the next draft or lettering request (ensureLettering).
+	for _, pg := range pages {
+		if pg.LetteringMode != "overlay" {
+			continue
+		}
+		if err := s.refreshLettering(r.Context(), pg); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to prepare lettering")
+			return
+		}
+		if !s.saveLettering(w, r, pg, nil) {
+			return
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"job_id": job.ID,
