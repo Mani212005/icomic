@@ -61,24 +61,27 @@ export class ApiClient {
 		this.token = token || null;
 	}
 
+	authHeaders(method, headers = {}) {
+		const out = { ...headers };
+		if (this.devMode && this.devUserId && !out['X-User-ID']) {
+			out['X-User-ID'] = this.devUserId;
+		}
+		if (this.token && !out['Authorization']) {
+			out['Authorization'] = `Bearer ${this.token}`;
+		}
+		if (this.csrfToken && method !== 'GET' && !out['X-CSRF-Token']) {
+			out['X-CSRF-Token'] = this.csrfToken;
+		}
+		return out;
+	}
+
 	async request(path, options = {}) {
 		const url = `${this.baseUrl}${path}`;
-		const headers = {
+		const method = (options.method || 'GET').toUpperCase();
+		const headers = this.authHeaders(method, {
 			'Content-Type': 'application/json',
 			...(options.headers || {})
-		};
-
-		if (this.devMode && this.devUserId && !headers['X-User-ID']) {
-			headers['X-User-ID'] = this.devUserId;
-		}
-		if (this.token && !headers['Authorization']) {
-			headers['Authorization'] = `Bearer ${this.token}`;
-		}
-
-		const method = (options.method || 'GET').toUpperCase();
-		if (this.csrfToken && method !== 'GET' && !headers['X-CSRF-Token']) {
-			headers['X-CSRF-Token'] = this.csrfToken;
-		}
+		});
 
 		const res = await fetch(url, {
 			...options,
@@ -412,6 +415,30 @@ export class ApiClient {
 
 	getExportDownloadUrl(exportId) {
 		return `${this.baseUrl}/api/v1/exports/${exportId}/download`;
+	}
+
+	// A bare link cannot carry the bearer or dev identity, so the file is fetched with the same credentials.
+	async downloadExport(exportId) {
+		const res = await fetch(this.getExportDownloadUrl(exportId), {
+			credentials: 'include',
+			headers: this.authHeaders('GET')
+		});
+		if (!res.ok) {
+			const error = new Error(`Download failed (${res.status})`);
+			error.status = res.status;
+			throw error;
+		}
+		return res.blob();
+	}
+
+	// Hands the authenticated download to the browser as a file.
+	async saveExport(exportId, format) {
+		const objectUrl = URL.createObjectURL(await this.downloadExport(exportId));
+		const anchor = document.createElement('a');
+		anchor.href = objectUrl;
+		anchor.download = `comic.${format}`;
+		anchor.click();
+		URL.revokeObjectURL(objectUrl);
 	}
 }
 

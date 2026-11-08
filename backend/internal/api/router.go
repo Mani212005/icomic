@@ -68,7 +68,9 @@ func (s *Server) authMiddleware(pattern string, next http.HandlerFunc) http.Hand
 			return
 		}
 		ctx := auth.WithIdentity(r.Context(), identity)
-		next(w, r.WithContext(ctx))
+		links := &mediaLinkWriter{ResponseWriter: w, server: s, request: r, userID: userID}
+		next(links, r.WithContext(ctx))
+		links.finish()
 	}
 }
 
@@ -83,7 +85,7 @@ func (s *Server) NewRouter() http.Handler {
 	mux.HandleFunc("GET /healthz", s.HealthCheck)
 	mux.HandleFunc("GET /internal/health", s.HealthCheck)
 
-	// Media (serves or proxies stored media per ImageHostingSeam)
+	// Media (owner-authorized: scoped short-lived link or authenticated owner)
 	mux.HandleFunc("GET /media/{path...}", s.ServeMedia)
 	mux.HandleFunc("GET /media", s.ServeMedia)
 

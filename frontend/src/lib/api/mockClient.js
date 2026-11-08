@@ -663,6 +663,8 @@ export class MockApiClient {
 	getExportDownloadUrl(exportId) {
 		return `mock://storage/export-${exportId}/download.pdf`;
 	}
+
+	async saveExport() {}
 }
 
 export const mockApi = new MockApiClient();

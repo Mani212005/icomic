@@ -8,8 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -169,8 +168,15 @@ func TestFinishPageImageUsesOwnedApprovedArtAndProjectPreset(t *testing.T) {
 	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+page.ID+"/finish?variant=ink", nil))
-	if response.Code != http.StatusOK || !called || !strings.Contains(response.Body.String(), `"finished_image_url":"/media/finishes/page.jpg"`) {
+	var finished map[string]string
+	if response.Code != http.StatusOK || !called || json.Unmarshal(response.Body.Bytes(), &finished) != nil {
 		t.Fatalf("finish endpoint returned %d (%s), called=%t", response.Code, response.Body.String(), called)
+	}
+	for field, key := range map[string]string{"finished_image_url": "finishes/page.jpg", "raw_master_image_url": "pages/raw.png"} {
+		link, err := url.Parse(finished[field])
+		if err != nil || link.Host != "example.com" || link.Path != "/media/"+key || link.Query().Get("sig") == "" || link.Query().Get("u") != "test-user" {
+			t.Fatalf("%s = %q, want a scoped /media/%s link for test-user", field, finished[field], key)
+		}
 	}
 }
 
@@ -740,41 +746,6 @@ func TestPromptPreModeration(t *testing.T) {
 	}
 
 	_ = server
-}
-
-func TestMediaRoute(t *testing.T) {
-	tmpDir := t.TempDir()
-	os.Setenv("MEDIA_DIR", tmpDir)
-	defer os.Unsetenv("MEDIA_DIR")
-
-	// Write a test image file
-	testSubDir := filepath.Join(tmpDir, "characters")
-	_ = os.MkdirAll(testSubDir, 0755)
-	testFilePath := filepath.Join(testSubDir, "hero.png")
-	_ = os.WriteFile(testFilePath, []byte("\x89PNG\r\n\x1a\nfake-png-bytes"), 0644)
-
-	_, handler, _ := setupTestServer(true, "user-1")
-
-	// 1. Existing media file
-	reqMedia := httptest.NewRequest(http.MethodGet, "/media/characters/hero.png", nil)
-	recMedia := httptest.NewRecorder()
-	handler.ServeHTTP(recMedia, reqMedia)
-
-	if recMedia.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK for media, got %d", recMedia.Code)
-	}
-	if !bytes.Contains(recMedia.Body.Bytes(), []byte("fake-png-bytes")) {
-		t.Errorf("expected body to contain test bytes, got %s", recMedia.Body.String())
-	}
-
-	// 2. Missing media file
-	reqMissing := httptest.NewRequest(http.MethodGet, "/media/missing/nonexistent.png", nil)
-	recMissing := httptest.NewRecorder()
-	handler.ServeHTTP(recMissing, reqMissing)
-
-	if recMissing.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 Not Found for missing media, got %d", recMissing.Code)
-	}
 }
 
 func TestAIServiceFailureRefund(t *testing.T) {

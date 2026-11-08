@@ -110,6 +110,13 @@ icomic/
 - No service talks directly to a Meta API endpoint except the Python `meta.py` adapter implementations (which remain inert behind the ports until the whole project is built on fakes and Meta API keys are provided).
 - The Svelte frontend never holds or sees API keys.
 
+**Stored media is never public.** Browsers read artifacts only through the Go API `GET /media/{key}`, never from the storage host (so no Docker-internal hostnames reach the browser):
+
+- Every authenticated JSON response has its internal storage URLs (`.../storage/fake/<key>` or `/media/<key>`) replaced by an absolute `/media/<key>?exp&u&sig` link. The link is an HMAC over the user, the key and the expiry, valid for 25 to 30 minutes, and identical across reads within a five-minute window so browsers can cache it. `MEDIA_SIGNING_SECRET` sets the key (a random per-process key is used when unset, so links never survive a restart); `MEDIA_PUBLIC_BASE_URL` sets the link origin (default: the request's scheme and host).
+- `GET /media/{key}` accepts such a link or an authenticated caller, then requires that the caller owns the key. Ownership comes from the resource id inside the key (`characters/<id>/`, `pages/<id>/`, `finishes/<id>/`, `exports/<id>/`) resolved through the project, so a link minted for one user never opens another user's artifact and keys of unknown shape are not served. Anonymous requests get 401; other users and missing keys get 404.
+- The upstream read is bounded: only the configured AI storage (and image host, when one is configured) is contacted, redirects are never followed, the call has a 60 second deadline and a 64 MiB cap, and only a 200 with a known length is relayed. Upstream headers are not copied; content type is limited to PNG, JPEG, WebP, GIF and PDF (otherwise opaque bytes), with `nosniff`, a sandboxing CSP, `Cache-Control: private, max-age=300`, and `attachment` for non-images. `/api/v1/exports/{id}/download` uses the same bounded client.
+- Whether storage stays behind this proxy or moves to provider-signed URLs is a captain decision (D03); the proxy sits behind the `ImageHostingSeam` and does not constrain it.
+
 ---
 
 ## 3. Ports and Adapters

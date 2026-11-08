@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -264,13 +264,15 @@ def binary_request(path: str, method: str, body: bytes, content_type: str) -> An
 
 
 def fetch_line_art_image(image_url: str) -> bytes:
+    """Fetch an image through the scoped media link the API handed out, as a browser would."""
     parsed = urlsplit(image_url)
-    if parsed.scheme != "http" or not parsed.path.startswith("/storage/fake/"):
-        raise E2EError("fake E2E line art URL is outside local fake storage")
-    storage = urlsplit(STORAGE_URL)
-    local_url = urlunsplit((storage.scheme, storage.netloc, parsed.path, "", ""))
+    api = urlsplit(API_URL)
+    if (parsed.scheme, parsed.netloc) != (api.scheme, api.netloc) or not parsed.path.startswith(
+        "/media/"
+    ):
+        raise E2EError("fake E2E image URL is not a media link on the API")
     try:
-        with urlopen(local_url, timeout=15) as response:
+        with urlopen(image_url, timeout=15) as response:
             image_bytes = response.read(10 * 1024 * 1024 + 1)
     except (HTTPError, URLError) as exc:
         raise E2EError(f"could not fetch fake line art image: {exc}") from exc
