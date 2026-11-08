@@ -21,6 +21,24 @@ func (e AccountKind) Valid() bool {
 	}
 }
 
+// Defines values for AssemblePdfRequestFormat.
+const (
+	Pdf    AssemblePdfRequestFormat = "pdf"
+	PngZip AssemblePdfRequestFormat = "png_zip"
+)
+
+// Valid indicates whether the value is a known member of the AssemblePdfRequestFormat enum.
+func (e AssemblePdfRequestFormat) Valid() bool {
+	switch e {
+	case Pdf:
+		return true
+	case PngZip:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AssemblePdfRequestPageSize.
 const (
 	A4          AssemblePdfRequestPageSize = "A4"
@@ -564,25 +582,35 @@ type AnalyzeScriptResponse struct {
 // AssemblePdfRequest defines model for AssemblePdfRequest.
 type AssemblePdfRequest struct {
 	// FinishPreset Print finish preset applied to art. Baked lettering pages are skipped until the project preset is explicitly selected.
-	FinishPreset         *FinishPreset              `json:"finish_preset,omitempty"`
-	FinishPresetExplicit *bool                      `json:"finish_preset_explicit,omitempty"`
-	HashedUserID         string                     `json:"hashed_user_id"`
-	IncludeAIDisclosure  bool                       `json:"include_ai_disclosure"`
-	JobID                string                     `json:"job_id"`
-	PageSize             AssemblePdfRequestPageSize `json:"page_size"`
-	Pages                []PageExportItem           `json:"pages"`
-	ProjectID            string                     `json:"project_id"`
-	Title                string                     `json:"title"`
+	FinishPreset         *FinishPreset             `json:"finish_preset,omitempty"`
+	FinishPresetExplicit *bool                     `json:"finish_preset_explicit,omitempty"`
+	Format               *AssemblePdfRequestFormat `json:"format,omitempty"`
+	HashedUserID         string                    `json:"hashed_user_id"`
+	IncludeAIDisclosure  bool                      `json:"include_ai_disclosure"`
+	JobID                string                    `json:"job_id"`
+
+	// PageSize PDF page size. Custom_Comic is 6.625 x 10.25 in. PNG ZIP pages keep their native dimensions.
+	PageSize  AssemblePdfRequestPageSize `json:"page_size"`
+	Pages     []PageExportItem           `json:"pages"`
+	ProjectID string                     `json:"project_id"`
+	Title     string                     `json:"title"`
 }
 
-// AssemblePdfRequestPageSize defines model for AssemblePdfRequest.PageSize.
+// AssemblePdfRequestFormat defines model for AssemblePdfRequest.Format.
+type AssemblePdfRequestFormat string
+
+// AssemblePdfRequestPageSize PDF page size. Custom_Comic is 6.625 x 10.25 in. PNG ZIP pages keep their native dimensions.
 type AssemblePdfRequestPageSize string
 
 // AssemblePdfResponse defines model for AssemblePdfResponse.
 type AssemblePdfResponse struct {
-	JobID                       string                 `json:"job_id"`
-	PageCount                   int                    `json:"page_count"`
-	PdfURL                      string                 `json:"pdf_url"`
+	JobID     string `json:"job_id"`
+	PageCount int    `json:"page_count"`
+
+	// PdfURL URL of the assembled file, a PDF or, for format png_zip, a ZIP archive.
+	PdfURL string `json:"pdf_url"`
+
+	// ProvenanceMetadataPreserved True only when every AI-generated source file is attached byte-identical to the stored provider file whose recorded hash it matches.
 	ProvenanceMetadataPreserved bool                   `json:"provenance_metadata_preserved"`
 	Warnings                    *[]PdfLetteringWarning `json:"warnings,omitempty"`
 }
@@ -1049,6 +1077,8 @@ type ModeratePromptResponse struct {
 
 // PageExportItem defines model for PageExportItem.
 type PageExportItem struct {
+	// AIGenerated False when the exported image is user-supplied colouring; the preserved AI source is then original_image_url.
+	AIGenerated  *bool   `json:"ai_generated,omitempty"`
 	DialogueText *string `json:"dialogue_text,omitempty"`
 
 	// FinishPreset Print finish preset applied to art. Baked lettering pages are skipped until the project preset is explicitly selected.
@@ -1064,11 +1094,16 @@ type PageExportItem struct {
 	// OriginalImageURL Original line art URL, retained when the exported image is a coloured derivative.
 	OriginalImageURL *string `json:"original_image_url,omitempty"`
 
+	// OriginalProvenanceMetadata Provenance recorded for original_image_url, used when ai_generated is false.
+	OriginalProvenanceMetadata *map[string]interface{} `json:"original_provenance_metadata,omitempty"`
+
 	// PageID Stable page identifier used to seed print finishing deterministically.
-	PageID             *string                 `json:"page_id,omitempty"`
-	PageNumber         int                     `json:"page_number"`
-	PanelCount         *int                    `json:"panel_count,omitempty"`
-	Panels             *[]PanelTextItem        `json:"panels,omitempty"`
+	PageID     *string          `json:"page_id,omitempty"`
+	PageNumber int              `json:"page_number"`
+	PanelCount *int             `json:"panel_count,omitempty"`
+	Panels     *[]PanelTextItem `json:"panels,omitempty"`
+
+	// ProvenanceMetadata Provenance recorded when the exported image was generated; its source_hash is checked against the stored provider file.
 	ProvenanceMetadata *map[string]interface{} `json:"provenance_metadata,omitempty"`
 }
 

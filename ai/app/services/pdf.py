@@ -2,7 +2,7 @@
 
 Generates a valid binary multi-page PDF embedding comic page images,
 panel dialogue text, cover title, mandatory AI-generation disclosure,
-and preserved Meta C2PA provenance metadata.
+and the provider's original image files attached unmodified.
 """
 
 import hashlib
@@ -20,8 +20,10 @@ from PIL import Image
 
 from ..adapters.storage.port import StoragePort
 from ..gen.models import PageExportItem, PdfLetteringWarning
+from .errors import ExportIncompleteError
 from .finish_layer import FinishStrength, encode_finished, finish_pixels, page_seed
 from .lettering.pdf import PdfLettering, eligibility
+from .png_zip import build_png_zip
 
 
 class UnsupportedImageMediaError(ValueError):
@@ -149,6 +151,17 @@ def _display_image_payload(image_bytes: bytes) -> tuple[int, int, str, str, byte
     raise UnsupportedImageMediaError("PDF export supports PNG, JPEG and WebP.")
 
 
+def _image_extension(data: bytes) -> str | None:
+    """File extension for the PNG, JPEG or WebP bytes an attachment carries, else None."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8"):
+        return "jpeg"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
 def _finished_display_jpeg(image_bytes: bytes, seed: int, strength: FinishStrength) -> bytes:
     """Finish a page and encode it as the JPEG display copy embedded in the PDF."""
     finished = finish_pixels(image_bytes, seed=seed, strength=strength)
@@ -182,45 +195,19 @@ def _image_object(
     )
 
 
-def _generate_fallback_png(width: int = 64, height: int = 64) -> bytes:
-    """Generate a minimal fallback test PNG for missing storage images."""
-    raw_data = bytearray()
-    for y in range(height):
-        raw_data.append(0)
-        for x in range(width):
-            if x == 0 or x == width - 1 or y == 0 or y == height - 1:
-                raw_data.extend((40, 40, 40))
-            else:
-                raw_data.extend((240, 240, 245))
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + tag
-            + data
-            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-        )
-
-    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", ihdr)
-        + chunk(b"IDAT", zlib.compress(bytes(raw_data)))
-        + chunk(b"IEND", b"")
-    )
-
-
 class PdfWriter:
     """Pure-Python minimal PDF 1.4 binary document writer with standard fonts and images."""
 
     PAGE_DIMENSIONS: ClassVar[dict[str, tuple[float, float]]] = {
         "A4": (595.28, 841.89),
         "US_Letter": (612.0, 792.0),
-        "Custom_Comic": (480.0, 740.0),
+        "Custom_Comic": (477.0, 738.0),  # 6.625 x 10.25 in, the size the export dialog names
     }
 
     def __init__(self, page_size: str = "A4", storage_adapter: StoragePort | None = None):
-        self.width, self.height = self.PAGE_DIMENSIONS.get(page_size, self.PAGE_DIMENSIONS["A4"])
+        if page_size not in self.PAGE_DIMENSIONS:
+            raise ValueError(f"Unsupported page size: {page_size}")
+        self.width, self.height = self.PAGE_DIMENSIONS[page_size]
         self.page_size_name = page_size
         self.storage_adapter = storage_adapter
         self.objects: list[bytes] = []
@@ -242,10 +229,18 @@ class PdfWriter:
         title: str,
         include_ai_disclosure: bool,
         pages_data: list[dict[str, Any]],
+        sources_preserved: bool = False,
     ) -> bytes:
         """Assemble all document pages, embedded images, metadata, and cross-reference table."""
         for idx, page in enumerate(pages_data, start=1):
-            image_bytes = page.get("image_bytes") or _generate_fallback_png()
+            image_bytes = page.get("image_bytes")
+            if not image_bytes:
+                raise ExportIncompleteError(
+                    f"Page {page.get('page_number', idx)} has no stored image to export."
+                )
+            # The provider's untouched file is the provenance source, whatever display copy follows.
+            if not page.get("source_bytes"):
+                page["source_bytes"] = image_bytes
             preset = page.get("finish_preset", "off")
             eligible = page.get("lettering_mode") == "overlay" or page.get(
                 "finish_preset_explicit", False
@@ -388,8 +383,16 @@ class PdfWriter:
             disclosure_statements = [
                 "Notice: This comic book was created with Icomic AI using Meta generative models.",
                 "All visual artwork, character artwork, and panel compositions are AI-generated.",
-                "Meta C2PA provenance metadata and cryptographic signatures are preserved.",
-                "Cryptographic provenance records remain embedded for transparency and auditability.",
+                *(
+                    [
+                        "Original Meta image files, with any embedded provenance metadata, are attached unmodified.",
+                        "Icomic records this provenance but does not verify C2PA signatures.",
+                    ]
+                    if sources_preserved
+                    else [
+                        "Original Meta image files could not all be attached; provenance is incomplete.",
+                    ]
+                ),
             ]
             for row, statement in enumerate(disclosure_statements):
                 cover_lines.append(
@@ -402,7 +405,9 @@ class PdfWriter:
             f"Project Identifier: {project_id}",
             f"Total Comic Pages: {len(pages_data)}",
             f"Page Dimensions: {self.width:.0f} x {self.height:.0f} points ({self.page_size_name})",
-            "Provenance Standard: Meta C2PA / Content Credentials preserved",
+            "Provenance: original source files attached unmodified"
+            if sources_preserved
+            else "Provenance: incomplete, original source files missing",
             f"Assembled: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%SZ')}",
         ]
         for row, detail in enumerate(spec_details):
@@ -457,9 +462,7 @@ class PdfWriter:
             )
 
             # 2. Embedded Page Image XObject
-            img_bytes = p.get("image_bytes")
-            if not img_bytes:
-                img_bytes = _generate_fallback_png()
+            img_bytes = p["image_bytes"]
 
             try:
                 if cover_payload is not None and img_bytes is cover_source:
@@ -484,16 +487,15 @@ class PdfWriter:
                 _image_object(img_w, img_h, colorspace, filter_name, payload)
             )
 
-            # A separate raw master is the provenance attachment for this page;
-            # avoid also retaining the larger display working copy verbatim.
-            has_distinct_original = (
-                p.get("original_image_bytes") and p.get("original_image_bytes") != img_bytes
-            )
-            if not img_bytes.startswith(b"\xff\xd8") and not has_distinct_original:
-                extension = "png" if img_bytes.startswith(b"\x89PNG") else "webp"
+            # Attach the provider's exact bytes unless a JPEG is embedded verbatim as the display.
+            source_bytes = p["source_bytes"]
+            if not (source_bytes == img_bytes and source_bytes.startswith(b"\xff\xd8")):
+                extension = _image_extension(source_bytes)
+                subtype = f"image#2F{extension}" if extension else "application#2Foctet-stream"
+                extension = extension or "bin"
                 source_id = self._add_object(
-                    f"<< /Type /EmbeddedFile /Subtype /image#2F{extension} /Length {len(img_bytes)} >>\nstream\n".encode()
-                    + img_bytes
+                    f"<< /Type /EmbeddedFile /Subtype /{subtype} /Length {len(source_bytes)} >>\nstream\n".encode()
+                    + source_bytes
                     + b"\nendstream"
                 )
                 filename = f"page-{idx}-original.{extension}"
@@ -503,17 +505,13 @@ class PdfWriter:
                 source_files.append(f"({filename}) {file_id} 0 R")
 
             original_image_bytes = p.get("original_image_bytes")
-            if original_image_bytes and original_image_bytes != img_bytes:
-                if original_image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-                    original_extension = "png"
-                elif original_image_bytes.startswith(b"\xff\xd8"):
-                    original_extension = "jpeg"
-                elif (
-                    original_image_bytes.startswith(b"RIFF")
-                    and original_image_bytes[8:12] == b"WEBP"
-                ):
-                    original_extension = "webp"
-                else:
+            if (
+                original_image_bytes
+                and original_image_bytes != img_bytes
+                and original_image_bytes != source_bytes
+            ):
+                original_extension = _image_extension(original_image_bytes)
+                if original_extension is None:
                     raise UnsupportedImageMediaError(
                         f"Unsupported original line art image format on page {p.get('page_number', idx)}."
                     )
@@ -648,7 +646,9 @@ class PdfWriter:
             page_lines.append(b"BT /F1 8 Tf 0.4 0.4 0.4 rg")
             if include_ai_disclosure:
                 page_lines.append(
-                    b"50 28 Td (AI-Generated Content | Meta Provenance Preserved | Icomic AI) Tj ET"
+                    b"50 28 Td (AI-Generated Content | Original Sources Attached | Icomic AI) Tj ET"
+                    if sources_preserved
+                    else b"50 28 Td (AI-Generated Content | Provenance Incomplete | Icomic AI) Tj ET"
                 )
             else:
                 page_lines.append(b"50 28 Td (Icomic AI Graphic Novel) Tj ET")
@@ -687,7 +687,7 @@ class PdfWriter:
         )
 
         # -----------------------------------------------------------------
-        # Document Metadata Stream (XMP with C2PA Provenance)
+        # Document Metadata Stream (XMP with recorded provenance)
         # -----------------------------------------------------------------
         provenance_records = [
             {
@@ -695,6 +695,7 @@ class PdfWriter:
                 "image_url": p.get("image_url", ""),
                 "original_image_url": p.get("original_image_url", ""),
                 "provenance": p.get("provenance_metadata", {}),
+                "source_sha256": hashlib.sha256(p["source_bytes"]).hexdigest(),
             }
             for i, p in enumerate(pages_data, start=1)
         ]
@@ -706,13 +707,14 @@ class PdfWriter:
             f'   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">{escape(title)}</rdf:li></rdf:Alt></dc:title>\n'
             f"   <dc:creator><rdf:Seq><rdf:li>Icomic AI</rdf:li></rdf:Seq></dc:creator>\n"
             f'   <dc:description><rdf:Alt><rdf:li xml:lang="x-default">'
-            f"AI-Generated Comic Book with Meta C2PA Provenance Preserved"
+            f"AI-Generated Comic Book"
             f"</rdf:li></rdf:Alt></dc:description>\n"
             f"  </rdf:Description>\n"
             f'  <rdf:Description rdf:about="" xmlns:icomic="https://icomic.app/schema/provenance/1.0">\n'
             f"   <icomic:projectId>{escape(project_id)}</icomic:projectId>\n"
             f"   <icomic:provenanceRecords>{escape(json.dumps(provenance_records))}</icomic:provenanceRecords>\n"
             f"   <icomic:aiDisclosure>{include_ai_disclosure!s}</icomic:aiDisclosure>\n"
+            f"   <icomic:sourcesPreserved>{sources_preserved!s}</icomic:sourcesPreserved>\n"
             f"  </rdf:Description>\n"
             f" </rdf:RDF>\n"
             f"</x:xmpmeta>\n"
@@ -740,7 +742,7 @@ class PdfWriter:
         now_dt = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%SZ")
         info_id = self._add_object(
             f"<< /Title ({esc_title}) /Author (Icomic AI) /Creator (Icomic AI Service) "
-            f"/Subject (Comic Book with Preserved Meta Provenance) "
+            f"/Subject (AI-Generated Comic Book) "
             f"/CreationDate (D:{now_dt}) /ModDate (D:{now_dt}) >>".encode()
         )
 
@@ -767,41 +769,83 @@ class PdfWriter:
         return b"".join([*parts, *xref])
 
 
+class CollectedPages:
+    """Page art and provenance sources fetched once for either export format."""
+
+    def __init__(self, pages_data: list[dict[str, Any]]):
+        self.pages_data = pages_data
+        # True only when every AI-generated source file is attached byte-identical to what the
+        # provider returned; an unverifiable or missing source never counts as preserved.
+        self.sources_preserved = all(page["source_verified"] for page in pages_data)
+
+
 class PdfAssemblyService:
     """Service compiling comic book pages into an assembled PDF with provenance and disclosure."""
 
     def __init__(self, storage_adapter: StoragePort):
         self.storage_adapter = storage_adapter
 
-    def assemble_pdf(
+    def _fetch(self, url: str, what: str, page_number: int) -> bytes:
+        try:
+            data = self.storage_adapter.get(url)
+        except (KeyError, ValueError, OSError) as exc:
+            raise ExportIncompleteError(
+                f"Page {page_number}: {what} is no longer in storage. Regenerate it and export again."
+            ) from exc
+        if not data:
+            raise ExportIncompleteError(f"Page {page_number}: {what} is empty.")
+        return data
+
+    def _provider_source(
+        self, url: str, data: bytes, provenance: dict[str, Any], page_number: int
+    ) -> tuple[bytes, bool]:
+        """The provider's untouched file for a stored artifact, and whether its hash is on record.
+
+        Page cleanup stores a derivative beside the raw file; the raw file carries the
+        provider's embedded provenance, so it is the source whenever one exists.
+        """
+        raw_url = provenance.get("raw_image_url")
+        source = (
+            self._fetch(raw_url, "its unmodified provider image", page_number) if raw_url else data
+        )
+        recorded = provenance.get("source_hash")
+        return source, bool(recorded) and hashlib.sha256(source).hexdigest() == recorded
+
+    def collect_pages(
         self,
-        project_id: str,
-        title: str,
-        page_size: str,
-        include_ai_disclosure: bool,
         pages: list[PageExportItem],
         finish_preset: str = "off",
         finish_preset_explicit: bool = False,
-    ) -> tuple[str, bool, int, list[PdfLetteringWarning]]:
-        """Assemble pages into PDF blob, upload to storage, and return download URL."""
+    ) -> CollectedPages:
         if not pages:
-            raise ValueError("Cannot assemble PDF with zero pages.")
+            raise ValueError("Cannot assemble an export with zero pages.")
 
         pages_data: list[dict[str, Any]] = []
         for p in pages:
-            img_bytes: bytes | None = None
+            if not p.image_url:
+                raise ExportIncompleteError(f"Page {p.page_number} has no image to export.")
+            img_bytes = self._fetch(p.image_url, "its page image", p.page_number)
             original_image_bytes: bytes | None = None
-            if p.image_url:
-                try:
-                    img_bytes = self.storage_adapter.get(p.image_url)
-                except (KeyError, ValueError, OSError):
-                    img_bytes = None
             original_image_url = getattr(p, "original_image_url", None)
             if original_image_url:
-                try:
-                    original_image_bytes = self.storage_adapter.get(original_image_url)
-                except (KeyError, ValueError, OSError):
-                    original_image_bytes = None
+                original_image_bytes = self._fetch(
+                    original_image_url, "its original image", p.page_number
+                )
+            provenance = p.provenance_metadata or {}
+            if p.ai_generated:
+                source_bytes, source_verified = self._provider_source(
+                    p.image_url, img_bytes, provenance, p.page_number
+                )
+            elif original_image_bytes is not None:
+                # A user-coloured page: the preserved AI source is the line art underneath it.
+                source_bytes, source_verified = self._provider_source(
+                    original_image_url,
+                    original_image_bytes,
+                    p.original_provenance_metadata or {},
+                    p.page_number,
+                )
+            else:
+                source_bytes, source_verified = img_bytes, False
             page_preset = getattr(p.finish_preset, "root", p.finish_preset)
             page_finish_explicit = finish_preset_explicit or p.finish_preset_explicit
             if not page_preset or page_preset == "off":
@@ -829,23 +873,63 @@ class PdfAssemblyService:
                     "image_bytes": img_bytes,
                     "original_image_url": original_image_url,
                     "original_image_bytes": original_image_bytes,
-                    "provenance_metadata": p.provenance_metadata or {},
+                    "source_bytes": source_bytes,
+                    "source_verified": source_verified,
+                    "provenance_metadata": provenance,
                     "panels": panels_list,
                     "dialogue_text": getattr(p, "dialogue_text", None),
                 }
             )
+        return CollectedPages(pages_data)
 
+    def assemble_pdf(
+        self,
+        project_id: str,
+        title: str,
+        page_size: str,
+        include_ai_disclosure: bool,
+        pages: list[PageExportItem],
+        finish_preset: str = "off",
+        finish_preset_explicit: bool = False,
+    ) -> tuple[str, bool, int, list[PdfLetteringWarning]]:
+        """Assemble pages into PDF blob, upload to storage, and return download URL."""
+        collected = self.collect_pages(pages, finish_preset, finish_preset_explicit)
         writer = PdfWriter(page_size=page_size, storage_adapter=self.storage_adapter)
         pdf_content = writer.build_pdf(
             project_id=project_id,
             title=title,
             include_ai_disclosure=include_ai_disclosure,
-            pages_data=pages_data,
+            pages_data=collected.pages_data,
+            sources_preserved=collected.sources_preserved,
         )
 
         # Page count: 1 cover page + N comic pages
-        total_page_count = len(pages_data) + 1
+        total_page_count = len(collected.pages_data) + 1
 
         key = f"exports/{project_id}/{uuid4().hex}/comic.pdf"
         url = self.storage_adapter.put(key, pdf_content, "application/pdf")
-        return url, True, total_page_count, writer.warnings
+        return url, collected.sources_preserved, total_page_count, writer.warnings
+
+    def assemble_png_zip(
+        self,
+        project_id: str,
+        title: str,
+        include_ai_disclosure: bool,
+        pages: list[PageExportItem],
+    ) -> tuple[str, bool, int, list[PdfLetteringWarning]]:
+        """Bundle each page as a PNG with its provider source files and a provenance manifest."""
+        if any(p.lettering_mode == "overlay" for p in pages):
+            raise ExportIncompleteError(
+                "Overlay lettering is only drawn in PDF export. Export a PDF, or finish the pages with baked lettering."
+            )
+        collected = self.collect_pages(pages)
+        content = build_png_zip(
+            project_id,
+            title,
+            include_ai_disclosure,
+            collected.pages_data,
+            collected.sources_preserved,
+        )
+        key = f"exports/{project_id}/{uuid4().hex}/comic-pages.zip"
+        url = self.storage_adapter.put(key, content, "application/zip")
+        return url, collected.sources_preserved, len(collected.pages_data), []

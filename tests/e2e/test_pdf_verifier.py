@@ -11,11 +11,12 @@ def test_pdf_verifier_uses_declared_length_for_binary_streams() -> None:
             b"MANDATORY AI-GENERATION DISCLOSURE",
             b"Meta generative models",
             b"AI-generated",
-            b"Meta C2PA provenance metadata",
+            b"Original Meta image files, with any embedded provenance metadata",
+            b"does not verify C2PA signatures",
         ]
     )
     compressed = zlib.compress(content, level=0)
-    metadata = b"icomic:provenanceRecords icomic:aiDisclosure c2pa"
+    metadata = b"icomic:provenanceRecords icomic:aiDisclosure <icomic:sourcesPreserved>True</icomic:sourcesPreserved>"
     pdf = (
         b"%PDF-1.4\n"
         + f"1 0 obj << /Length {len(compressed)} /Filter /FlateDecode >>\nstream\n".encode()

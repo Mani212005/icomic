@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import logging
@@ -402,6 +403,9 @@ def extract_provenance(
     provenance: dict[str, Any] = {}
     if isinstance(meta_provenance, dict):
         provenance = dict(meta_provenance)
+    # The provider's own object, untouched, apart from the diagnostics derived below.
+    # None means the provider sent none; nothing is invented in its place.
+    provider_raw = copy.deepcopy(meta_provenance) if isinstance(meta_provenance, dict) else None
 
     # Ensure C2PA information is structured
     c2pa_info = dict(provenance.get("c2pa", {})) if isinstance(provenance.get("c2pa"), dict) else {}
@@ -416,6 +420,7 @@ def extract_provenance(
         c2pa_info["claim_generator"] = None
 
     provenance["c2pa"] = c2pa_info
+    provenance["provider_raw"] = provider_raw
     provenance["model"] = model_id
     provenance["cost_usd"] = DEFAULT_IMAGE_COST_USD
 

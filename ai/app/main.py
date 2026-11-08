@@ -489,15 +489,23 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     )
     @queued("pdf")
     def assemble_pdf(req: AssemblePdfRequest):
-        url, preserved, count, warnings = pdf_service.assemble_pdf(
-            project_id=str(req.project_id),
-            title=req.title,
-            page_size=req.page_size,
-            include_ai_disclosure=req.include_ai_disclosure,
-            pages=req.pages,
-            finish_preset=req.finish_preset.root if req.finish_preset else "off",
-            finish_preset_explicit=req.finish_preset_explicit,
-        )
+        if req.format == "png_zip":
+            url, preserved, count, warnings = pdf_service.assemble_png_zip(
+                project_id=str(req.project_id),
+                title=req.title,
+                include_ai_disclosure=req.include_ai_disclosure,
+                pages=req.pages,
+            )
+        else:
+            url, preserved, count, warnings = pdf_service.assemble_pdf(
+                project_id=str(req.project_id),
+                title=req.title,
+                page_size=req.page_size,
+                include_ai_disclosure=req.include_ai_disclosure,
+                pages=req.pages,
+                finish_preset=req.finish_preset.root if req.finish_preset else "off",
+                finish_preset_explicit=req.finish_preset_explicit,
+            )
         return AssemblePdfResponse(
             job_id=str(req.job_id),
             pdf_url=url,

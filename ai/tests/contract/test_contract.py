@@ -1,6 +1,9 @@
 """Boundary contract tests verifying FastAPI endpoints conform to contracts/openapi/ai-service.yaml."""
 
 import base64
+import hashlib
+import json
+import zipfile
 from io import BytesIO
 
 from fastapi.testclient import TestClient
@@ -288,23 +291,31 @@ def test_moderate_prompt_contract_blocked():
     assert model.reason is not None
 
 
-def test_assemble_pdf_contract():
-    payload = {
-        "job_id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+def _stored_page(name, label):
+    art = image_bytes(label, "PNG")
+    url = app.state.storage_adapter.put(f"pages/{name}.png", art, "image/png")
+    return url, {"source_hash": hashlib.sha256(art).hexdigest()}, art
+
+
+def _assemble_payload(job_id, pages, **extra):
+    return {
+        "job_id": job_id,
         "hashed_user_id": "user-hash-abc",
         "project_id": "22222222-2222-2222-2222-222222222222",
         "title": "Quantum Odyssey",
         "page_size": "A4",
         "include_ai_disclosure": True,
-        "pages": [
-            {
-                "page_number": 1,
-                "image_url": "http://storage/page1.png",
-                "panel_count": 4,
-                "provenance_metadata": {"c2pa": True},
-            }
-        ],
+        "pages": pages,
+        **extra,
     }
+
+
+def test_assemble_pdf_contract():
+    url, provenance, _ = _stored_page("contract-page-1", "contract-pdf")
+    payload = _assemble_payload(
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+        [{"page_number": 1, "image_url": url, "panel_count": 4, "provenance_metadata": provenance}],
+    )
     response = client.post("/internal/v1/assemble-pdf", json=payload)
     assert response.status_code == 200
     data = response.json()
@@ -314,6 +325,96 @@ def test_assemble_pdf_contract():
     assert model.provenance_metadata_preserved is True
     # 1 cover page + 1 comic page = 2 pages total
     assert model.page_count == 2
+
+
+def test_assemble_pdf_contract_reports_unproven_provenance_as_not_preserved():
+    url, _, _ = _stored_page("contract-page-unproven", "contract-unproven")
+    payload = _assemble_payload(
+        "dddddddd-dddd-dddd-dddd-ddddddddddd1",
+        [{"page_number": 1, "image_url": url, "provenance_metadata": {"c2pa": True}}],
+    )
+    response = client.post("/internal/v1/assemble-pdf", json=payload)
+    assert response.status_code == 200
+    assert response.json()["provenance_metadata_preserved"] is False
+
+
+def test_assemble_pdf_contract_rejects_missing_art_instead_of_drawing_a_placeholder():
+    payload = _assemble_payload(
+        "dddddddd-dddd-dddd-dddd-ddddddddddd2",
+        [{"page_number": 1, "image_url": "http://storage/never-stored.png"}],
+    )
+    response = client.post("/internal/v1/assemble-pdf", json=payload)
+    assert response.status_code == 409
+    assert response.json()["code"] == "EXPORT_INCOMPLETE"
+    assert "Page 1" in response.text and "no longer in storage" in response.text
+
+
+def test_assemble_png_zip_contract_bundles_pages_sources_and_manifest():
+    url_1, provenance_1, art_1 = _stored_page("contract-zip-1", "contract-zip-1")
+    webp = image_bytes("contract-zip-2", "WEBP")
+    url_2 = app.state.storage_adapter.put("pages/contract-zip-2.webp", webp, "image/webp")
+    payload = _assemble_payload(
+        "dddddddd-dddd-dddd-dddd-ddddddddddd3",
+        [
+            {"page_number": 1, "image_url": url_1, "provenance_metadata": provenance_1},
+            {
+                "page_number": 2,
+                "image_url": url_2,
+                "provenance_metadata": {"source_hash": hashlib.sha256(webp).hexdigest()},
+            },
+        ],
+        format="png_zip",
+        page_size="US_Letter",
+    )
+    response = client.post("/internal/v1/assemble-pdf", json=payload)
+    assert response.status_code == 200, response.text
+    model = AssemblePdfResponse(**response.json())
+    assert model.pdf_url.endswith("comic-pages.zip")
+    assert model.provenance_metadata_preserved is True
+    assert model.page_count == 2
+
+    archive_bytes = app.state.storage_adapter.get(model.pdf_url)
+    assert archive_bytes[:4] == b"PK\x03\x04"
+    assert app.state.storage_adapter.get_content_type(model.pdf_url) == "application/zip"
+    with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
+        assert archive.namelist() == [
+            "pages/page-001.png",
+            "pages/page-002.png",
+            "sources/page-002-source.webp",
+            "manifest.json",
+            "DISCLOSURE.txt",
+        ]
+        # A PNG source is the page, byte-identical; a WebP source is kept beside its PNG.
+        assert archive.read("pages/page-001.png") == art_1
+        assert archive.read("sources/page-002-source.webp") == webp
+        for name in ("pages/page-001.png", "pages/page-002.png"):
+            with Image.open(BytesIO(archive.read(name))) as page:
+                assert page.format == "PNG" and page.size == (64, 64)
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["provenance_metadata_preserved"] is True
+        assert [page["page_number"] for page in manifest["pages"]] == [1, 2]
+        assert manifest["pages"][1]["source_sha256"] == hashlib.sha256(webp).hexdigest()
+        assert "AI-generation disclosure" in archive.read("DISCLOSURE.txt").decode()
+
+
+def test_assemble_png_zip_contract_refuses_overlay_lettered_pages():
+    url, provenance, _ = _stored_page("contract-zip-overlay", "contract-zip-overlay")
+    payload = _assemble_payload(
+        "dddddddd-dddd-dddd-dddd-ddddddddddd4",
+        [
+            {
+                "page_number": 1,
+                "image_url": url,
+                "provenance_metadata": provenance,
+                "lettering_mode": "overlay",
+            }
+        ],
+        format="png_zip",
+    )
+    response = client.post("/internal/v1/assemble-pdf", json=payload)
+    assert response.status_code == 409
+    assert response.json()["code"] == "EXPORT_INCOMPLETE"
+    assert "PDF export" in response.text
 
 
 def test_job_status_contract():

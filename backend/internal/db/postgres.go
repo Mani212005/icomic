@@ -947,6 +947,35 @@ func (p *PostgresRepository) GetExport(ctx context.Context, id string) (*domain.
 	return &exp, err
 }
 
+// SaveArtifactProvenance keeps the first record for an image URL; a replay never rewrites it.
+func (p *PostgresRepository) SaveArtifactProvenance(ctx context.Context, projectID, imageURL string, provenance map[string]any) error {
+	raw, err := json.Marshal(provenance)
+	if err != nil {
+		return err
+	}
+	_, err = p.db.ExecContext(ctx, `
+		INSERT INTO artifact_provenance (image_url, project_id, provenance) VALUES ($1, $2, $3)
+		ON CONFLICT (image_url) DO NOTHING
+	`, imageURL, projectID, raw)
+	return err
+}
+
+func (p *PostgresRepository) GetArtifactProvenance(ctx context.Context, imageURL string) (map[string]any, error) {
+	var raw []byte
+	err := p.db.QueryRowContext(ctx, `SELECT provenance FROM artifact_provenance WHERE image_url = $1`, imageURL).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var provenance map[string]any
+	if err := json.Unmarshal(raw, &provenance); err != nil {
+		return nil, err
+	}
+	return provenance, nil
+}
+
 func (p *PostgresRepository) UpdateExport(ctx context.Context, exp *domain.Export) error {
 	query := `
 		UPDATE exports SET file_url = $2, format = $3, status = $4, provenance_metadata_preserved = $5

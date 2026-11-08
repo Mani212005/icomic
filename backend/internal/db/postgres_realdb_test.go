@@ -478,3 +478,41 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+func TestRealDBArtifactProvenanceIsWrittenOnceAndRoundTrips(t *testing.T) {
+	pool, repo, ctx := realDatabase(t)
+	user := &domain.User{Email: uuid.NewString() + "@realdb.test", PasswordHash: "fake-hash"}
+	must(t, repo.CreateUser(ctx, user))
+	project := &domain.Project{UserID: user.ID, Title: "Provenance", OriginalScript: "A hero.", ChapterCount: 1, ArtStyle: "classic-comic", Status: "draft"}
+	must(t, repo.CreateProject(ctx, project))
+
+	imageURL := "http://storage/pages/" + uuid.NewString() + ".png"
+	if _, err := repo.GetArtifactProvenance(ctx, imageURL); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("unknown image returned %v, want ErrNotFound", err)
+	}
+	original := map[string]any{
+		"source_hash":  "abc123",
+		"provider_raw": map[string]any{"c2pa": map[string]any{"signature": "sig", "nested": []any{"a", "b"}}},
+	}
+	must(t, repo.SaveArtifactProvenance(ctx, project.ID, imageURL, original))
+	// A replayed save, even with different content, never rewrites the first record.
+	must(t, repo.SaveArtifactProvenance(ctx, project.ID, imageURL, map[string]any{"source_hash": "tampered"}))
+	got, err := repo.GetArtifactProvenance(ctx, imageURL)
+	must(t, err)
+	if got["source_hash"] != "abc123" {
+		t.Fatalf("provenance was rewritten: %v", got)
+	}
+	raw, _ := got["provider_raw"].(map[string]any)
+	c2pa, _ := raw["c2pa"].(map[string]any)
+	if c2pa["signature"] != "sig" || len(c2pa["nested"].([]any)) != 2 {
+		t.Fatalf("nested provider metadata did not round trip: %v", got)
+	}
+
+	// Provenance leaves with its project.
+	if _, err := pool.ExecContext(ctx, `DELETE FROM projects WHERE id = $1::uuid`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.GetArtifactProvenance(ctx, imageURL); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("provenance outlived its project: %v", err)
+	}
+}

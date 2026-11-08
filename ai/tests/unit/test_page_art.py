@@ -75,7 +75,7 @@ def test_real_provider_page_is_clean_before_storage_and_export(stage, monkeypatc
     assert storage.get(url.removesuffix(".png") + "_raw.png") == source
     assert "isolated-margin-lettering" in caplog.text
 
-    pdf_url, _, count, _ = PdfAssemblyService(storage).assemble_pdf(
+    pdf_url, preserved, count, _ = PdfAssemblyService(storage).assemble_pdf(
         "fixture-project",
         "Fixture",
         "A4",
@@ -84,7 +84,9 @@ def test_real_provider_page_is_clean_before_storage_and_export(stage, monkeypatc
     )
     pdf = storage.get(pdf_url)
     assert count == 2
-    assert storage.get(url) in pdf  # The source display PNG remains attached unchanged.
+    # The cleaned copy lost the provider's embedded metadata; the raw file is the attachment.
+    assert preserved is True
+    assert source in pdf
     jpeg_streams = re.findall(
         rb"/Filter /DCTDecode /Length \d+ >>\nstream\n(.*?)\nendstream", pdf, re.DOTALL
     )

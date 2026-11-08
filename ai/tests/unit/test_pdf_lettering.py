@@ -13,7 +13,8 @@ from PIL import Image
 from app.gen.models import LetteringDocument
 from app.services.lettering import layout_page
 from app.services.lettering.pdf import PdfLettering, bubble_path
-from app.services.pdf import PdfWriter, _generate_fallback_png
+from app.services.pdf import PdfWriter
+from tests.image_fixtures import placeholder_png
 
 FIXTURES = Path(__file__).parents[1] / "fixtures/lettering"
 
@@ -32,7 +33,7 @@ def page(name="speech-tail", **changes):
         page_number=1,
         lettering_mode="overlay",
         lettering=state,
-        image_bytes=_generate_fallback_png(600, 849),
+        image_bytes=placeholder_png(600, 849),
         **changes,
     )
 
@@ -183,7 +184,7 @@ def test_missing_layer_is_visible_and_baked_pages_ignore_any_layer():
 def test_legacy_transcript_stream_matches_pre_overlay_writer():
     data = {
         "page_number": 1,
-        "image_bytes": _generate_fallback_png(600, 849),
+        "image_bytes": placeholder_png(600, 849),
         "panels": [
             {
                 "panel_number": 1,
@@ -214,7 +215,7 @@ def test_overlay_preserves_image_xobject_bytes():
 
 
 def test_mixed_document_preserves_legacy_content_and_embeds_font_once():
-    baked = {"page_number": 1, "image_bytes": _generate_fallback_png(600, 849)}
+    baked = {"page_number": 1, "image_bytes": placeholder_png(600, 849)}
     control, _ = build([baked, baked, baked])
     overlay = page()
     pdf, _ = build([baked, overlay, overlay])

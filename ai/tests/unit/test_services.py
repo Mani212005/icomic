@@ -1,5 +1,6 @@
 """Unit tests for AI services using dependency injection of fake adapters."""
 
+import hashlib
 import re
 import zlib
 from typing import Any
@@ -17,7 +18,7 @@ from app.services.draft import DraftService
 from app.services.line_art import LineArtService
 from app.services.moderation import ModerationService
 from app.services.panel import PanelService
-from app.services.pdf import PdfAssemblyService
+from app.services.pdf import ExportIncompleteError, PdfAssemblyService, PdfWriter
 from app.services.script import ScriptService
 from tests.image_fixtures import image_bytes
 
@@ -401,6 +402,7 @@ def test_pdf_service_valid_multipage_and_structural_validation():
                     "watermark_present": True,
                 },
                 "model": "muse-image-1.0",
+                "source_hash": hashlib.sha256(png_page_1).hexdigest(),
             },
             panels=[
                 PanelTextItem(
@@ -436,6 +438,7 @@ def test_pdf_service_valid_multipage_and_structural_validation():
                     "watermark_present": True,
                 },
                 "model": "muse-image-1.0",
+                "source_hash": hashlib.sha256(png_page_2).hexdigest(),
             },
             panels=[
                 PanelTextItem(
@@ -489,11 +492,13 @@ def test_pdf_service_valid_multipage_and_structural_validation():
         "All visual artwork, character artwork, and panel compositions are AI-generated."
         in parsed["text_content"]
     )
-    assert "Meta C2PA provenance metadata" in parsed["text_content"]
     assert (
-        "Cryptographic provenance records remain embedded for transparency and auditability."
-        in parsed["text_content"]
+        "Original Meta image files, with any embedded provenance metadata" in parsed["text_content"]
     )
+    assert "does not verify C2PA signatures" in parsed["text_content"]
+    assert "cryptographic" not in parsed["text_content"].lower()
+    assert b"page-1-original.png" in pdf_bytes and png_page_1 in pdf_bytes
+    assert b"page-2-original.png" in pdf_bytes and png_page_2 in pdf_bytes
     assert "ICOMIC GRAPHIC NOVEL SERIES" in parsed["text_content"]
     assert "PROJECT & PROVENANCE RECORD" in parsed["text_content"]
     assert "Project Identifier: proj-comic-777" in parsed["text_content"]
@@ -528,7 +533,7 @@ def test_pdf_service_keeps_original_line_art_attached_for_coloured_page():
     line_art_url = storage.put("pages/page-1/line-art.png", original_line_art, "image/png")
     colour_url = storage.put("pages/page-1/colour.png", coloured_page, "image/png")
 
-    url, _, _, _ = service.assemble_pdf(
+    url, preserved, _, _ = service.assemble_pdf(
         project_id="project-colour-export",
         title="Colour Export",
         page_size="A4",
@@ -538,45 +543,103 @@ def test_pdf_service_keeps_original_line_art_attached_for_coloured_page():
                 page_number=1,
                 image_url=colour_url,
                 original_image_url=line_art_url,
-                provenance_metadata={"c2pa": "source-record"},
+                ai_generated=False,
+                original_provenance_metadata={
+                    "source_hash": hashlib.sha256(original_line_art).hexdigest()
+                },
             )
         ],
     )
     pdf_bytes = storage.get(url)
     parsed = parse_pdf_structure(pdf_bytes)
-    assert b"page-1-original-line-art.png" in pdf_bytes
+    assert preserved is True
+    assert b"page-1-original-line-art.png" in pdf_bytes or b"page-1-original.png" in pdf_bytes
     assert original_line_art in pdf_bytes
     assert colour_url in parsed["text_content"]
     assert line_art_url in parsed["text_content"]
 
 
-def test_pdf_service_page_sizes_and_fallback_image():
+@pytest.mark.parametrize(
+    ("page_size", "media_box"),
+    [
+        ("A4", b"/MediaBox [0 0 595.28 841.89]"),
+        ("US_Letter", b"/MediaBox [0 0 612.00 792.00]"),
+        ("Custom_Comic", b"/MediaBox [0 0 477.00 738.00]"),
+    ],
+)
+def test_pdf_service_honors_each_page_size(page_size, media_box):
+    storage = FakeStorageAdapter()
+    art = image_bytes("sized", "PNG")
+    url = storage.put("pages/sized.png", art, "image/png")
+    pdf_url, _, count, _ = PdfAssemblyService(storage).assemble_pdf(
+        project_id="proj-sizes",
+        title="Sized Comic",
+        page_size=page_size,
+        include_ai_disclosure=False,
+        pages=[PageExportItem(page_number=1, image_url=url, dialogue_text="Stand back, hero!")],
+    )
+    assert count == 2
+    pdf_bytes = storage.get(pdf_url)
+    assert pdf_bytes.count(media_box) == 2  # cover and comic page
+    assert "Stand back, hero!" in parse_pdf_structure(pdf_bytes)["text_content"]
+
+
+def test_pdf_writer_rejects_an_unknown_page_size():
+    with pytest.raises(ValueError, match="Unsupported page size"):
+        PdfWriter(page_size="Tabloid")
+
+
+def test_provenance_is_reported_preserved_only_when_the_recorded_hash_matches_the_attached_source():
+    storage = FakeStorageAdapter()
+    art = image_bytes("provenance", "PNG")
+    url = storage.put("pages/p.png", art, "image/png")
+
+    def preserved(provenance):
+        _, flag, _, _ = PdfAssemblyService(storage).assemble_pdf(
+            project_id="proj-prov",
+            title="Provenance",
+            page_size="A4",
+            include_ai_disclosure=True,
+            pages=[PageExportItem(page_number=1, image_url=url, provenance_metadata=provenance)],
+        )
+        return flag
+
+    assert preserved({"source_hash": hashlib.sha256(art).hexdigest()}) is True
+    assert preserved({"source_hash": hashlib.sha256(b"other").hexdigest()}) is False
+    assert preserved({"c2pa": True}) is False  # A bare marker is not evidence.
+    assert preserved({}) is False
+
+
+def test_pdf_service_never_substitutes_placeholder_art_for_missing_images():
     storage = FakeStorageAdapter()
     svc = PdfAssemblyService(storage)
+    for missing in ("http://storage/non-existent-image.png", ""):
+        with pytest.raises(ExportIncompleteError, match="Page 1"):
+            svc.assemble_pdf(
+                project_id="proj-missing",
+                title="Missing Art",
+                page_size="A4",
+                include_ai_disclosure=True,
+                pages=[PageExportItem(page_number=1, image_url=missing)],
+            )
+    assert not any(key.startswith("exports/") for key in storage._blobs)
 
-    pages = [
-        PageExportItem(
-            page_number=1,
-            image_url="http://storage/non-existent-image.png",
-            dialogue_text="Stand back, hero!\nI will handle this.",
+
+def test_pdf_service_fails_clearly_when_an_original_attachment_is_gone():
+    storage = FakeStorageAdapter()
+    url = storage.put("pages/a.png", image_bytes("a", "PNG"), "image/png")
+    with pytest.raises(ExportIncompleteError, match="Page 1: its original image"):
+        PdfAssemblyService(storage).assemble_pdf(
+            project_id="proj-original",
+            title="Original Gone",
+            page_size="A4",
+            include_ai_disclosure=True,
+            pages=[
+                PageExportItem(
+                    page_number=1, image_url=url, original_image_url="http://storage/gone.png"
+                )
+            ],
         )
-    ]
-    url, preserved, count, _ = svc.assemble_pdf(
-        project_id="proj-sizes",
-        title="Letter Sized Comic",
-        page_size="US_Letter",
-        include_ai_disclosure=False,
-        pages=pages,
-    )
-    assert "/exports/proj-sizes/" in url and url.endswith("/comic.pdf")
-    assert count == 2
-    assert preserved is True
-
-    pdf_bytes = storage.get(url)
-    parsed = parse_pdf_structure(pdf_bytes)
-    assert parsed["page_count"] == 2
-    assert len(parsed["images"]) == 1
-    assert "Stand back, hero!" in parsed["text_content"]
 
 
 def test_pdf_service_empty_pages():
@@ -940,6 +1003,7 @@ def test_pdf_service_native_jpeg_embedding():
             page_number=1,
             image_url=jpeg_url,
             dialogue_text="Native JPEG test page.",
+            provenance_metadata={"source_hash": hashlib.sha256(tiny_jpeg).hexdigest()},
         )
     ]
 

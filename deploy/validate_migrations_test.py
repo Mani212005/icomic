@@ -219,7 +219,7 @@ def repository_column_errors(source: str, columns: dict[str, set[str]]) -> list[
     This checks schema drift only, not PostgreSQL types, constraints or transactions.
     """
     keywords = set("""select from where insert into values update set delete on conflict
-        do excluded returning as and or not null is exists order by asc desc limit
+        do nothing excluded returning as and or not null is exists order by asc desc limit
         for count sum coalesce lower now true false distinct in between case when then else end""".split())
     errors = []
     statements = re.findall(r"`([^`]+)`", source, re.S)

@@ -134,6 +134,19 @@ export function formatApiError(err) {
 			status: status || 502
 		};
 	}
+	if (
+		err.code === 'EXPORT_NOT_READY' ||
+		err.code === 'EXPORT_INCOMPLETE' ||
+		err.code === 'EXPORT_PROVENANCE_NOT_PRESERVED'
+	) {
+		return {
+			type: 'export_not_ready',
+			title: 'Export not ready',
+			message: rawMsg,
+			action: 'Fix the pages named above, then export again.',
+			status: status || 409
+		};
+	}
 	if (err.code === 'INVALID_PROVIDER_OUTPUT' || err.code === 'SERVICE_CONFIGURATION') {
 		return {
 			type: 'generic',

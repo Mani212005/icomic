@@ -646,7 +646,7 @@ export class MockApiClient {
 			project_id: projectId,
 			format: options.format || 'pdf',
 			page_size: options.page_size || 'a4',
-			file_url: `mock://storage/export-${expId}.pdf`,
+			file_url: `mock://storage/export-${expId}.${options.format === 'png' ? 'zip' : 'pdf'}`,
 			status: 'ready',
 			created_at: new Date().toISOString()
 		};

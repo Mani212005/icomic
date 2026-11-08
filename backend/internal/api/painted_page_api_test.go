@@ -184,6 +184,7 @@ func TestApprovePaintedPage_AndExportChoosesApprovedFinish(t *testing.T) {
 		ApprovedAt: lineApprovedAt,
 	})
 
+	seedProvenance(t, repo, projectID, "http://storage/line-art.png", "http://storage/painted-page.png")
 	var exportedPages []gen.PageExportItem
 	fake := server.AIClient.(*gen.FakeAIServiceClient)
 	fake.AssemblePdfFunc = func(ctx context.Context, req gen.AssemblePdfRequest) (*gen.AssemblePdfResponse, error) {

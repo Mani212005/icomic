@@ -257,7 +257,7 @@ POST /internal/v1/generate-draft-sketch
 POST /internal/v1/generate-line-art
 POST /internal/v1/suggest-colour-palette
 POST /internal/v1/moderate-prompt
-POST /internal/v1/assemble-pdf
+POST /internal/v1/assemble-pdf        (format pdf, or png_zip for the page PNG ZIP)
 GET  /internal/v1/job/:id/status
 ```
 
@@ -322,6 +322,14 @@ Page allocation and regeneration are atomic:
 The approval gate invariant (no image generation before prerequisite approval) is enforced strictly and transactionally by Go before queue dispatch. In accordance with Section 2 communication rules, the Python service talks to AI adapter ports only and does not perform reverse callbacks into Go.
 
 The default finish is `defaultPaintedPageVariant` in `backend/internal/api/handlers.go`, currently `direct-from-brief`; changing that constant switches the default in one place. The API keeps `variant=ink` as the explicit ink selection.
+
+### 5.3.1 Export Gate and Provenance
+
+`POST /projects/{id}/export` takes an optional `{format, page_size}` (`pdf` or `png`; `a4`, `us_letter` or `custom`; defaults PDF on A4). `custom` is the 6.625 x 10.25 in comic page. PNG pages keep their native size, and PNG export refuses overlay-lettered pages because overlay lettering is only drawn into PDFs.
+
+Export refuses with `409 EXPORT_NOT_READY` and a per-page `details.problems` list unless every page has a current approved image (line art, uploaded colour or painted page; stale approvals do not count) and the Meta provenance recorded when that image was generated. No placeholder art is ever drawn. If storage no longer holds a page image or an original attachment when the PDF is assembled, the AI service fails with `409 EXPORT_INCOMPLETE`.
+
+Go records the `provenance_metadata` of every generated draft, line art and painted page in `artifact_provenance`, keyed by the unique image URL and written once. `provider_raw` inside it is the provider's object verbatim, or null when the provider sent none; the remaining keys are Icomic diagnostics. `provenance_metadata_preserved` is true only when every AI source file is attached byte-identical (the raw file when page cleanup produced a derivative) and its SHA-256 equals the recorded `source_hash`. An export that cannot show that is not completed (`409 EXPORT_PROVENANCE_NOT_PRESERVED`). Icomic records provenance; it does not verify C2PA signatures, and no export text claims it does. Pages generated before provenance was recorded must be regenerated before they can be exported.
 
 ### 5.4 No Image Before Approval - Summary
 

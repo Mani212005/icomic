@@ -11,14 +11,15 @@ from PIL import Image
 
 from app.adapters.storage.fake import FakeStorageAdapter
 from app.gen.models import PageExportItem
-from app.services.pdf import PdfAssemblyService, PdfWriter, _generate_fallback_png, parse_png_to_rgb
+from app.services.pdf import ExportIncompleteError, PdfAssemblyService, PdfWriter, parse_png_to_rgb
+from tests.image_fixtures import placeholder_png
 
 
 @pytest.mark.parametrize("page_size", ["A4", "US_Letter", "Custom_Comic"])
 @pytest.mark.parametrize("image_size", [(400, 800), (800, 400)])
 def test_page_art_uses_available_area_without_distortion(page_size, image_size):
     width, height = image_size
-    image = _generate_fallback_png(width, height)
+    image = placeholder_png(width, height)
     pdf = PdfWriter(page_size).build_pdf(
         project_id="layout-test",
         title="Layout",
@@ -42,7 +43,7 @@ def test_empty_dialogue_does_not_emit_placeholder_section():
         project_id="empty-dialogue",
         title="No filler",
         include_ai_disclosure=False,
-        pages_data=[{"image_bytes": _generate_fallback_png(), "page_number": 1}],
+        pages_data=[{"image_bytes": placeholder_png(), "page_number": 1}],
     )
     content = pdf_text(pdf)
     assert "PANEL SCRIPT & DIALOGUE" not in content
@@ -56,7 +57,7 @@ def test_long_cover_title_wraps_before_cover_details(page_size):
         project_id="long-title",
         title=title,
         include_ai_disclosure=True,
-        pages_data=[{"image_bytes": _generate_fallback_png(), "page_number": 1}],
+        pages_data=[{"image_bytes": placeholder_png(), "page_number": 1}],
     )
     content = pdf_text(pdf)
     title_lines = re.findall(
@@ -73,8 +74,8 @@ def test_long_cover_title_wraps_before_cover_details(page_size):
 
 def test_export_keeps_rgb_master_pixels_and_original_attachment_bytes():
     storage = FakeStorageAdapter()
-    current_art = _generate_fallback_png(24, 18)
-    original_master = _generate_fallback_png(12, 10) + b"raw-master-metadata"
+    current_art = placeholder_png(24, 18)
+    original_master = placeholder_png(12, 10) + b"raw-master-metadata"
     art_url = storage.put("pages/current.png", current_art, "image/png")
     master_url = storage.put("pages/master.png", original_master, "image/png")
     pdf_url, _, _, _ = PdfAssemblyService(storage).assemble_pdf(
@@ -95,7 +96,8 @@ def test_export_keeps_rgb_master_pixels_and_original_attachment_bytes():
     assert offset >= 0
     extracted_original = pdf[offset : offset + len(original_master)]
     assert sha256(extracted_original).digest() == sha256(original_master).digest()
-    assert current_art not in pdf
+    # Every page keeps its own provider file as well as the earlier master it was drawn from.
+    assert current_art in pdf
     assert original_master in pdf
 
 
@@ -208,7 +210,7 @@ def test_cover_uses_first_page_art_and_falls_back_without_an_image():
     assert "MANDATORY AI-GENERATION DISCLOSURE" in pdf_text(pdf)
     assert "PROJECT & PROVENANCE RECORD" in pdf_text(pdf)
 
-    fallback = PdfWriter().build_pdf("cover-no-art", "Short Title", True, [{"page_number": 1}])
+    fallback = PdfWriter().build_pdf("cover-no-art", "Short Title", True, [])
     assert "Artwork preview unavailable" in pdf_text(fallback)
     assert "Short Title" in pdf_text(fallback)
     assert "MANDATORY AI-GENERATION DISCLOSURE" in pdf_text(fallback)
@@ -248,7 +250,7 @@ def test_long_page_heading_fits_comic_page_width():
         project_id="long-page-heading",
         title=title,
         include_ai_disclosure=True,
-        pages_data=[{"image_bytes": _generate_fallback_png(), "page_number": 1}],
+        pages_data=[{"image_bytes": placeholder_png(), "page_number": 1}],
     )
     content = pdf_text(pdf)
     heading = re.search(
@@ -284,3 +286,13 @@ def pdf_text(pdf: bytes) -> str:
         if decoder.eof and text and text not in pieces:
             pieces.append(text)
     return "\n".join(pieces)
+
+
+def test_a_page_without_stored_image_bytes_is_an_error_not_placeholder_art():
+    with pytest.raises(ExportIncompleteError, match="Page 2 has no stored image"):
+        PdfWriter().build_pdf(
+            "no-art",
+            "No art",
+            True,
+            [{"page_number": 1, "image_bytes": placeholder_png()}, {"page_number": 2}],
+        )
