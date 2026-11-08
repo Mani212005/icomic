@@ -98,6 +98,8 @@ func (t *fixtureTransaction) QueryRowContext(_ context.Context, q string, args .
 		return t.row("project", "A submitted script.")
 	case strings.Contains(q, "SELECT id FROM characters"):
 		return t.row("entity", "character")
+	case strings.Contains(q, "SELECT id FROM chapters"):
+		return t.row("entity", "chapter")
 	case strings.Contains(q, "p.chapter_id,p.updated_at"):
 		return t.row("entity", "chapter", time.Now().Add(-time.Hour))
 	case strings.Contains(q, "SELECT MAX(updated_at) FROM panels"):
@@ -375,7 +377,7 @@ func TestImageQuotaDoesNotBlockTextOrExport(t *testing.T) {
 			repo, state, job := newGenerationFixture()
 			state.daily, state.monthly, state.book = 80, 800, 40
 			job.JobType = kind
-			if _, _, err := repo.CreateGeneration(context.Background(), job, GenerationOptions{}, 0); err != nil {
+			if _, _, err := repo.CreateGeneration(context.Background(), job, GenerationOptions{EntityID: "chapter"}, 0); err != nil {
 				t.Fatal(err)
 			}
 			if state.daily != 80 || state.monthly != 800 || state.book != 40 {
@@ -383,6 +385,27 @@ func TestImageQuotaDoesNotBlockTextOrExport(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOutlineAndPanelTextRequireApprovalsInTransaction(t *testing.T) {
+	for _, kind := range []string{"chapter_outline", "panel_text"} {
+		t.Run(kind, func(t *testing.T) {
+			repo, state, job := newGenerationFixture()
+			state.missingApproval = true
+			job.JobType = kind
+			result, _, err := repo.CreateGeneration(context.Background(), job, GenerationOptions{EntityID: "chapter"}, 0)
+			if !errors.Is(err, domain.ErrMissingPrerequisiteApproval) || result != nil || state.commits != 0 || len(state.entries) != 0 {
+				t.Fatalf("result=%v err=%v state=%+v", result, err, state)
+			}
+		})
+	}
+	t.Run("panel_text without entity", func(t *testing.T) {
+		repo, state, job := newGenerationFixture()
+		job.JobType = "panel_text"
+		if _, _, err := repo.CreateGeneration(context.Background(), job, GenerationOptions{}, 0); !errors.Is(err, domain.ErrMissingPrerequisiteApproval) || state.commits != 0 {
+			t.Fatalf("err=%v state=%+v", err, state)
+		}
+	})
 }
 
 func TestRefundQuotaReleaseRollsBackWithLedger(t *testing.T) {

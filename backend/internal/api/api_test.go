@@ -512,14 +512,16 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 	if len(chars) == 0 {
 		t.Fatal("expected characters extracted")
 	}
-	charID := chars[0].(map[string]interface{})["id"].(string)
 
-	// 4. Generate reference image
-	reqRef := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+charID+"/reference-image", nil)
-	recRef := httptest.NewRecorder()
-	handler.ServeHTTP(recRef, reqRef)
-	if recRef.Code != http.StatusAccepted {
-		t.Fatalf("generate reference image failed: %d", recRef.Code)
+	// 4. Generate a reference image for every character
+	for _, ch := range chars {
+		cID := ch.(map[string]interface{})["id"].(string)
+		reqRef := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+cID+"/reference-image", nil)
+		recRef := httptest.NewRecorder()
+		handler.ServeHTTP(recRef, reqRef)
+		if recRef.Code != http.StatusAccepted {
+			t.Fatalf("generate reference image failed: %d", recRef.Code)
+		}
 	}
 
 	// 5. Approve characters

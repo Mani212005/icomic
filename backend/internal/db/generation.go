@@ -174,6 +174,37 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
 		return err
 	}
 	prereqs := domain.ApprovedPrereqs{HasScript: len(script) > 0}
+	switch job.JobType {
+	case "chapter_outline":
+		// Hold the characters against edits through commit, as for draft generation.
+		if _, err := tx.ExecContext(ctx, `SELECT id FROM characters WHERE project_id=$1::uuid FOR SHARE`, job.ProjectID); err != nil {
+			return err
+		}
+		approved, err := allCharactersApproved(ctx, tx, job.ProjectID)
+		if err != nil {
+			return err
+		}
+		if !approved {
+			return fmt.Errorf("%w: every character reference must be approved before generating the chapter outline", domain.ErrMissingPrerequisiteApproval)
+		}
+		return nil
+	case "panel_text":
+		if entityID == "" {
+			return fmt.Errorf("%w: generation entity is required", domain.ErrMissingPrerequisiteApproval)
+		}
+		var id string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM chapters WHERE id=$1::uuid AND project_id=$2::uuid FOR SHARE`, entityID, job.ProjectID).Scan(&id); err != nil {
+			return err
+		}
+		approved, err := chapterOutlineApproved(ctx, tx, entityID)
+		if err != nil {
+			return err
+		}
+		if !approved {
+			return fmt.Errorf("%w: chapter outline must be approved before generating panels", domain.ErrMissingPrerequisiteApproval)
+		}
+		return nil
+	}
 	if !imageJob(job.JobType) && job.JobType != "colour_suggestion" {
 		return nil
 	}
@@ -212,38 +243,11 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
 		if _, err := tx.ExecContext(ctx, `SELECT id FROM characters WHERE project_id=$1::uuid FOR SHARE`, job.ProjectID); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*)>0
-        AND COALESCE(BOOL_AND(EXISTS (SELECT 1
-        FROM stage_approvals a
-        WHERE a.project_id=c.project_id
-        AND a.entity_type='character_reference'
-        AND a.entity_id=c.id
-        AND NOT EXISTS (SELECT 1 FROM generation_jobs active
-            WHERE active.project_id=c.project_id AND active.entity_id=c.id
-            AND active.job_type='character_reference' AND active.status IN ('pending','running'))
-        AND a.approved_at>GREATEST(c.updated_at,COALESCE((SELECT MAX(j.completed_at)
-        FROM generation_jobs j
-        WHERE j.project_id=c.project_id
-        AND j.job_type='character_reference'
-        AND j.status='done'
-        AND (j.entity_id=c.id OR j.id=c.reference_image_job_id)),c.updated_at)))),FALSE)
-        FROM characters c
-        WHERE c.project_id=$1::uuid`, job.ProjectID).Scan(&prereqs.AllCharactersApproved); err != nil {
+		var err error
+		if prereqs.AllCharactersApproved, err = allCharactersApproved(ctx, tx, job.ProjectID); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1
-        FROM stage_approvals a JOIN chapters c ON c.id=a.entity_id
-        WHERE c.id=$1::uuid
-        AND a.project_id=c.project_id
-        AND a.entity_type='chapter_outline'
-        AND NOT EXISTS (SELECT 1 FROM generation_jobs active
-            WHERE active.project_id=c.project_id AND active.job_type='chapter_outline'
-            AND active.status IN ('pending','running'))
-        AND a.approved_at>GREATEST(c.updated_at,COALESCE((SELECT MAX(j.completed_at)
-        FROM generation_jobs j
-        WHERE j.project_id=c.project_id
-        AND j.job_type='chapter_outline'
-        AND j.status='done'),c.updated_at)))`, chapterID).Scan(&prereqs.ChapterOutlineApproved); err != nil {
+		if prereqs.ChapterOutlineApproved, err = chapterOutlineApproved(ctx, tx, chapterID); err != nil {
 			return err
 		}
 	} else {
@@ -275,6 +279,50 @@ func checkGenerationApproval(ctx context.Context, tx Transaction, job *domain.Ge
 		return domain.CheckApprovalGate("draft_sketch", prereqs)
 	}
 	return domain.CheckApprovalGate(job.JobType, prereqs)
+}
+
+// allCharactersApproved reports whether the project has characters and each has a current approval
+// with no reference generation in flight. Callers hold the character rows against edits.
+func allCharactersApproved(ctx context.Context, tx Transaction, projectID string) (bool, error) {
+	var approved bool
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*)>0
+        AND COALESCE(BOOL_AND(EXISTS (SELECT 1
+        FROM stage_approvals a
+        WHERE a.project_id=c.project_id
+        AND a.entity_type='character_reference'
+        AND a.entity_id=c.id
+        AND NOT EXISTS (SELECT 1 FROM generation_jobs active
+            WHERE active.project_id=c.project_id AND active.entity_id=c.id
+            AND active.job_type='character_reference' AND active.status IN ('pending','running'))
+        AND a.approved_at>GREATEST(c.updated_at,COALESCE((SELECT MAX(j.completed_at)
+        FROM generation_jobs j
+        WHERE j.project_id=c.project_id
+        AND j.job_type='character_reference'
+        AND j.status='done'
+        AND (j.entity_id=c.id OR j.id=c.reference_image_job_id)),c.updated_at)))),FALSE)
+        FROM characters c
+        WHERE c.project_id=$1::uuid`, projectID).Scan(&approved)
+	return approved, err
+}
+
+// chapterOutlineApproved reports whether the chapter has an outline approval newer than its last edit and
+// the latest finished outline generation, with no outline generation in flight.
+func chapterOutlineApproved(ctx context.Context, tx Transaction, chapterID string) (bool, error) {
+	var approved bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1
+        FROM stage_approvals a JOIN chapters c ON c.id=a.entity_id
+        WHERE c.id=$1::uuid
+        AND a.project_id=c.project_id
+        AND a.entity_type='chapter_outline'
+        AND NOT EXISTS (SELECT 1 FROM generation_jobs active
+            WHERE active.project_id=c.project_id AND active.job_type='chapter_outline'
+            AND active.status IN ('pending','running'))
+        AND a.approved_at>GREATEST(c.updated_at,COALESCE((SELECT MAX(j.completed_at)
+        FROM generation_jobs j
+        WHERE j.project_id=c.project_id
+        AND j.job_type='chapter_outline'
+        AND j.status='done'),c.updated_at)))`, chapterID).Scan(&approved)
+	return approved, err
 }
 
 func (p *PostgresRepository) TransitionGeneration(ctx context.Context, id, status string, cost *float64, msg *string, allowed []string) error {

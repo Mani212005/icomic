@@ -106,6 +106,11 @@ func TestEnablingLetteringDoesNotUpgradeExistingBookAllocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Regeneration never deletes generated art, so start from a chapter without any.
+	page.DraftImageURL, page.LineArtImageURL, page.PaintedPageImageURL, page.ColourImageURL = "", "", "", ""
+	if err := repo.UpdatePage(context.Background(), page); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chapters/"+page.ChapterID+"/panels", nil)
 	req.Header.Set("X-User-ID", "owner")
 	rec := httptest.NewRecorder()

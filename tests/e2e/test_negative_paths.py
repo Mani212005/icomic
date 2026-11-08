@@ -33,7 +33,10 @@ def test_stale_approval_cascade_blocks_downstream_generation(api_client: httpx.C
     api_client.post(f"/api/v1/projects/{proj_id}/analyze")
     chars_res = api_client.get(f"/api/v1/projects/{proj_id}/characters")
     for char in chars_res.json().get("characters", []):
-        api_client.post(f"/api/v1/characters/{char['id']}/approve")
+        ref_res = api_client.post(f"/api/v1/characters/{char['id']}/reference-image")
+        assert ref_res.status_code == 202, ref_res.text
+        approve_res = api_client.post(f"/api/v1/characters/{char['id']}/approve")
+        assert approve_res.status_code == 200, approve_res.text
 
     # Generate chapters & approve chapter outline
     chap_res = api_client.post(f"/api/v1/projects/{proj_id}/chapters")

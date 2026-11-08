@@ -104,6 +104,41 @@ func (r *failingWriteRepository) UpdatePage(ctx context.Context, value *domain.P
 	return r.Repository.UpdatePage(ctx, value)
 }
 
+func (r *failingWriteRepository) ApproveStage(ctx context.Context, value *domain.StageApproval, expectedUpdatedAt time.Time) error {
+	if r.fail("ApproveStage") {
+		return errors.New("injected database write failure")
+	}
+	return r.Repository.ApproveStage(ctx, value, expectedUpdatedAt)
+}
+
+func (r *failingWriteRepository) SavePanelEdit(ctx context.Context, value *domain.Panel, now time.Time) error {
+	if r.fail("SavePanelEdit") {
+		return errors.New("injected database write failure")
+	}
+	return r.Repository.SavePanelEdit(ctx, value, now)
+}
+
+func (r *failingWriteRepository) ReassignPanels(ctx context.Context, pageID string, panelIDs []string, maxPerPage int, now time.Time) ([]string, error) {
+	if r.fail("ReassignPanels") {
+		return nil, errors.New("injected database write failure")
+	}
+	return r.Repository.ReassignPanels(ctx, pageID, panelIDs, maxPerPage, now)
+}
+
+func (r *failingWriteRepository) ReplaceChapterOutline(ctx context.Context, projectID string, chapters []*domain.Chapter) error {
+	if r.fail("ReplaceChapterOutline") {
+		return errors.New("injected database write failure")
+	}
+	return r.Repository.ReplaceChapterOutline(ctx, projectID, chapters)
+}
+
+func (r *failingWriteRepository) ReplaceChapterPanels(ctx context.Context, chapterID string, panels []*domain.Panel, pages []*domain.Page) error {
+	if r.fail("ReplaceChapterPanels") {
+		return errors.New("injected database write failure")
+	}
+	return r.Repository.ReplaceChapterPanels(ctx, chapterID, panels, pages)
+}
+
 func (r *failingWriteRepository) SaveColourPalette(ctx context.Context, value *domain.ColourPalette) error {
 	if r.fail("SaveColourPalette") {
 		return errors.New("injected database write failure")
@@ -141,23 +176,17 @@ func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 		{"analysis character", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/analyze", "CreateCharacter"},
 		{"analysis project", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/analyze", "UpdateProject"},
 		{"reference image", "POST", "/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/reference-image", "UpdateCharacter"},
-		{"character approval update", "POST", "/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/approve", "UpdateCharacter"},
-		{"character approval record", "POST", "/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/approve", "RecordApproval"},
-		{"chapter generation", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/chapters", "CreateChapter"},
+		{"character approval", "POST", "/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/approve", "ApproveStage"},
+		{"chapter generation", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/chapters", "ReplaceChapterOutline"},
 		{"chapter edit", "PATCH", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98", "UpdateChapter"},
-		{"chapter approval update", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/approve", "UpdateChapter"},
-		{"chapter approval record", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/approve", "RecordApproval"},
-		{"panel generation", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels", "CreatePanel"},
-		{"page partition", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels", "CreatePage"},
-		{"panel edit", "PATCH", "/panels/a8a24397-3780-5a99-acea-8ab882a2ef5b", "UpdatePanel"},
-		{"panel approval invalidation", "PATCH", "/panels/a8a24397-3780-5a99-acea-8ab882a2ef5b", "UpdatePage"},
-		{"page edit", "PATCH", "/pages/a5669606-8764-5c90-b282-bad323a49baa", "UpdatePage"},
+		{"chapter approval", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/approve", "ApproveStage"},
+		{"panel generation", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels", "ReplaceChapterPanels"},
+		{"panel edit", "PATCH", "/panels/a8a24397-3780-5a99-acea-8ab882a2ef5b", "SavePanelEdit"},
+		{"page edit", "PATCH", "/pages/a5669606-8764-5c90-b282-bad323a49baa", "ReassignPanels"},
 		{"draft generation", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft", "UpdatePage"},
-		{"draft approval update", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft/approve", "UpdatePage"},
-		{"draft approval record", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft/approve", "RecordApproval"},
+		{"draft approval", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft/approve", "ApproveStage"},
 		{"line art generation", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art?variant=ink", "UpdatePage"},
-		{"line art approval update", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art/approve?variant=ink", "UpdatePage"},
-		{"line art approval record", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art/approve?variant=ink", "RecordApproval"},
+		{"line art approval", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art/approve?variant=ink", "ApproveStage"},
 		{"palette suggestion", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette/suggest", "SaveColourPalette"},
 		{"palette edit", "PATCH", "/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette", "SaveColourPalette"},
 		{"colour approval", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/colour/approve", "RecordApproval"},
@@ -176,12 +205,26 @@ func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if strings.HasPrefix(tc.operation, "ReplaceChapter") {
+				// Regeneration refuses to delete art, so the failure case starts from art-free pages.
+				page, err := repo.GetPage(nil, "a5669606-8764-5c90-b282-bad323a49baa")
+				if err != nil {
+					t.Fatal(err)
+				}
+				page.DraftImageURL, page.LineArtImageURL, page.ColourImageURL, page.ColourImageUploadedAt = "", "", "", nil
+				if err := repo.UpdatePage(nil, page); err != nil {
+					t.Fatal(err)
+				}
+			}
 			failing := &failingWriteRepository{Repository: repo, operation: tc.operation}
 			s.Repo = failing
 			rec := httptest.NewRecorder()
 			body := `{}`
-			if tc.name == "panel edit" || tc.name == "panel approval invalidation" {
+			if tc.name == "panel edit" {
 				body = `{"dialogue":"Updated dialogue"}`
+			}
+			if tc.name == "page edit" {
+				body = `{"panel_ids":["a8a24397-3780-5a99-acea-8ab882a2ef5b"]}`
 			}
 			s.NewRouter().ServeHTTP(rec, httptest.NewRequest(tc.method, "/api/v1"+tc.path, strings.NewReader(body)))
 			if rec.Code != http.StatusInternalServerError || failing.calls != 1 {

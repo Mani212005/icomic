@@ -698,25 +698,25 @@ func (s *Server) ApproveCharacter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := nextCharacterActivity(ch)
-	ch.ApprovedAt = &now
-	if err := s.Repo.UpdateCharacter(r.Context(), ch); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save character")
+	// Extras are approved as profiles only; every other character needs the image it is approving.
+	if ch.ReferenceImageURL == "" && ch.VisualAttributes["reference_role"] != "extra" {
+		writeError(w, http.StatusBadRequest, "Generate a reference image before approving the character")
 		return
 	}
 
-	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
+	now := nextCharacterActivity(ch)
+	if !s.commitApproval(w, r, &domain.StageApproval{
 		ProjectID:                proj.ID,
 		EntityType:               "character_reference",
 		EntityID:                 ch.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
 		CreditEstimateAtApproval: s.Pricing.ImagePriceUSD,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save approval")
+	}, ch.UpdatedAt) {
 		return
 	}
 
+	ch.ApprovedAt = &now
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "character": ch})
 }
 
@@ -873,6 +873,10 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 		writeLookupError(w, err, "Character list")
 		return
 	}
+	if len(chars) == 0 {
+		writeError(w, http.StatusBadRequest, "Analyze the script and approve its character references before generating the outline")
+		return
+	}
 	for _, ch := range chars {
 		if ch.ApprovedAt == nil || domain.IsApprovalStale(ch.ApprovedAt, ch.UpdatedAt) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("Character %s must be approved", ch.Name))
@@ -887,6 +891,23 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 	if s.AIClient == nil {
 		writeError(w, http.StatusServiceUnavailable, "AI service not available")
 		return
+	}
+
+	existing, err := s.Repo.ListChapters(r.Context(), proj.ID)
+	if err != nil {
+		writeLookupError(w, err, "Chapter list")
+		return
+	}
+	for _, ch := range existing {
+		hasArt, err := s.chapterHasArt(r.Context(), ch.ID)
+		if err != nil {
+			writeLookupError(w, err, "Page list")
+			return
+		}
+		if hasArt {
+			writeError(w, http.StatusConflict, "Chapters with generated page art cannot be regenerated")
+			return
+		}
 	}
 
 	hashedUID := domain.HashUserID(userID)
@@ -967,21 +988,28 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var createdChapters []*domain.Chapter
+	numbers := make(map[int]bool, len(outlineResp.Chapters))
+	createdChapters := make([]*domain.Chapter, 0, len(outlineResp.Chapters))
 	for _, cItem := range outlineResp.Chapters {
-		chap := &domain.Chapter{
+		if cItem.ChapterNumber < 1 || numbers[cItem.ChapterNumber] {
+			errMsg := "Outline chapters must have unique positive numbers"
+			_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "failed", nil, &errMsg)
+			writeError(w, http.StatusBadGateway, errMsg)
+			return
+		}
+		numbers[cItem.ChapterNumber] = true
+		createdChapters = append(createdChapters, &domain.Chapter{
 			ID:            uuid.NewString(),
 			ProjectID:     proj.ID,
 			ChapterNumber: cItem.ChapterNumber,
 			Title:         cItem.Title,
 			Summary:       cItem.Summary,
 			Status:        "pending",
-		}
-		if err := s.Repo.CreateChapter(r.Context(), chap); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to save chapter")
-			return
-		}
-		createdChapters = append(createdChapters, chap)
+		})
+	}
+	if err := s.Repo.ReplaceChapterOutline(r.Context(), proj.ID, createdChapters); err != nil {
+		s.failReplacement(w, r, job.ID, err, "Failed to save chapters")
+		return
 	}
 
 	actualCost := s.aiActualCost(r.Context(), job.ID)
@@ -1083,25 +1111,19 @@ func (s *Server) ApproveChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.Status = "approved"
-	if err := s.Repo.UpdateChapter(r.Context(), c); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save chapter")
-		return
-	}
-
 	now := timestampAfterActivity(c.UpdatedAt)
-	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
+	if !s.commitApproval(w, r, &domain.StageApproval{
 		ProjectID:                proj.ID,
 		EntityType:               "chapter_outline",
 		EntityID:                 c.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
 		CreditEstimateAtApproval: 0.01,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save approval")
+	}, c.UpdatedAt) {
 		return
 	}
 
+	c.Status = "approved"
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "chapter": c})
 }
 
@@ -1131,6 +1153,30 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.validateSavedStory(w, proj.OriginalScript, proj.ChapterCount) {
+		return
+	}
+
+	// Panels follow an approved, unedited outline (SPEC 3.4).
+	outlineApp, err := s.Repo.GetLatestApproval(r.Context(), "chapter_outline", c.ID)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		writeLookupError(w, err, "Chapter outline approval")
+		return
+	}
+	var outlineApprovedAt *time.Time
+	if outlineApp != nil {
+		outlineApprovedAt = &outlineApp.ApprovedAt
+	}
+	if err := domain.CheckChapterOutlineApproval(outlineApprovedAt, c.UpdatedAt); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	hasArt, err := s.chapterHasArt(r.Context(), c.ID)
+	if err != nil {
+		writeLookupError(w, err, "Page list")
+		return
+	}
+	if hasArt {
+		writeError(w, http.StatusConflict, "Panels with generated page art cannot be regenerated")
 		return
 	}
 
@@ -1238,19 +1284,12 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 			Status:           "ready",
 			UpdatedAt:        now,
 		}
-		if err := s.Repo.CreatePanel(r.Context(), p); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to save panel")
-			return
-		}
 		pids = append(pids, p.ID)
 		panels = append(panels, p)
 	}
 
 	// Automatically partition panels into pages (SPEC 3.5.1)
-	pageSize := s.MaxPanelsPerPage
-	if pageSize <= 0 {
-		pageSize = 5
-	}
+	pageSize := s.maxPanelsPerPage()
 
 	var pages []*domain.Page
 	pageNum := 1
@@ -1268,21 +1307,32 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 		pg.LetteringMode = "baked"
 		if s.LetteringOverlayEnabled && proj.LetteringMode == "overlay" {
 			pg.LetteringMode = "overlay"
-			if err := s.refreshLettering(r.Context(), pg); err != nil {
-				writeError(w, http.StatusInternalServerError, "Failed to prepare lettering")
-				return
-			}
-		}
-		if err := s.Repo.CreatePage(r.Context(), pg); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to save page")
-			return
 		}
 		pages = append(pages, pg)
 		pageNum++
 	}
+	if err := s.Repo.ReplaceChapterPanels(r.Context(), c.ID, panels, pages); err != nil {
+		s.failReplacement(w, r, job.ID, err, "Failed to save panels")
+		return
+	}
 
 	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
+
+	// The layout reads the stored panels, so it follows the commit. A failure here leaves a complete
+	// revision whose layout is recomputed by the next draft or lettering request (ensureLettering).
+	for _, pg := range pages {
+		if pg.LetteringMode != "overlay" {
+			continue
+		}
+		if err := s.refreshLettering(r.Context(), pg); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to prepare lettering")
+			return
+		}
+		if !s.saveLettering(w, r, pg, nil) {
+			return
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"job_id": job.ID,
@@ -1387,14 +1437,17 @@ func (s *Server) UpdatePanel(w http.ResponseWriter, r *http.Request) {
 		p.ImagePrompt = *updates.ImagePrompt
 	}
 
+	// The edit and the staling of every page holding the panel commit together (SPEC 3.5, 3.6).
 	now := time.Now().UTC()
-	p.UpdatedAt = now
-	if err := s.Repo.UpdatePanel(r.Context(), p); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save panel")
+	if err := s.Repo.SavePanelEdit(r.Context(), p, now); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			writeLookupError(w, err, "Panel")
+		} else {
+			writeError(w, http.StatusInternalServerError, "Failed to save panel")
+		}
 		return
 	}
 
-	// Cascade: panel edit stales parent page draft approval (SPEC 3.5, 3.6, ARCHITECTURE 5.3)
 	pages, err := s.Repo.ListPages(r.Context(), p.ChapterID)
 	if err != nil {
 		writeLookupError(w, err, "Page list")
@@ -1404,20 +1457,13 @@ func (s *Server) UpdatePanel(w http.ResponseWriter, r *http.Request) {
 		for _, pid := range pg.PanelIDs {
 			if pid == p.ID {
 				previous := append(json.RawMessage(nil), pg.Lettering...)
-				domain.StaleDraftOnPanelEdit(pg, now)
-				layoutErr := s.refreshLettering(r.Context(), pg)
-				if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-					writeError(w, 500, "Failed to save page")
-					return
-				}
-				if layoutErr != nil {
+				if err := s.refreshLettering(r.Context(), pg); err != nil {
 					writeError(w, 502, "Failed to refresh lettering")
 					return
 				}
 				if !s.saveLettering(w, r, pg, previous) {
 					return
 				}
-
 				break
 			}
 		}
@@ -1561,34 +1607,47 @@ func (s *Server) UpdatePage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		PanelIDs []string `json:"panel_ids"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.PanelIDs != nil {
-		pg.PanelIDs = body.PanelIDs
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil || body.PanelIDs == nil {
+		writeError(w, http.StatusBadRequest, "Page update must be a JSON object with panel_ids")
+		return
 	}
 
-	for _, id := range pg.PanelIDs {
-		panel, err := s.Repo.GetPanel(r.Context(), id)
+	// Listing a panel that sits on another page moves it; the move, the reorder and the staling of every
+	// affected page commit together, so panels stay assigned exactly once (SPEC 3.5.1, 3.6).
+	changed, err := s.Repo.ReassignPanels(r.Context(), pg.ID, body.PanelIDs, s.maxPanelsPerPage(), time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidPanelAllocation) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, db.ErrNotFound) {
+			writeLookupError(w, err, "Page")
+		} else {
+			writeError(w, http.StatusInternalServerError, "Failed to save page")
+		}
+		return
+	}
+	for _, id := range changed {
+		moved, err := s.Repo.GetPage(r.Context(), id)
 		if err != nil {
-			writeLookupError(w, err, "Panel")
+			writeLookupError(w, err, "Page")
 			return
 		}
-		if panel.ChapterID != pg.ChapterID {
-			writeError(w, 400, "Panels must belong to this chapter")
+		previous := append(json.RawMessage(nil), moved.Lettering...)
+		if err := s.refreshLettering(r.Context(), moved); err != nil {
+			writeError(w, 500, "Failed to refresh lettering")
+			return
+		}
+		if !s.saveLettering(w, r, moved, previous) {
 			return
 		}
 	}
-	previous := append(json.RawMessage(nil), pg.Lettering...)
-	if err := s.refreshLettering(r.Context(), pg); err != nil {
-		writeError(w, 500, "Failed to refresh lettering")
-		return
-	}
-	// Editing page allocation makes draft approval stale (SPEC 3.5.1, 3.6)
-	pg.UpdatedAt = time.Now().UTC()
-	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save page")
-		return
-	}
-	if !s.saveLettering(w, r, pg, previous) {
+
+	pg, err = s.Repo.GetPage(r.Context(), pg.ID)
+	if err != nil {
+		writeLookupError(w, err, "Page")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"page": pg})
@@ -1821,25 +1880,27 @@ func (s *Server) ApproveDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
-	pg.DraftApprovedAt = &now
-	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save page")
+	if pg.DraftImageURL == "" {
+		writeError(w, http.StatusBadRequest, "Generate a draft sketch before approving it")
+		return
+	}
+	if !s.requireCurrentArt(w, r, pg, pg.DraftImageJobID, "draft sketch") {
 		return
 	}
 
-	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
+	now := timestampAfterActivity(pg.UpdatedAt)
+	if !s.commitApproval(w, r, &domain.StageApproval{
 		ProjectID:                proj.ID,
 		EntityType:               "draft_page",
 		EntityID:                 pg.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
 		CreditEstimateAtApproval: s.Pricing.ImagePriceUSD,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save approval")
+	}, pg.UpdatedAt) {
 		return
 	}
 
+	pg.DraftApprovedAt = &now
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "page": pg})
 }
 
@@ -2062,25 +2123,27 @@ func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
-	pg.LineArtApprovedAt = &now
-	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save page")
+	if pg.LineArtImageURL == "" {
+		writeError(w, http.StatusBadRequest, "Generate line art before approving it")
+		return
+	}
+	if !s.requireCurrentArt(w, r, pg, pg.LineArtImageJobID, "line art") {
 		return
 	}
 
-	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
+	now := timestampAfterActivity(pg.UpdatedAt)
+	if !s.commitApproval(w, r, &domain.StageApproval{
 		ProjectID:                proj.ID,
 		EntityType:               "line_art_page",
 		EntityID:                 pg.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
 		CreditEstimateAtApproval: s.Pricing.ImagePriceUSD,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save approval")
+	}, pg.UpdatedAt) {
 		return
 	}
 
+	pg.LineArtApprovedAt = &now
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "page": pg})
 }
 
@@ -2376,25 +2439,23 @@ func (s *Server) ApprovePaintedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
-	pg.PaintedPageApprovedAt = &now
-	if err := s.Repo.UpdatePage(r.Context(), pg); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save page")
+	if !s.requireCurrentArt(w, r, pg, pg.PaintedPageImageJobID, "painted page") {
 		return
 	}
 
-	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
+	now := timestampAfterActivity(pg.UpdatedAt)
+	if !s.commitApproval(w, r, &domain.StageApproval{
 		ProjectID:                proj.ID,
 		EntityType:               "painted_page",
 		EntityID:                 pg.ID,
 		ApprovedByUserID:         userID,
 		ApprovedAt:               now,
 		CreditEstimateAtApproval: s.Pricing.ImagePriceUSD,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save approval")
+	}, pg.UpdatedAt) {
 		return
 	}
 
+	pg.PaintedPageApprovedAt = &now
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "page": pg})
 }
 

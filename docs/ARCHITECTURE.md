@@ -290,12 +290,24 @@ Go enforces this check transactionally before inserting into `generation_jobs` a
 
 - **Character reference generation:** requires a valid submitted script for `project_id`. No prior stage approval is required.
 - **Draft sketch generation (per page):** requires approved `character_reference` records for all project characters AND an approved `chapter_outline` for the page's parent chapter (`entity_id=chapter_id`).
+- **Chapter outline generation (project):** requires at least one character and every character approved and current. A project with no characters cannot skip this gate.
+- **Panel text generation (per chapter):** requires a current approved `chapter_outline` for that chapter (`entity_id=chapter_id`), so panels are never generated from an unapproved or edited outline.
 - **Direct-from-brief painted finish (per page):** requires approved character references and chapter outline; draft approval is not required. Draft-conditioned painting and explicit ink require an approved `draft_page` for that page (`entity_id=page_id`).
 
 Regeneration rules:
 - Regeneration of character reference images, draft sketches, or line art is explicitly permitted: a prior completed (`status=done`) or failed (`status=failed`) job for the same entity does not block creating a new generation job with a new idempotency key.
 - Concurrency guard: Go rejects creating a duplicate job only if an active job (`status=pending` or `status=running`) already exists for that entity and stage.
 - Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
+
+Approvals describe real artifacts and commit atomically:
+- Approving a character, draft or line art requires that the artifact exists (a reference image, a draft image, a line-art image; extras are approved as profiles without an image). An empty approval is refused with HTTP 400.
+- An approval stamps its entity and appends its `stage_approvals` row in one transaction, conditioned on the entity's `updated_at` as validated. If the entity was edited in between, the approval fails with HTTP 409 instead of blessing a changed version.
+- A draft, line art or painted page can only be approved if the job that made it started after the last edit of the page's panels; otherwise the approval is refused with HTTP 409 and the art must be regenerated. Panel edits and panel moves touch `panels.updated_at`, which the page-level gates read. Overlay-lettered pages are exempt from the currency check, because their text is composited after the art.
+- A panel edit and the staling of every page holding the panel commit together.
+
+Page allocation and regeneration are atomic:
+- `PATCH /api/v1/pages/{id}` takes `panel_ids`, the complete ordered list for that page. Listing a panel that sits on another page of the chapter moves it. The request is rejected with HTTP 400, and nothing is written, if an ID is unknown, belongs to another chapter or repeats, if the page would exceed the configured maximum, if the page would lose a panel without it appearing on another page, or if a source page would be left empty. A change stales draft, line art and painted approvals of every page it touches.
+- Regenerating the chapter outline replaces all chapters of the project in one transaction, and regenerating panels replaces the chapter's panels and pages in one transaction. A failure partway leaves the previous revision intact, and duplicate chapter or panel numbers cannot be stored. Replacement is refused with HTTP 409, before any provider call, when any affected page already holds generated art, because it would delete paid work.
 
 The approval gate invariant (no image generation before prerequisite approval) is enforced strictly and transactionally by Go before queue dispatch. In accordance with Section 2 communication rules, the Python service talks to AI adapter ports only and does not perform reverse callbacks into Go.
 
