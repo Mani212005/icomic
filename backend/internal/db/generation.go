@@ -16,6 +16,8 @@ type GenerationOptions struct {
 	EntityID             string
 	KillSwitchActive     bool
 	AllowDirectFromBrief bool
+	// Envelope is committed with the job and debit so a crash cannot strand a charged job.
+	Envelope *GenerationEnvelope
 }
 
 const jobColumns = `id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, actual_cost, hashed_user_id, error_message, created_at, completed_at, COALESCE(entity_id::text, '')`
@@ -148,6 +150,11 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 	}
 	if amount > 0 || imageJob(job.JobType) {
 		if _, err := insertCredit(ctx, tx, job.UserID, job.ProjectID, job.ID, "debit", amount, balance-amount); err != nil {
+			return nil, false, err
+		}
+	}
+	if opts.Envelope != nil {
+		if err := insertDispatch(ctx, tx, job.ID, opts.Envelope); err != nil {
 			return nil, false, err
 		}
 	}

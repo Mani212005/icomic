@@ -35,6 +35,7 @@ func uncertainProviderOutcome(err error) bool {
 // Persist a terminal generation outcome and refund only known failed attempts.
 // Unknown provider outcomes keep the debit because the upstream may have billed.
 func (s *Server) failGeneration(ctx context.Context, job *domain.GenerationJob, cause error, amount float64) error {
+	defer s.finishDispatch(ctx, job.ID)
 	message := safeGenerationMessage(cause)
 	if uncertainProviderOutcome(cause) {
 		return s.JobService.UpdateJobStatus(ctx, job.ID, "uncertain", nil, &message)
@@ -64,13 +65,7 @@ func safeGenerationMessage(err error) string {
 }
 
 func (s *Server) refundFailedGeneration(ctx context.Context, job *domain.GenerationJob) error {
-	amount := 0.0
-	switch job.JobType {
-	case "character_reference", "draft_sketch", "final_line_art":
-		amount = s.Pricing.ImagePriceUSD
-	case "colour_suggestion":
-		amount = s.Pricing.ColourEstimateUSD
-	}
+	amount := s.generationDebit(job)
 	if amount == 0 {
 		return nil
 	}
@@ -104,16 +99,7 @@ func dispatchGeneration[T any](s *Server, ctx context.Context, job *domain.Gener
 	if result.err != nil {
 		// The in-memory dispatcher may still be returning from its task. Save
 		// usage before HTTP failure handling marks the job terminal.
-		message := safeGenerationMessage(result.err)
-		status := "failed"
-		if uncertainProviderOutcome(result.err) {
-			status = "uncertain"
-		}
-		var actualCost *float64
-		if status != "uncertain" {
-			actualCost = &result.cost
-		}
-		statusErr := s.JobService.UpdateJobStatus(ctx, job.ID, status, actualCost, &message)
+		statusErr := s.recordGenerationFailure(ctx, job, result.err, result.cost)
 		return result.result, errors.Join(result.err, statusErr)
 	}
 	return result.result, result.err

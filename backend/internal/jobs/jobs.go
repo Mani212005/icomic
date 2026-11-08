@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"icomic/backend/internal/credits"
+	"icomic/backend/internal/db"
 	"icomic/backend/internal/domain"
 )
 
@@ -44,6 +45,8 @@ type CreateJobRequest struct {
 	IdempotencyKey       string
 	EstimatedCost        float64
 	HashedUserID         string
+	// Envelope, when set, is committed with the job and debit by persistent stores.
+	Envelope *db.GenerationEnvelope
 }
 
 // JobService defines generation job lifecycle management (SPEC 8.3, 8.5, ARCHITECTURE 5).

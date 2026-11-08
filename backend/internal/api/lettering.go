@@ -397,18 +397,25 @@ func (s *Server) saveLetteringPatch(w http.ResponseWriter, r *http.Request, pg *
 }
 
 func (s *Server) saveLettering(w http.ResponseWriter, r *http.Request, pg *domain.Page, previous json.RawMessage) bool {
-	if bytes.Equal(previous, pg.Lettering) {
-		return true
-	}
-	if err := s.Repo.SavePageLettering(r.Context(), pg.ID, previous, pg.Lettering); err != nil {
-		if errors.Is(err, db.ErrConflict) {
-			writeError(w, 409, "Lettering changed; reload and retry")
-		} else {
-			writeError(w, 500, "Failed to save lettering")
-		}
+	if err := s.persistLettering(r.Context(), pg, previous); err != nil {
+		writeSaveError(w, err)
 		return false
 	}
 	return true
+}
+
+// persistLettering compare-and-saves the page's lettering against the value the edit started from.
+func (s *Server) persistLettering(ctx context.Context, pg *domain.Page, previous json.RawMessage) error {
+	if bytes.Equal(previous, pg.Lettering) {
+		return nil
+	}
+	if err := s.Repo.SavePageLettering(ctx, pg.ID, previous, pg.Lettering); err != nil {
+		if errors.Is(err, db.ErrConflict) {
+			return newSaveError(409, "Lettering changed; reload and retry", err)
+		}
+		return newSaveError(500, "Failed to save lettering", err)
+	}
+	return nil
 }
 func (s *Server) ensureLettering(w http.ResponseWriter, r *http.Request, pg *domain.Page) bool {
 	previous := append(json.RawMessage(nil), pg.Lettering...)
