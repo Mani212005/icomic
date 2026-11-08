@@ -58,6 +58,9 @@ type Repository interface {
 	GetChapter(ctx context.Context, id string) (*domain.Chapter, error)
 	ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error)
 	UpdateChapter(ctx context.Context, c *domain.Chapter) error
+	// ReplaceChapterOutline swaps a project's chapters for a regenerated outline atomically; ErrArtExists
+	// when generated page art would be deleted.
+	ReplaceChapterOutline(ctx context.Context, projectID string, chapters []*domain.Chapter) error
 
 	// Characters
 	CreateCharacter(ctx context.Context, ch *domain.Character) error
@@ -70,12 +73,20 @@ type Repository interface {
 	GetPanel(ctx context.Context, id string) (*domain.Panel, error)
 	ListPanels(ctx context.Context, chapterID string) ([]*domain.Panel, error)
 	UpdatePanel(ctx context.Context, p *domain.Panel) error
+	// SavePanelEdit persists a panel edit and stales every page holding it in one commit.
+	SavePanelEdit(ctx context.Context, p *domain.Panel, now time.Time) error
 
 	// Pages
 	CreatePage(ctx context.Context, pg *domain.Page) error
 	GetPage(ctx context.Context, id string) (*domain.Page, error)
 	ListPages(ctx context.Context, chapterID string) ([]*domain.Page, error)
 	UpdatePage(ctx context.Context, pg *domain.Page) error
+	// ReassignPanels validates and applies a panel move or reorder atomically (domain.PlanPanelReassignment)
+	// and returns the changed page IDs. Errors wrap domain.ErrInvalidPanelAllocation.
+	ReassignPanels(ctx context.Context, pageID string, panelIDs []string, maxPerPage int, now time.Time) ([]string, error)
+	// ReplaceChapterPanels swaps a chapter's panels and pages for a regenerated set atomically; ErrArtExists
+	// when generated page art would be deleted.
+	ReplaceChapterPanels(ctx context.Context, chapterID string, panels []*domain.Panel, pages []*domain.Page) error
 	SavePageLettering(ctx context.Context, id string, previous, next json.RawMessage) error
 	SaveLetteringText(ctx context.Context, pageID string, before, next *domain.Panel, previous, lettering json.RawMessage) error
 	SavePageColourImage(ctx context.Context, pageID, imageURL string, uploadedAt time.Time) error
@@ -89,6 +100,9 @@ type Repository interface {
 	// Stage Approvals
 	CreateApproval(ctx context.Context, a *domain.StageApproval) error
 	RecordApproval(ctx context.Context, a *domain.StageApproval) error
+	// ApproveStage stamps the approval on its entity and appends the stage approval in one commit.
+	// expectedUpdatedAt is the entity's updated_at as validated; ErrConflict means it was edited since.
+	ApproveStage(ctx context.Context, a *domain.StageApproval, expectedUpdatedAt time.Time) error
 	GetLatestApproval(ctx context.Context, entityType string, entityID string) (*domain.StageApproval, error)
 	ListApprovals(ctx context.Context, projectID string) ([]*domain.StageApproval, error)
 

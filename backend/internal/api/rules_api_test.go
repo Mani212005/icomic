@@ -324,11 +324,24 @@ func TestCascadePanelEditStalesDraftApproval(t *testing.T) {
 		t.Fatalf("expected 400 generating line art after panel edit stales draft, got: %d", recLineStale.Code)
 	}
 
-	// 4. Re-approve draft -> line art generation succeeds again
+	// 4. The old draft was drawn from the unedited panel, so approving it again is refused
 	recAppDraft2 := httptest.NewRecorder()
 	handler.ServeHTTP(recAppDraft2, reqAppDraft)
-	if recAppDraft2.Code != http.StatusOK {
-		t.Fatalf("re-approve draft failed: %d", recAppDraft2.Code)
+	if recAppDraft2.Code != http.StatusConflict {
+		t.Fatalf("re-approving a draft that predates the panel edit should be refused, got: %d", recAppDraft2.Code)
+	}
+
+	// 5. Regenerate the draft from the edited panel, approve it -> line art generation succeeds again
+	reqRedraft := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/draft", nil)
+	recRedraft := httptest.NewRecorder()
+	handler.ServeHTTP(recRedraft, reqRedraft)
+	if recRedraft.Code != http.StatusAccepted {
+		t.Fatalf("draft regeneration failed: %d", recRedraft.Code)
+	}
+	recAppDraft3 := httptest.NewRecorder()
+	handler.ServeHTTP(recAppDraft3, reqAppDraft)
+	if recAppDraft3.Code != http.StatusOK {
+		t.Fatalf("approving the regenerated draft failed: %d", recAppDraft3.Code)
 	}
 
 	recLineFresh := httptest.NewRecorder()

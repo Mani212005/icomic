@@ -227,6 +227,7 @@ Before draft generation, the user can review page allocations and move panels be
 The system provides endpoints to inspect and adjust page allocations:
 - The user can retrieve chapter pages and their assigned panels (`GET /api/v1/chapters/:id/pages`).
 - The user can move panels between pages or reorder panels before initiating draft generation (`PATCH /api/v1/pages/:id`).
+  The request carries the page's complete ordered `panel_ids`; naming a panel that sits on another page moves it. Every panel of a chapter stays on exactly one page, unknown, foreign or repeated IDs, over-full pages and emptied pages are rejected, and the move is applied atomically. Changing a page's allocation stales its draft, line art and painted approvals.
 
 ### 3.6 Draft Sketch Stage
 

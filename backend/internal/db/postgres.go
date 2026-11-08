@@ -428,18 +428,21 @@ func (p *PostgresRepository) CreatePanel(ctx context.Context, pan *domain.Panel)
 		pan.ID = uuid.NewString()
 	}
 	query := `
-		INSERT INTO panels (id, chapter_id, panel_number, scene_description, character_actions, camera_angle, background, dialogue, narration, image_prompt, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO panels (id, chapter_id, panel_number, scene_description, character_actions, camera_angle, background, dialogue, narration, image_prompt, status, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
-	_, err := p.db.ExecContext(ctx, query, pan.ID, pan.ChapterID, pan.PanelNumber, pan.SceneDescription, pan.CharacterActions, pan.CameraAngle, pan.Background, pan.Dialogue, pan.Narration, pan.ImagePrompt, pan.Status)
+	if pan.UpdatedAt.IsZero() {
+		pan.UpdatedAt = time.Now().UTC()
+	}
+	_, err := p.db.ExecContext(ctx, query, pan.ID, pan.ChapterID, pan.PanelNumber, pan.SceneDescription, pan.CharacterActions, pan.CameraAngle, pan.Background, pan.Dialogue, pan.Narration, pan.ImagePrompt, pan.Status, pan.UpdatedAt)
 	return err
 }
 
 func (p *PostgresRepository) GetPanel(ctx context.Context, id string) (*domain.Panel, error) {
-	query := `SELECT id, chapter_id, panel_number, scene_description, character_actions, camera_angle, background, dialogue, narration, image_prompt, status FROM panels WHERE id = $1`
+	query := `SELECT id, chapter_id, panel_number, scene_description, character_actions, camera_angle, background, dialogue, narration, image_prompt, status, updated_at FROM panels WHERE id = $1`
 	var pan domain.Panel
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&pan.ID, &pan.ChapterID, &pan.PanelNumber, &pan.SceneDescription, &pan.CharacterActions, &pan.CameraAngle, &pan.Background, &pan.Dialogue, &pan.Narration, &pan.ImagePrompt, &pan.Status,
+		&pan.ID, &pan.ChapterID, &pan.PanelNumber, &pan.SceneDescription, &pan.CharacterActions, &pan.CameraAngle, &pan.Background, &pan.Dialogue, &pan.Narration, &pan.ImagePrompt, &pan.Status, &pan.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -448,7 +451,7 @@ func (p *PostgresRepository) GetPanel(ctx context.Context, id string) (*domain.P
 }
 
 func (p *PostgresRepository) ListPanels(ctx context.Context, chapterID string) ([]*domain.Panel, error) {
-	query := `SELECT id, chapter_id, panel_number, scene_description, character_actions, camera_angle, background, dialogue, narration, image_prompt, status FROM panels WHERE chapter_id = $1 ORDER BY panel_number ASC`
+	query := `SELECT id, chapter_id, panel_number, scene_description, character_actions, camera_angle, background, dialogue, narration, image_prompt, status, updated_at FROM panels WHERE chapter_id = $1 ORDER BY panel_number ASC`
 	rows, err := p.db.QueryContext(ctx, query, chapterID)
 	if err != nil {
 		return nil, err
@@ -458,7 +461,7 @@ func (p *PostgresRepository) ListPanels(ctx context.Context, chapterID string) (
 	var res []*domain.Panel
 	for rows.Next() {
 		var pan domain.Panel
-		if err := rows.Scan(&pan.ID, &pan.ChapterID, &pan.PanelNumber, &pan.SceneDescription, &pan.CharacterActions, &pan.CameraAngle, &pan.Background, &pan.Dialogue, &pan.Narration, &pan.ImagePrompt, &pan.Status); err != nil {
+		if err := rows.Scan(&pan.ID, &pan.ChapterID, &pan.PanelNumber, &pan.SceneDescription, &pan.CharacterActions, &pan.CameraAngle, &pan.Background, &pan.Dialogue, &pan.Narration, &pan.ImagePrompt, &pan.Status, &pan.UpdatedAt); err != nil {
 			return nil, err
 		}
 		res = append(res, &pan)
@@ -468,10 +471,11 @@ func (p *PostgresRepository) ListPanels(ctx context.Context, chapterID string) (
 
 func (p *PostgresRepository) UpdatePanel(ctx context.Context, pan *domain.Panel) error {
 	query := `
-		UPDATE panels SET panel_number = $2, scene_description = $3, character_actions = $4, camera_angle = $5, background = $6, dialogue = $7, narration = $8, image_prompt = $9, status = $10
+		UPDATE panels SET panel_number = $2, scene_description = $3, character_actions = $4, camera_angle = $5, background = $6, dialogue = $7, narration = $8, image_prompt = $9, status = $10, updated_at = $11
 		WHERE id = $1
 	`
-	res, err := p.db.ExecContext(ctx, query, pan.ID, pan.PanelNumber, pan.SceneDescription, pan.CharacterActions, pan.CameraAngle, pan.Background, pan.Dialogue, pan.Narration, pan.ImagePrompt, pan.Status)
+	pan.UpdatedAt = time.Now().UTC()
+	res, err := p.db.ExecContext(ctx, query, pan.ID, pan.PanelNumber, pan.SceneDescription, pan.CharacterActions, pan.CameraAngle, pan.Background, pan.Dialogue, pan.Narration, pan.ImagePrompt, pan.Status, pan.UpdatedAt)
 	if err != nil {
 		return err
 	}
