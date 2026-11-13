@@ -50,12 +50,11 @@ func TestPageStagesCarryOrderedPanelSemanticsAndNamedIdentities(t *testing.T) {
 				panels, identities = req.Panels, req.CharacterIdentities
 				return &gen.GenerateLineArtResponse{JobID: req.JobID, ImageURL: "https://storage.example/new-line.png"}, nil
 			}
-			rec := httptest.NewRecorder()
 			path := "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/" + stage
 			if stage == "line-art" {
 				path += "?variant=ink"
 			}
-			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+			rec := serveGeneration(s, handler, httptest.NewRequest(http.MethodPost, path, nil))
 			if rec.Code != http.StatusAccepted {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 			}
@@ -90,8 +89,7 @@ func TestDefaultReferencePromptIncludesStoredVisualAttributes(t *testing.T) {
 				return &gen.GenerateCharacterReferenceResponse{JobID: req.JobID, ImageURL: "https://storage.example/reference.png"}, nil
 			}
 			body, _ := json.Marshal(map[string]string{"prompt": custom})
-			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/reference-image", strings.NewReader(string(body))))
+			rec := serveGeneration(s, handler, httptest.NewRequest(http.MethodPost, "/api/v1/characters/1bda3da7-79e9-55f5-b45e-67393fc73c26/reference-image", strings.NewReader(string(body))))
 			if rec.Code != http.StatusAccepted {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 			}

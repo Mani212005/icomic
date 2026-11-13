@@ -104,7 +104,34 @@ func (s *PersistentJobService) DispatchAsync(ctx context.Context, id string, dis
 	return nil
 }
 
-var _ JobService = (*PersistentJobService)(nil)
+// The outbox lives in the same PostgreSQL store as the jobs. Delegating it lets the API server
+// find its dispatch store through the job service, as it does for the in-memory fakes. A store
+// without an outbox has nothing to dispatch.
+func (s *PersistentJobService) ClaimDispatches(ctx context.Context, limit int, ignoreLeases bool) ([]db.PendingDispatch, error) {
+	if outbox, ok := s.store.(db.DispatchStore); ok {
+		return outbox.ClaimDispatches(ctx, limit, ignoreLeases)
+	}
+	return nil, nil
+}
+
+func (s *PersistentJobService) FinishDispatch(ctx context.Context, jobID string) error {
+	if outbox, ok := s.store.(db.DispatchStore); ok {
+		return outbox.FinishDispatch(ctx, jobID)
+	}
+	return nil
+}
+
+func (s *PersistentJobService) ReleaseDispatch(ctx context.Context, jobID string) error {
+	if outbox, ok := s.store.(db.DispatchStore); ok {
+		return outbox.ReleaseDispatch(ctx, jobID)
+	}
+	return nil
+}
+
+var (
+	_ JobService       = (*PersistentJobService)(nil)
+	_ db.DispatchStore = (*PersistentJobService)(nil)
+)
 
 // Preserve the existing HTTP job labels while storing the schema's canonical enums.
 func publicJob(job *domain.GenerationJob) *domain.GenerationJob {

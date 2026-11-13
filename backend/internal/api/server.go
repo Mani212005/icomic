@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"icomic/backend/gen"
@@ -36,6 +37,9 @@ type Server struct {
 	Pricing                 credits.PricingConfig
 	mediaSigner             *mediaSigner
 	admission               requestAdmission
+	poolOnce                sync.Once
+	dispatchSlots           *dispatchPool
+	dispatchWG              sync.WaitGroup
 }
 
 func NewServer(
@@ -71,7 +75,7 @@ func NewServer(
 	accountService := accounts.NewService(repo, nil)
 	// Cookie sessions are tried first, then the configured authenticator (dev identity or custom).
 	authenticator = auth.NewCompositeAuthenticator(auth.NewSessionAuthenticator(accountService), authenticator)
-	return &Server{
+	server := &Server{
 		Repo:                    repo,
 		LetteringOverlayEnabled: os.Getenv("LETTERING_OVERLAY_ENABLED") == "true",
 		CreditService:           creditService,
@@ -90,6 +94,11 @@ func NewServer(
 		Limits:                  DefaultRequestLimits(),
 		Pricing:                 credits.DefaultPricing(),
 	}
+	// The in-memory job service keeps its own outbox; PostgreSQL deployments set Dispatches.
+	if store, ok := jobService.(db.DispatchStore); ok {
+		server.Dispatches = store
+	}
+	return server
 }
 
 // IsKillSwitchActive returns true if either the runtime kill switch provider or legacy boolean flag is enabled (SPEC 5.5).

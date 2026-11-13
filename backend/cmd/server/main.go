@@ -33,7 +33,6 @@ func main() {
 	var repo db.Repository
 	var creditSvc credits.CreditService
 	var jobSvc jobs.JobService
-	var dispatches db.DispatchStore
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL != "" {
 		log.Println("Connecting to PostgreSQL...")
@@ -46,7 +45,6 @@ func main() {
 		repo = pgRepo
 		creditSvc = credits.NewPersistentCreditService(pgRepo)
 		jobSvc = jobs.NewPersistentJobService(pgRepo)
-		dispatches = pgRepo
 	} else {
 		log.Println("Using in-memory repository fake...")
 		repo = db.NewInMemoryRepository()
@@ -89,7 +87,6 @@ func main() {
 		maxPanelsPerPage,
 	)
 	server.Pricing = pricing
-	server.Dispatches = dispatches
 	if imageLimits != nil {
 		server.DefaultUserQuota = float64(imageLimits.Daily)
 		server.MonthlyUserQuota = float64(imageLimits.Monthly)

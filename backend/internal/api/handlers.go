@@ -552,7 +552,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if existed {
-		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": ch.ReferenceImageURL})
+		s.writeReceipt(w, job, "character", nil)
 		return
 	}
 
@@ -568,36 +568,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	r = r.WithContext(context.WithoutCancel(r.Context()))
-	aiReq.JobID = job.ID
-	refResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateCharacterReferenceResponse, error) {
-		return s.AIClient.GenerateCharacterReference(ctx, aiReq)
-	})
-	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
-			return
-		}
-		writeGenerationError(w, err)
-		return
-	}
-
-	_, imgURL, err := s.finalizeCharacterReference(r.Context(), job, aiReq, refResp)
-	if err != nil {
-		s.releaseDispatch(r.Context(), job.ID)
-		writeSaveError(w, err)
-		return
-	}
-	job, err = s.JobService.GetJob(r.Context(), job.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{
-		"job":       job,
-		"image_url": imgURL,
-	})
+	s.writeReceipt(w, job, "character", nil)
 }
 
 // ApproveCharacter handles POST /api/v1/characters/{id}/approve
@@ -1714,7 +1685,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		Style:               draftStyle,
 		CharacterIdentities: characterRenderIdentities(chars),
 	}
-	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
 		DebitAmount:      s.Pricing.ImagePriceUSD,
 		KillSwitchActive: s.IsKillSwitchActive(),
@@ -1732,38 +1703,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		writeGenerationError(w, err)
 		return
 	}
-	if existed {
-		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": pg.DraftImageURL})
-		return
-	}
-
-	r = r.WithContext(context.WithoutCancel(r.Context()))
-	aiReq.JobID = job.ID
-	draftResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateDraftSketchResponse, error) {
-		return s.AIClient.GenerateDraftSketch(ctx, aiReq)
-	})
-	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
-			return
-		}
-		writeGenerationError(w, err)
-		return
-	}
-
-	imgURL, err := s.finalizeDraftSketch(r.Context(), job, aiReq, draftResp)
-	if err != nil {
-		s.releaseDispatch(r.Context(), job.ID)
-		writeSaveError(w, err)
-		return
-	}
-	job, err = s.JobService.GetJob(r.Context(), job.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": imgURL})
+	s.writeReceipt(w, job, "page", nil)
 }
 
 // ApproveDraft handles POST /api/v1/pages/{id}/draft/approve
@@ -1940,7 +1880,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		Style:               lineArtStyle,
 		CharacterIdentities: characterRenderIdentities(chars),
 	}
-	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
 		DebitAmount:      s.Pricing.ImagePriceUSD,
 		KillSwitchActive: s.IsKillSwitchActive(),
@@ -1958,38 +1898,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		writeGenerationError(w, err)
 		return
 	}
-	if existed {
-		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": pg.LineArtImageURL})
-		return
-	}
-
-	r = r.WithContext(context.WithoutCancel(r.Context()))
-	aiReq.JobID = job.ID
-	lineArtResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GenerateLineArtResponse, error) {
-		return s.AIClient.GenerateLineArt(ctx, aiReq)
-	})
-	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
-			return
-		}
-		writeGenerationError(w, err)
-		return
-	}
-
-	imgURL, err := s.finalizeLineArt(r.Context(), job, aiReq, lineArtResp)
-	if err != nil {
-		s.releaseDispatch(r.Context(), job.ID)
-		writeSaveError(w, err)
-		return
-	}
-	job, err = s.JobService.GetJob(r.Context(), job.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": imgURL})
+	s.writeReceipt(w, job, "page", nil)
 }
 
 // ApproveLineArt handles POST /api/v1/pages/{id}/line-art/approve
@@ -2244,42 +2153,10 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existed {
-		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job": job, "image_url": pg.PaintedPageImageURL, "variant": pg.PaintedPageVariant})
+		s.writeReceipt(w, job, "page", map[string]interface{}{"variant": pg.PaintedPageVariant})
 		return
 	}
-
-	r = r.WithContext(context.WithoutCancel(r.Context()))
-	aiReq.JobID = job.ID
-	paintedResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GeneratePaintedPageResponse, error) {
-		return s.AIClient.GeneratePaintedPage(ctx, aiReq)
-	})
-	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ImagePriceUSD); failErr != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
-			return
-		}
-		writeGenerationError(w, err)
-		return
-	}
-
-	pg, imgURL, err := s.finalizePaintedPage(r.Context(), job, aiReq, paintedResp)
-	if err != nil {
-		s.releaseDispatch(r.Context(), job.ID)
-		writeSaveError(w, err)
-		return
-	}
-	job, err = s.JobService.GetJob(r.Context(), job.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"job":       job,
-		"image_url": imgURL,
-		"variant":   chosenVariant,
-		"page":      pg,
-	})
+	s.writeReceipt(w, job, "page", map[string]interface{}{"variant": chosenVariant})
 }
 
 // ApprovePaintedPage handles POST /api/v1/pages/{id}/painted-page/approve
@@ -2430,7 +2307,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		PanelContext:    fmt.Sprintf("Page %d of chapter %d", pg.PageNumber, c.ChapterNumber),
 		Style:           &proj.ArtStyle,
 	}
-	job, existed, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
+	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
 		EntityID:         pg.ID,
 		DebitAmount:      s.Pricing.ColourEstimateUSD,
 		KillSwitchActive: s.IsKillSwitchActive(),
@@ -2448,40 +2325,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		writeGenerationError(w, err)
 		return
 	}
-	if existed {
-		palette := map[string]interface{}{}
-		if saved, err := s.Repo.GetColourPalette(r.Context(), pageID); err == nil {
-			palette = saved.Palette
-		}
-		writeJSON(w, http.StatusAccepted, map[string]interface{}{"job_id": job.ID, "palette": palette})
-		return
-	}
-
-	r = r.WithContext(context.WithoutCancel(r.Context()))
-	aiReq.JobID = job.ID
-	palResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.SuggestColourPaletteResponse, error) {
-		return s.AIClient.SuggestColourPalette(ctx, aiReq)
-	})
-	if err != nil {
-		if failErr := s.failGeneration(r.Context(), job, err, s.Pricing.ColourEstimateUSD); failErr != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to persist generation failure or refund: %v", failErr))
-			return
-		}
-		writeGenerationError(w, err)
-		return
-	}
-
-	palette, err := s.finalizeColourPalette(r.Context(), job, aiReq, palResp)
-	if err != nil {
-		s.releaseDispatch(r.Context(), job.ID)
-		writeSaveError(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{
-		"job_id":  job.ID,
-		"palette": palette,
-	})
+	s.writeReceipt(w, job, "page", nil)
 }
 
 // UpdateColourPalette handles PATCH /api/v1/pages/{id}/colour-palette

@@ -7,9 +7,10 @@ import (
 	"time"
 )
 
-// DispatchLease is how long a request that just committed a job owns its dispatch. The
-// creating request normally delivers at once; the dispatcher takes over only when the lease
-// lapses (a crash) or the request releases it. It exceeds the AI queue's own delivery lease.
+// DispatchLease is how long a claim owns an envelope. A committed envelope is claimable at
+// once: the request that created it only returns a receipt, and the one bounded dispatcher
+// delivers it. A claim that never finishes (a crash) becomes claimable again when its lease
+// lapses. The lease exceeds the AI queue's own delivery lease.
 const DispatchLease = 20 * time.Minute
 
 // DispatchRetryDelay spaces a released dispatch's next attempt.
@@ -41,7 +42,8 @@ type DispatchStore interface {
 	ReleaseDispatch(ctx context.Context, jobID string) error
 }
 
-func stampJobID(request json.RawMessage, jobID string) (json.RawMessage, error) {
+// StampJobID writes the job ID into a request envelope, which is also the AI queue key.
+func StampJobID(request json.RawMessage, jobID string) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(request, &fields); err != nil {
 		return nil, fmt.Errorf("generation envelope request must be a JSON object: %w", err)
@@ -55,13 +57,13 @@ func stampJobID(request json.RawMessage, jobID string) (json.RawMessage, error) 
 }
 
 func insertDispatch(ctx context.Context, tx Transaction, jobID string, envelope *GenerationEnvelope) error {
-	request, err := stampJobID(envelope.Request, jobID)
+	request, err := StampJobID(envelope.Request, jobID)
 	if err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO generation_dispatches (job_id,operation,request,lease_until)
-        VALUES ($1::uuid,$2::varchar,$3::jsonb,NOW()+$4::bigint*INTERVAL '1 microsecond')`,
-		jobID, envelope.Operation, string(request), DispatchLease.Microseconds())
+        VALUES ($1::uuid,$2::varchar,$3::jsonb,NOW())`,
+		jobID, envelope.Operation, string(request))
 	return err
 }
 
