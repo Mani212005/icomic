@@ -124,6 +124,23 @@ class TestContracts(unittest.TestCase):
             self.assertEqual(responses["202"], {"$ref": "#/components/responses/Receipt"})
         self.assertIn("get", public["paths"]["/api/v1/generation-jobs/{id}"])
 
+    def test_cancel_route_is_documented_and_its_answer_is_honest(self):
+        """The router serves POST /generation-jobs/{id}/cancel; the contract says the three outcomes."""
+        public = yaml.safe_load((CONTRACTS_DIR / "openapi/generation-api.yaml").read_text())
+        router = (CONTRACTS_DIR.parent / "backend/internal/api/router.go").read_text()
+        self.assertIn('handle("POST /api/v1/generation-jobs/{id}/cancel", s.CancelJob)', router)
+        cancel = public["paths"]["/api/v1/generation-jobs/{id}/cancel"]["post"]
+        self.assertEqual(
+            cancel["responses"]["200"]["content"]["application/json"]["schema"],
+            {"$ref": "./ai-service.yaml#/components/schemas/CancelJobResponse"},
+        )
+        for status in ("403", "404"):
+            self.assertIn(status, cancel["responses"])
+        spec = yaml.safe_load((CONTRACTS_DIR / "openapi/ai-service.yaml").read_text())
+        schema = spec["components"]["schemas"]["CancelJobResponse"]
+        self.assertEqual(schema["properties"]["outcome"]["enum"], ["cancelled", "settling", "finished"])
+        self.assertEqual(set(schema["required"]), {"outcome", "job", "refunded", "message"})
+
     def test_generation_receipt_schema_accepts_a_receipt_and_rejects_a_result(self):
         spec = yaml.safe_load((CONTRACTS_DIR / "openapi/ai-service.yaml").read_text())
         validator = jsonschema.Draft202012Validator(

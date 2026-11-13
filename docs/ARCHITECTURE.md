@@ -99,7 +99,7 @@ icomic/
 | **Go API** | Go + net/http | Auth, session, project/chapter/character/page/panel CRUD, credit ledger, quota enforcement, kill switch, job creation, hashed user ID, approval gates, presigned download URLs |
 | **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, finished painted pages (or explicit ink), colour suggestion, PDF assembly |
 | **PostgreSQL** | Postgres | Durable project state, credit ledger, job records, stage approvals, colour palettes |
-| **Redis** | Redis | Job queue; pending, running, retried, and cancelled job envelopes |
+| **Redis** | Redis | Job queue; pending, running, retried, and cancelled job envelopes (a job cancelled before it reached the queue is cancelled in PostgreSQL and its outbox envelope; see 5.2.1) |
 | **Object storage** | S3-compatible | Approved working copies (draft, painted page or ink page, reference), exported PDFs (generated images are Meta-hosted) |
 
 **Communication rules:**
@@ -294,6 +294,24 @@ A consumer that stops during a provider call leaves an uncertain outcome. When i
 
 Character references, draft pages, finished pages and PDF exports use a fresh UUID directory for every service execution. A later generation, including one that writes bytes before failing, cannot overwrite an earlier artifact. Page cleanup stores its raw source beside the working image in that same directory. The queue's saved response binds the attempt to the exact asset URL; Go stores the current image URL and job ID on the character/page, and each export record retains its own PDF URL. Internal queue replays return the saved URL. Public request replay semantics are a separate concern: some Go handlers still return the entity's current URL. Existing legacy artifact URLs remain readable, and no storage migration is required. Fake object storage remains volatile across restarts; these keys do not provide durable storage or define retention.
 
+### 5.2.1 Cancellation (W23)
+
+`POST /api/v1/generation-jobs/{id}/cancel` (owner only: `403` for another user, `404` for an unknown job; contract in `contracts/openapi/generation-api.yaml`, answer `CancelJobResponse`) is pending-only. It never claims to stop a provider call. The answer carries `outcome`, the `job`, the `refunded` amount and a plain `message`:
+
+| Outcome | When | What happened |
+| --- | --- | --- |
+| `cancelled` | The job is `pending` and its dispatch envelope has never been claimed (no attempt), or it has no envelope. | One PostgreSQL transaction sets the job to terminal `cancelled`, marks the envelope `cancelled` (migration `000014`, so the dispatcher never claims or sends it), inserts the refund ledger row for the whole debit and releases the book, daily and monthly image slot. No provider call and no cost. |
+| `settling` | The job was already claimed by the dispatcher (an attempt was counted) or is `running`. | Nothing changes. The job runs to its own terminal state with its result and cost kept, and the user is charged. |
+| `finished` | The job is already `done`, `failed` or `uncertain`. | Nothing changes; the job is returned as it is. |
+
+Repeating a cancel returns the same answer and never refunds twice (`cancelled` returns the stored refund amount). A cancelled job's refund is looked up by job, so repeats are idempotent at the ledger as well.
+
+Cancel and claim of one envelope have exactly one winner. `CancelGeneration` takes the policy, user and job locks in the same order as creation and refunds, then locks the envelope row `FOR UPDATE`. The dispatcher's claim takes the same row with `FOR UPDATE SKIP LOCKED` and counts an attempt. A claim that commits first makes the cancel answer `settling` (an attempt is counted, so the request may already be with the provider); a cancel that commits first leaves a `cancelled` envelope that every later claim, including restart recovery, skips. `FinishDispatch` only retires `pending` envelopes, so it never rewrites `cancelled`.
+
+Terminal states are never silently reversed. `TransitionGeneration` (and the in-memory twin) refuses to move a job out of `done`, `failed`, `uncertain` or `cancelled` into a different status, and refuses any write to a `cancelled` job: a late completion, failure, start or reconciliation cannot overwrite a cancellation, and a cancelled job can never be finished or charged. The dispatcher also re-reads the job before sending and only sends a `pending` or `running` one.
+
+The frontend `GenerationRunner` offers **Cancel generation** once the receipt names a job. `cancelled` unlocks the controls with "Cancelled, nothing was charged."; `settling` keeps them locked, shows "Already with the model, finishing. You will be charged." and unlocks only when the job is terminal, then tells the user the result was kept and charged. Best-effort provider cancellation is out of scope.
+
 ### 5.3 Approval Gate Invariant
 
 No image generation job is created unless the prerequisite approvals for that stage are recorded in `stage_approvals`.
@@ -345,8 +363,10 @@ approved character references anchored across all subsequent page generations
 
 The Go API checks before creating any generation job:
 
-1. Is the global kill switch enabled? If yes, reject with a clear message.
+1. Is the global kill switch enabled? If yes, reject paid generation with HTTP 429, `code: generation_stopped` and a message saying finished pages, downloads and exports still work.
 2. For image jobs, has the project reached its lifetime book budget (default **40**), or the user reached their rolling 24-hour cap (**80**) or rolling 30-day cap (**800**)? If yes, reject with HTTP 429. Public image endpoints return `code: book_budget_reached` or `code: daily_image_limit_reached` for the first two limits.
+
+The global stop switch is the operator flag (`KILL_SWITCH`, the runtime provider, or `generation_policy.kill_switch_active`, which the spend threshold also sets) and halts **paid generation only**: every job type that can spend at the provider (character reference, draft, finished page, colour palette and the text jobs). It does not halt anything that spends nothing: reading jobs and projects, downloading finished pages and exports, and PDF/PNG export (`pdf_assembly` is exempt from the switch and from the spend-threshold check in `CreateGeneration`). The dispatcher also honours it: while the switch is on, `pumpDispatches` and `ClaimDispatches` claim nothing, so a job that was committed but not yet sent is held `pending` (it can still be cancelled for a full refund) and is sent once the switch is turned off. A job claimed before the switch was turned on is already on its way and finishes. The job whose own debit trips the spend threshold is held like any other unsent job.
 
 All limits live in the singleton PostgreSQL `generation_policy` row (`max_book_images`, `max_daily_images`, `max_monthly_images`); zero disables a limit. Forty images accommodates a 12-page, 51-panel book's roughly 30 images (12 drafts, 12 finished painted or ink pages, main-character references) plus revisions. Eighty permits two books in a day, with 800 retaining a monthly guard. Deployment defaults use these limits; any elevated e2e profile belongs only to an isolated e2e database.
 

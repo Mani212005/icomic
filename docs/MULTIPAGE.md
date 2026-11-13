@@ -86,7 +86,7 @@ the cumulative accounted total.
 | Runner | Forced one chapter and generated only first chapter | Generates, persists, and checks every chapter, panel and page; accepts `--script-file` |
 | Editor | Fetched only first chapter; chapter inputs capped at ten | Loads all chapter lists, labels chapter/page context, removes chapter input cap, exposes missing outline/panel generation actions |
 | PDF/export | Page numbers restarted for each chapter; count check allowed missing cover/pages | Export page numbers span all chapters; runner requires exact comic pages plus one cover; assembly loops over every supplied page |
-| Quota | Image exhaustion also rejected text, palette and export jobs | Image quota applies to image attempts; kill switch, spend protection and credits still apply to every generation |
+| Quota | Image exhaustion also rejected text, palette and export jobs | Image quota applies to image attempts; kill switch, spend protection and credits still apply to every paid generation (the kill switch never stops PDF/PNG export) |
 
 The Go fake client honors the requested panel budget, and the Python fake language
 adapter returns deterministic structured responses whose scene descriptions cover

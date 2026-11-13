@@ -24,7 +24,8 @@ paths:
         '409':
           description: A generation for this entity and stage is already active
         '429':
-          description: Kill switch, quota or request limit
+          description: >-
+            The global stop switch is on (code `generation_stopped`), or a quota or request limit was reached
   /api/v1/pages/{id}/draft:
     post:
       operationId: generateDraft
@@ -42,7 +43,8 @@ paths:
         '409':
           description: A generation for this entity and stage is already active
         '429':
-          description: Kill switch, quota or request limit
+          description: >-
+            The global stop switch is on (code `generation_stopped`), or a quota or request limit was reached
   /api/v1/pages/{id}/line-art:
     post:
       operationId: generateLineArt
@@ -66,7 +68,8 @@ paths:
         '409':
           description: A generation for this entity and stage is already active
         '429':
-          description: Kill switch, quota or request limit
+          description: >-
+            The global stop switch is on (code `generation_stopped`), or a quota or request limit was reached
   /api/v1/pages/{id}/painted-page:
     post:
       operationId: generatePaintedPage
@@ -84,7 +87,8 @@ paths:
         '409':
           description: A generation for this entity and stage is already active
         '429':
-          description: Kill switch, quota or request limit
+          description: >-
+            The global stop switch is on (code `generation_stopped`), or a quota or request limit was reached
   /api/v1/pages/{id}/colour-palette/suggest:
     post:
       operationId: suggestColourPalette
@@ -102,7 +106,8 @@ paths:
         '409':
           description: A generation for this entity and stage is already active
         '429':
-          description: Kill switch, quota or request limit
+          description: >-
+            The global stop switch is on (code `generation_stopped`), or a quota or request limit was reached
   /api/v1/generation-jobs/{id}:
     get:
       operationId: getGenerationJob
@@ -132,6 +137,29 @@ paths:
                             type: boolean
                           retry_after_seconds:
                             type: number
+        '403':
+          description: Job belongs to another user
+        '404':
+          description: Job does not exist
+  /api/v1/generation-jobs/{id}/cancel:
+    post:
+      operationId: cancelGenerationJob
+      description: >-
+        Cancel a generation job the caller owns. Cancel is pending-only. A job that has not reached the
+        provider is stopped for good (`cancelled`): the dispatcher never sends it, no provider call and no
+        cost happen, and the debit is refunded in the same transaction. A job already claimed or sent to the
+        provider is `settling`: it is not stopped, it finishes with its result and cost and the user is
+        charged, and the job reaches its own terminal status. Terminal statuses are never reversed, and
+        repeating the request returns the same answer without a second refund.
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '200':
+          description: The outcome (`cancelled`, `settling` or `finished`) with the job as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: './ai-service.yaml#/components/schemas/CancelJobResponse'
         '403':
           description: Job belongs to another user
         '404':

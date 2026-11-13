@@ -627,11 +627,19 @@ export class MockApiClient {
 		return job;
 	}
 
+	// Mirrors the server: cancel is pending-only. A job that has not started is cancelled for good;
+	// one already running is settling and keeps running; a finished one is returned as it is.
 	async cancelJob(jobId) {
 		const job = this.jobs.get(jobId);
 		if (!job) throw new Error(`Job ${jobId} not found`);
-		job.status = JOB_STATUS.CANCELLED;
-		return { status: 'cancelled', job_id: jobId };
+		if (job.status === JOB_STATUS.PENDING) {
+			job.status = JOB_STATUS.CANCELLED;
+			return { outcome: 'cancelled', job: { ...job }, refunded: 0, message: 'Cancelled before it reached the model. Nothing was charged.' };
+		}
+		if (job.status === JOB_STATUS.RUNNING) {
+			return { outcome: 'settling', job: { ...job }, refunded: 0, message: 'Already with the model. It will finish and you will be charged; the result is kept.' };
+		}
+		return { outcome: 'finished', job: { ...job }, refunded: 0, message: 'This job had already finished.' };
 	}
 
 	async getCreditUsage() {

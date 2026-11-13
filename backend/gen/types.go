@@ -103,6 +103,27 @@ func (e AuthErrorResponseCode) Valid() bool {
 	}
 }
 
+// Defines values for CancelJobResponseOutcome.
+const (
+	CancelJobResponseOutcomeCancelled CancelJobResponseOutcome = "cancelled"
+	CancelJobResponseOutcomeFinished  CancelJobResponseOutcome = "finished"
+	CancelJobResponseOutcomeSettling  CancelJobResponseOutcome = "settling"
+)
+
+// Valid indicates whether the value is a known member of the CancelJobResponseOutcome enum.
+func (e CancelJobResponseOutcome) Valid() bool {
+	switch e {
+	case CancelJobResponseOutcomeCancelled:
+		return true
+	case CancelJobResponseOutcomeFinished:
+		return true
+	case CancelJobResponseOutcomeSettling:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for FinishPreset.
 const (
 	Off        FinishPreset = "off"
@@ -279,28 +300,28 @@ func (e ImageBudgetErrorCode) Valid() bool {
 
 // Defines values for JobStatusResponseStatus.
 const (
-	Cancelled JobStatusResponseStatus = "cancelled"
-	Done      JobStatusResponseStatus = "done"
-	Failed    JobStatusResponseStatus = "failed"
-	Pending   JobStatusResponseStatus = "pending"
-	Running   JobStatusResponseStatus = "running"
-	Uncertain JobStatusResponseStatus = "uncertain"
+	JobStatusResponseStatusCancelled JobStatusResponseStatus = "cancelled"
+	JobStatusResponseStatusDone      JobStatusResponseStatus = "done"
+	JobStatusResponseStatusFailed    JobStatusResponseStatus = "failed"
+	JobStatusResponseStatusPending   JobStatusResponseStatus = "pending"
+	JobStatusResponseStatusRunning   JobStatusResponseStatus = "running"
+	JobStatusResponseStatusUncertain JobStatusResponseStatus = "uncertain"
 )
 
 // Valid indicates whether the value is a known member of the JobStatusResponseStatus enum.
 func (e JobStatusResponseStatus) Valid() bool {
 	switch e {
-	case Cancelled:
+	case JobStatusResponseStatusCancelled:
 		return true
-	case Done:
+	case JobStatusResponseStatusDone:
 		return true
-	case Failed:
+	case JobStatusResponseStatusFailed:
 		return true
-	case Pending:
+	case JobStatusResponseStatusPending:
 		return true
-	case Running:
+	case JobStatusResponseStatusRunning:
 		return true
-	case Uncertain:
+	case JobStatusResponseStatusUncertain:
 		return true
 	default:
 		return false
@@ -731,6 +752,20 @@ type AuthErrorResponse struct {
 
 // AuthErrorResponseCode defines model for AuthErrorResponse.Code.
 type AuthErrorResponseCode string
+
+// CancelJobResponse The honest answer to a cancel request. `cancelled`: the job had not reached the provider, so no provider call was or will be made, nothing was charged and the debit was refunded; the job is terminal and stays cancelled. `settling`: the job was already claimed or sent to the provider, so nothing was stopped; it keeps running to its own terminal status, its result and cost are kept and the user is charged. `finished`: the job had already reached `done`, `failed` or `uncertain` and is returned unchanged. Cancelling twice returns the same answer and never refunds twice.
+type CancelJobResponse struct {
+	// Job The public record of a generation job, as the Go API returns it from a receipt and from job polling.
+	Job     GenerationJobRecord      `json:"job"`
+	Message string                   `json:"message"`
+	Outcome CancelJobResponseOutcome `json:"outcome"`
+
+	// Refunded Amount returned to the balance by the cancellation. Zero unless the outcome is `cancelled` and the job had been debited.
+	Refunded float64 `json:"refunded"`
+}
+
+// CancelJobResponseOutcome defines model for CancelJobResponse.Outcome.
+type CancelJobResponseOutcome string
 
 // ChapterOutlineItem defines model for ChapterOutlineItem.
 type ChapterOutlineItem struct {

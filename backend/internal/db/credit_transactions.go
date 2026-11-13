@@ -57,6 +57,20 @@ func (p *PostgresRepository) RefundGeneration(ctx context.Context, jobID string,
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=$1::uuid FOR UPDATE`, userID).Scan(&locked); err != nil {
 		return nil, err
 	}
+	entry, err := refundLocked(ctx, tx, userID, projectID, jobID, amount)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return entry, nil
+}
+
+// refundLocked inserts a job's refund row and releases its image quota slot on a full refund.
+// The caller holds the policy and user locks. A refund already committed for the job is returned
+// unchanged, so repeating it never refunds twice.
+func refundLocked(ctx context.Context, tx Transaction, userID, projectID, jobID string, amount float64) (*domain.CreditLedger, error) {
 	var debit float64
 	if err := tx.QueryRowContext(ctx, `SELECT amount FROM credit_ledger WHERE generation_job_id=$1::uuid AND transaction_type='debit'`, jobID).Scan(&debit); err != nil {
 		return nil, err
@@ -89,9 +103,6 @@ func (p *PostgresRepository) RefundGeneration(ctx context.Context, jobID string,
 		if _, err := tx.ExecContext(ctx, `DELETE FROM image_quota_usage WHERE generation_job_id=$1::uuid`, jobID); err != nil {
 			return nil, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
 	}
 	return entry, nil
 }
