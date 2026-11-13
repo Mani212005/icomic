@@ -4,7 +4,7 @@
 	import { stageList, quoteStages } from './stages.js';
 	import { Icon, BetaTag, revealCards } from '#lib/design/shell.js';
 	import { ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
-	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote } from '#lib/api/types.js';
+	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote, publishSpend } from '#lib/api/types.js';
 	const INK_VARIANT = 'ink';
 
 	export let project;
@@ -198,6 +198,7 @@
 			characters = Array.isArray(chars) ? chars : (chars?.characters || []);
 			chapters = Array.isArray(chaps) ? chaps : (chaps?.chapters || []);
 			creditUsage = credits || { remaining_credits: 0 };
+			publishSpend(credits);
 
 			if (chapters.length > 0) {
 				const chapterData = await Promise.all(chapters.map(async (chapter) => {

@@ -7,5 +7,6 @@ export { default as Sidebar } from './Sidebar.svelte';
 export { default as StageNav } from './StageNav.svelte';
 export { revealCards, parallax } from './scroll.js';
 export { stageList } from '../editor/stages.js';
+export { default as SpendPill } from './SpendPill.svelte';
 export { default as Icon } from './Icon.svelte';
 export { focusDialog } from './dialog.js';
