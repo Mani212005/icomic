@@ -214,3 +214,18 @@ it('shows the warnings the analysis returned on the Characters stage it leads to
 	await fireEvent.click(await view.findByRole('button', { name: /Analyze/ }));
 	await vi.waitFor(() => expect(view.queryByRole('list', { name: 'Notes' })).toBeNull(), { timeout: 4000 });
 });
+
+// -- the script box shows, and analyzes, the stored script ----------------------------------
+
+it('shows the stored script in the Script box and analyses what was edited there', async () => {
+	const { apiClient } = backend();
+	const view = open(apiClient, STAGES.SCRIPT);
+	const box = await view.findByLabelText('Script');
+	expect(box.value).toBe(PROJECT.original_script);
+
+	await fireEvent.input(box, { target: { value: 'A hero finds a bird and a key.' } });
+	await fireEvent.click(view.getByRole('button', { name: /Analyze/ }));
+	await vi.waitFor(() => expect(apiClient.analyzeScript).toHaveBeenCalledTimes(1));
+	expect(apiClient.analyzeScript.mock.calls[0][1]).toBe('A hero finds a bird and a key.');
+	expect(apiClient.updateProject.mock.calls[0][1]).toMatchObject({ original_script: 'A hero finds a bird and a key.' });
+});

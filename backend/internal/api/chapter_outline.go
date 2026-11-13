@@ -30,15 +30,18 @@ func chapterCountWarning(words, chapters int) string {
 	panels := domain.TargetPanelCount(words)
 	suggested := domain.SuggestedChapterCount(words)
 	perChapter := panels / chapters
-	label := fmt.Sprintf("%d chapters", chapters)
-	if chapters == 1 {
-		label = "1 chapter"
-	}
 	switch {
 	case perChapter < minPanelsPerChapter:
-		return fmt.Sprintf("%s is a lot for a %d-word script: each chapter would get about %d panels, less than one page. About %d would suit it better.", label, words, max(1, perChapter), suggested)
+		return fmt.Sprintf("%s is a lot for a %d-word script: each chapter would get about %s, less than one page. About %s would suit it better.", plural(chapters, "chapter"), words, plural(max(1, perChapter), "panel"), plural(suggested, "chapter"))
 	case perChapter > maxPanelsPerChapter:
-		return fmt.Sprintf("%s is few for a %d-word script: each chapter would get about %d panels, more than %d pages. About %d would suit it better.", label, words, perChapter, maxPanelsPerChapter/domain.PanelsPerPage, suggested)
+		return fmt.Sprintf("%s is few for a %d-word script: each chapter would get about %s, more than %d pages. About %s would suit it better.", plural(chapters, "chapter"), words, plural(perChapter, "panel"), maxPanelsPerChapter/domain.PanelsPerPage, plural(suggested, "chapter"))
 	}
 	return ""
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }

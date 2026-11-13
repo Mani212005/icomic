@@ -202,6 +202,8 @@ small { font-size: 12px; color: var(--muted); }
 .chap-edit-form { display: flex; flex-direction: column; gap: 10px; }
 .chap-edit-form label { display: flex; flex-direction: column; gap: 5px; }
 .chap-edit-form textarea, .chap-edit-form input { width: 100%; }
+.chap-edit-form small { color: var(--muted); font-size: 12px; }
+.char-edit-form :is(input, textarea), .panel-edit-form :is(input, textarea), .chap-edit-form :is(input, textarea) { font-weight: 400; letter-spacing: normal; }
 .chap-detail { display: grid; gap: 6px; margin-top: 14px; font-size: 14px; color: var(--muted); }
 .chap-detail strong { color: var(--ink); }
 .chap-detail ul { margin: 0; padding-left: 20px; }

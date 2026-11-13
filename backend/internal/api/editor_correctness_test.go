@@ -229,11 +229,11 @@ func TestAnalyzeReturnsWarningsIncludingChapterCountSuitability(t *testing.T) {
 		t.Fatalf("warnings must be an empty list, not null: %v", got)
 	}
 	got := analyze(t, words(900), 40, nil)
-	if len(got) != 1 || !strings.Contains(got[0], "40 chapters") || !strings.Contains(got[0], "less than one page") {
+	if len(got) != 1 || !strings.Contains(got[0], "40 chapters is a lot for a 900-word script: each chapter would get about 1 panel, less than one page. About 1 chapter would suit it better.") {
 		t.Fatalf("too many chapters must warn once, got %v", got)
 	}
 	got = analyze(t, words(3000), 1, nil)
-	if len(got) != 1 || !strings.Contains(got[0], "1 chapter is few") || !strings.Contains(got[0], "About 4 would suit it better") {
+	if len(got) != 1 || !strings.Contains(got[0], "1 chapter is few for a 3000-word script: each chapter would get about 50 panels, more than 6 pages. About 4 chapters would suit it better.") {
 		t.Fatalf("too few chapters must warn once, got %v", got)
 	}
 	got = analyze(t, words(900), 40, []string{"Script is very short; fewer panels will be generated."})

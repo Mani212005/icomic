@@ -605,7 +605,7 @@
 				<textarea
 					id="script-textarea"
 					rows="8"
-					bind:value={project.script}
+					bind:value={project.original_script}
 				></textarea>
 			</div>
 
@@ -747,9 +747,9 @@
 						{#if editingChapId === chap.id}
 							<div class="chap-edit-form">
 								<label>Summary: <textarea rows="3" bind:value={editChapForm.summary}></textarea></label>
+								<label>Ending: <input type="text" bind:value={editChapForm.ending} /></label>
 								<label>Events: <textarea rows="4" bind:value={editChapForm.events}></textarea></label>
 								<label>Cast: <textarea rows="2" bind:value={editChapForm.cast}></textarea></label>
-								<label>Ending: <input type="text" bind:value={editChapForm.ending} /></label>
 								<small>One per line</small>
 							</div>
 						{:else}
