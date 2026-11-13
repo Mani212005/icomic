@@ -102,6 +102,8 @@ def test_quality_compare_call_plan_hermetic(tmp_path: Path):
     recorded_calls: list[tuple[str, str, Any]] = []
     dummy_img = _create_dummy_image_bytes("PNG")
 
+    latest_paint: dict[str, str] = {}
+
     def mock_json_request(path: str, method: str = "GET", payload: Any = None) -> Any:
         recorded_calls.append((method, path, payload))
         if path == "/api/v1/projects" and method == "POST":
@@ -143,6 +145,7 @@ def test_quality_compare_call_plan_hermetic(tmp_path: Path):
                     {
                         "id": "page-1",
                         "draft_image_url": "http://ai:8000/storage/fake/draft.png",
+                        **latest_paint,
                     }
                 ]
             }
@@ -150,9 +153,15 @@ def test_quality_compare_call_plan_hermetic(tmp_path: Path):
             return {"job": {"id": "job-draft", "status": "done", "actual_cost": 0.01}}
         if path == "/api/v1/pages/page-1/painted-page":
             variant = (payload or {}).get("variant", "draft-conditioned")
+            # A receipt carries no image: the settled job's page names the painted image.
+            latest_paint.update(
+                painted_page_image_job_id=f"job-painted-{variant}",
+                painted_page_image_url=f"http://ai:8000/storage/fake/{variant}.png",
+            )
             return {
                 "job": {"id": f"job-painted-{variant}", "status": "done", "actual_cost": 0.01},
-                "image_url": f"http://ai:8000/storage/fake/{variant}.png",
+                "job_id": f"job-painted-{variant}",
+                "entity_type": "page",
                 "variant": variant,
             }
         if "/generation-jobs/" in path:

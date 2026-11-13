@@ -21,9 +21,6 @@ services:
       ICOMIC_E2E_ISOLATED_STACK: "1"
       ICOMIC_E2E_DAILY_IMAGES: "${ICOMIC_E2E_DAILY_IMAGES:-100}"
       ICOMIC_E2E_MONTHLY_IMAGES: "${ICOMIC_E2E_MONTHLY_IMAGES:-1000}"
-      # The runner drives a whole book in minutes and follows every generation receipt by polling,
-      # which a person's browser never does at that pace.
-      REQUESTS_PER_USER_PER_MINUTE: "${REQUESTS_PER_USER_PER_MINUTE:-1200}"
   frontend:
     container_name: !reset null
     ports: !reset []

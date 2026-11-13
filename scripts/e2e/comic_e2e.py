@@ -235,17 +235,23 @@ def json_request(
         method=method,
         headers=headers,
     )
-    try:
-        with urlopen(request, timeout=16 * 60) as response:
-            body = response.read()
-            if "application/pdf" in response.headers.get("Content-Type", ""):
-                return body
-            result = json.loads(body) if body else {}
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise E2EError(f"{method} {path} returned HTTP {exc.code}: {detail}") from exc
-    except URLError as exc:
-        raise E2EError(f"{method} {path} failed: {exc.reason}") from exc
+    for attempt in range(6):
+        try:
+            with urlopen(request, timeout=16 * 60) as response:
+                body = response.read()
+                if "application/pdf" in response.headers.get("Content-Type", ""):
+                    return body
+                result = json.loads(body) if body else {}
+            break
+        except HTTPError as exc:
+            # The per-user request budget refills each minute; a busy moment is not a failure.
+            detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 429 and attempt < 5 and "Request limit" in detail:
+                time.sleep(5)
+                continue
+            raise E2EError(f"{method} {path} returned HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise E2EError(f"{method} {path} failed: {exc.reason}") from exc
     if method == "POST" and isinstance(result, dict) and result.get("job_id") and result.get("entity_type"):
         settle_receipt(method, path, result)
     return result
