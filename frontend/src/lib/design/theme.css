@@ -250,11 +250,13 @@ small { font-size: 12px; color: var(--muted); }
 .option-card { display: flex; flex-direction: column; gap: 10px; padding: 20px; border: 1px solid var(--line); border-radius: 4px 7px 3px 5px; background: #F8F4EE; }
 .preview-section h3 { font-size: 13px; margin-bottom: 14px; }
 .pages-strip { display: flex; gap: 20px; overflow-x: auto; padding: 5px 5px 14px; }
-.page-card { flex: 0 0 145px; min-height: 188px; border: 1px solid var(--line); border-radius: 3px; background: linear-gradient(135deg, transparent 96%, var(--sage) 96%), var(--sheet); box-shadow: 3px 4px 0 var(--rule); display: grid; place-items: center; }
-.page-preview-box { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px; }
-.page-num { font: 700 24px var(--display); }
-.page-status { display: flex; gap: 5px; align-items: center; font-size: 11px; color: var(--muted); }
 .empty-pages { width: 100%; padding: 25px; border: 1px dashed var(--line); }
+.export-page { flex: 0 0 180px; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.export-art { position: relative; width: 100%; min-height: 120px; line-height: 0; isolation: isolate; border: 1px solid var(--line); background: var(--sheet); box-shadow: 3px 4px 0 var(--rule); }
+.export-art img { display: block; width: 100%; height: auto; }
+.export-art-missing { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+.export-page figcaption { display: flex; gap: 6px; align-items: center; font-size: 12px; font-weight: 700; }
+.export-page figcaption .ink-icon[role='img'] { color: var(--danger); }
 .export-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end; border-top: 1px solid var(--rule); padding-top: 20px; }
 .error-banner, .project-error-banner, .modal-error, .stale-stage-banner, .job-banner { display: flex; gap: 12px; padding: 16px 20px; border: 1px solid #C47F6F; border-left-width: 4px; border-radius: 4px 7px 3px 5px; color: var(--danger); background: var(--danger-soft); font-size: 13px; }
 .error-banner { flex-direction: column; }

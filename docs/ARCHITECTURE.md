@@ -344,7 +344,7 @@ The default finish is `defaultPaintedPageVariant` in `backend/internal/api/handl
 
 ### 5.3.1 Export Gate and Provenance
 
-`POST /projects/{id}/export` takes an optional `{format, page_size}` (`pdf` or `png`; `a4`, `us_letter` or `custom`; defaults PDF on A4). `custom` is the 6.625 x 10.25 in comic page. PNG pages keep their native size, and PNG export refuses overlay-lettered pages because overlay lettering is only drawn into PDFs.
+`POST /projects/{id}/export` takes an optional `{format, page_size}` (`pdf` or `png`; `a4`, `us_letter` or `custom`; defaults PDF on A4). `custom` is the 6.625 x 10.25 in comic page. PNG pages keep their native size. Overlay-lettered pages export in both formats from the same stored layout and the same review gate: the PDF draws it as vector text, and the PNG ZIP rasterizes it onto the artwork (`ai/app/services/lettering/raster.py`, glyph outlines of the bundled fonts, bubbles antialiased, every other pixel unchanged). The original provider file stays under `sources/`, and the manifest records `lettering: drawn` or `withheld` per overlay page. A stale or flagged layout is withheld from both formats and returned as a typed `warnings` entry, which the Export view shows.
 
 Export refuses with `409 EXPORT_NOT_READY` and a per-page `details.problems` list unless every page has a current approved image (line art, uploaded colour or painted page; stale approvals do not count) and the Meta provenance recorded when that image was generated. No placeholder art is ever drawn. If storage no longer holds a page image or an original attachment when the PDF is assembled, the AI service fails with `409 EXPORT_INCOMPLETE`.
 

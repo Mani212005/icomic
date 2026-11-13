@@ -1,6 +1,7 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/svelte';
 import ExportView from '../../src/lib/export/ExportView.svelte';
+import fixture from '../fixtures/lettering.json';
 
 afterEach(cleanup);
 
@@ -87,4 +88,91 @@ it('does not claim signature-verified provenance', () => {
 	const view = render(ExportView, { projectId: 'project', apiClient: {} });
 	expect(view.container.textContent).not.toMatch(/C2PA included/);
 	expect(view.container.textContent).toContain('C2PA unverified');
+});
+
+describe('real artwork preview of the pages that will be exported', () => {
+	const approved = '2026-11-06T00:00:10Z';
+	const painted = (overrides = {}) => ({
+		id: 'overlay-fixture',
+		lettering_mode: 'overlay',
+		updated_at: '2026-11-06T00:00:00Z',
+		painted_page_image_url: '/media/painted.png',
+		painted_page_approved_at: approved,
+		...overrides
+	});
+	const api = (extra = {}) => ({
+		getLettering: vi.fn().mockResolvedValue({ lettering_mode: 'overlay', lettering: fixture }),
+		exportProject: vi.fn(),
+		...extra
+	});
+
+	it('shows the approved artwork with the stored lettering drawn over it, not status tiles', async () => {
+		const apiClient = api();
+		const view = render(ExportView, { projectId: 'project', apiClient, pages: [painted()] });
+		const image = view.getByAltText('Page 1');
+		expect(image.getAttribute('src')).toBe('/media/painted.png');
+		await vi.waitFor(() => expect(view.container.querySelector('.lettering-layer')).toBeTruthy());
+		expect(apiClient.getLettering).toHaveBeenCalledWith('overlay-fixture');
+		const layer = view.container.querySelector('.export-art .lettering-layer');
+		expect(layer.querySelectorAll('[data-utterance]')).toHaveLength(fixture.layout.bubbles.length);
+		expect(view.queryByRole('img', { name: /Review|did not load/ })).toBeNull();
+		expect(view.container.textContent).not.toMatch(/Draft|Lines|Coloured/);
+	});
+
+	it('previews the newest current approval and ignores one an edit made stale', () => {
+		const pages = [
+			painted({
+				id: 'a',
+				lettering_mode: 'baked',
+				line_art_image_url: '/media/lines.png',
+				line_art_approved_at: '2026-11-06T00:00:05Z'
+			}),
+			painted({ id: 'b', lettering_mode: 'baked', updated_at: '2026-11-06T00:00:20Z' })
+		];
+		const view = render(ExportView, { projectId: 'project', apiClient: api(), pages });
+		// The painted page is newer than the line art on page 1, and stale on page 2.
+		expect(view.getByAltText('Page 1').getAttribute('src')).toBe('/media/painted.png');
+		expect(view.queryByAltText('Page 2')).toBeNull();
+		expect(view.getByRole('img', { name: 'No approved artwork' })).toBeTruthy();
+	});
+
+	it('draws no lettering for baked pages or pages whose lettering is part of the line art', async () => {
+		const apiClient = api();
+		const pages = [
+			painted({ id: 'baked', lettering_mode: 'baked' }),
+			painted({ id: 'ink', line_art_image_url: '/media/lines.png', line_art_approved_at: '2026-11-06T00:00:05Z' })
+		];
+		const view = render(ExportView, { projectId: 'project', apiClient, pages });
+		await Promise.resolve();
+		expect(apiClient.getLettering).not.toHaveBeenCalled();
+		expect(view.container.querySelector('.lettering-layer')).toBeNull();
+	});
+
+	it('says so when the stored lettering cannot be loaded, and flags review issues', async () => {
+		const failing = api({ getLettering: vi.fn().mockRejectedValue(new Error('offline')) });
+		const view = render(ExportView, { projectId: 'project', apiClient: failing, pages: [painted()] });
+		await view.findByRole('img', { name: 'Lettering did not load' });
+
+		const flagged = structuredClone(fixture);
+		flagged.layout.issues = [{ panel_id: 'p', utterance_id: 'u', flag: 'overflow' }];
+		const second = render(ExportView, {
+			projectId: 'project',
+			apiClient: api({ getLettering: vi.fn().mockResolvedValue({ lettering: flagged }) }),
+			pages: [painted()]
+		});
+		await second.findByRole('img', { name: 'Review: overflow' });
+	});
+
+	it('marks the page an export flagged', async () => {
+		const apiClient = api({
+			exportProject: vi.fn().mockResolvedValue({
+				export: { id: 'review' },
+				warnings: [{ page_number: 1, code: 'stale_lettering', message: 'Lettering is stale.' }]
+			})
+		});
+		const view = render(ExportView, { projectId: 'project', apiClient, pages: [painted(), painted({ id: 'two' })] });
+		await fireEvent.click(view.getByRole('button', { name: 'Export PDF' }));
+		await view.findByRole('img', { name: 'Flagged in the last export' });
+		expect(view.getAllByRole('img', { name: 'Flagged in the last export' })).toHaveLength(1);
+	});
 });

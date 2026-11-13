@@ -6,7 +6,8 @@ UTF-8 JSON. Stage 2 connects it to new page generation and versioned page storag
 The document contains no image bytes or URL. The internal layout request may supply
 the stored text-free painted image URL; the service reads it through object storage
 and analyzes pixels with Pillow and NumPy, without a provider call. The editor draws
-and edits the resulting vector layer. PDF export draws that same stored vector layer.
+and edits the resulting vector layer. PDF export draws that same stored vector layer, and PNG ZIP export rasterizes it onto the page pixels
+(`ai/app/services/lettering/raster.py`).
 
 ## Enablement and legacy safety
 

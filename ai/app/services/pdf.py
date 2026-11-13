@@ -918,18 +918,19 @@ class PdfAssemblyService:
         pages: list[PageExportItem],
     ) -> tuple[str, bool, int, list[PdfLetteringWarning]]:
         """Bundle each page as a PNG with its provider source files and a provenance manifest."""
-        if any(p.lettering_mode == "overlay" for p in pages):
-            raise ExportIncompleteError(
-                "Overlay lettering is only drawn in PDF export. Export a PDF, or finish the pages with baked lettering."
-            )
         collected = self.collect_pages(pages)
+        # The same stored layout and review gate as the PDF: stale or flagged lettering is not
+        # drawn and surfaces as a warning instead.
+        checked = [eligibility(page) for page in collected.pages_data]
         content = build_png_zip(
             project_id,
             title,
             include_ai_disclosure,
             collected.pages_data,
             collected.sources_preserved,
+            [layout for layout, _ in checked],
         )
         key = f"exports/{project_id}/{uuid4().hex}/comic-pages.zip"
         url = self.storage_adapter.put(key, content, "application/zip")
-        return url, collected.sources_preserved, len(collected.pages_data), []
+        warnings = [warning for _, warning in checked if warning]
+        return url, collected.sources_preserved, len(collected.pages_data), warnings

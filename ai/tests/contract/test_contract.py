@@ -5,6 +5,7 @@ import hashlib
 import json
 import zipfile
 from io import BytesIO
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -397,24 +398,65 @@ def test_assemble_png_zip_contract_bundles_pages_sources_and_manifest():
         assert "AI-generation disclosure" in archive.read("DISCLOSURE.txt").decode()
 
 
-def test_assemble_png_zip_contract_refuses_overlay_lettered_pages():
-    url, provenance, _ = _stored_page("contract-zip-overlay", "contract-zip-overlay")
+def _overlay_state():
+    from app.gen.models import LetteringDocument
+    from app.services.lettering import layout_page
+
+    fixtures = Path(__file__).parents[1] / "fixtures/lettering"
+    doc = LetteringDocument.model_validate_json((fixtures / "speech-tail.input.json").read_bytes())
+    return {
+        "version": "page-lettering-v1",
+        "input": doc.model_dump(mode="json"),
+        "overrides": {},
+        "zone_overrides": {},
+        "layout": layout_page(doc).model_dump(mode="json"),
+    }
+
+
+def _overlay_zip(job_id, name, **page):
+    url, provenance, art = _stored_page(name, name)
     payload = _assemble_payload(
-        "dddddddd-dddd-dddd-dddd-ddddddddddd4",
+        job_id,
         [
             {
                 "page_number": 1,
                 "image_url": url,
                 "provenance_metadata": provenance,
                 "lettering_mode": "overlay",
+                **page,
             }
         ],
         format="png_zip",
     )
     response = client.post("/internal/v1/assemble-pdf", json=payload)
-    assert response.status_code == 409
-    assert response.json()["code"] == "EXPORT_INCOMPLETE"
-    assert "PDF export" in response.text
+    assert response.status_code == 200, response.text
+    with zipfile.ZipFile(BytesIO(app.state.storage_adapter.get(response.json()["pdf_url"]))) as z:
+        return (
+            response.json(),
+            art,
+            z.read("pages/page-001.png"),
+            json.loads(z.read("manifest.json")),
+        )
+
+
+def test_assemble_png_zip_contract_draws_stored_overlay_lettering():
+    body, art, page, manifest = _overlay_zip(
+        "dddddddd-dddd-dddd-dddd-ddddddddddd4", "contract-zip-overlay", lettering=_overlay_state()
+    )
+    assert body["warnings"] == []
+    assert manifest["pages"][0]["lettering"] == "drawn"
+    assert page != art  # the stored bubbles are in the page pixels
+    with Image.open(BytesIO(page)) as lettered, Image.open(BytesIO(art)) as original:
+        assert lettered.format == "PNG" and lettered.size == original.size
+
+
+def test_assemble_png_zip_contract_warns_when_overlay_lettering_is_missing():
+    body, art, page, manifest = _overlay_zip(
+        "dddddddd-dddd-dddd-dddd-ddddddddddd5", "contract-zip-overlay-missing"
+    )
+    assert [w["code"] for w in body["warnings"]] == ["stale_lettering"]
+    assert manifest["pages"][0]["lettering"] == "withheld"
+    assert page == art
 
 
 def test_job_status_contract():
