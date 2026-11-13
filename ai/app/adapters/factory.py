@@ -23,6 +23,7 @@ from .queue.fake import FakeQueueAdapter
 from .queue.port import QueuePort
 from .queue.redis import RedisQueueAdapter
 from .storage.fake import FakeStorageAdapter
+from .storage.local import LocalStorageAdapter
 from .storage.port import StoragePort
 from .storage.s3 import S3Adapter
 from .vision.fake import FakeVisionAdapter
@@ -127,9 +128,22 @@ def get_storage_adapter(selection: str | None = None) -> StoragePort:
         return FakeStorageAdapter(
             base_url=base_url, directory=Path(directory) if directory else None
         )
+    if name == "local":
+        directory = os.getenv("LOCAL_STORAGE_DIR", "").strip()
+        if not directory:
+            raise ValueError(
+                "ADAPTER_STORAGE=local requires LOCAL_STORAGE_DIR, the directory of the "
+                "mounted volume that keeps generated images"
+            )
+        if os.getenv("ICOMIC_E2E_FAKE_STORAGE_DIR"):
+            raise ValueError(
+                "ADAPTER_STORAGE=local conflicts with ICOMIC_E2E_FAKE_STORAGE_DIR; "
+                "set ADAPTER_STORAGE=fake to keep using the checkpoint directory"
+            )
+        return LocalStorageAdapter(directory, base_url=os.getenv("STORAGE_BASE_URL"))
     if name == "s3":
         return S3Adapter()
-    raise ValueError(f"Unknown storage adapter: {name}. Supported: 'fake', 's3'.")
+    raise ValueError(f"Unknown storage adapter: {name}. Supported: 'fake', 'local', 's3'.")
 
 
 def get_queue_adapter(selection: str | None = None) -> QueuePort:

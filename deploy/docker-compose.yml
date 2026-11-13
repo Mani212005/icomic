@@ -55,7 +55,9 @@ services:
       ADAPTER_LANGUAGE: "${ADAPTER_LANGUAGE:-fake}"
       ADAPTER_VISION: "${ADAPTER_VISION:-fake}"
       ADAPTER_IMAGE: "${ADAPTER_IMAGE:-fake}"
-      ADAPTER_STORAGE: "${ADAPTER_STORAGE:-fake}"
+      # local keeps generated images on the ai_data volume so they survive restarts.
+      ADAPTER_STORAGE: "${ADAPTER_STORAGE:-local}"
+      LOCAL_STORAGE_DIR: "${LOCAL_STORAGE_DIR:-/var/lib/icomic/storage}"
       ADAPTER_QUEUE: "${ADAPTER_QUEUE:-fake}"
       ADAPTER_CLOCK: "${ADAPTER_CLOCK:-fake}"
       LETTERING_OVERLAY_ENABLED: "${LETTERING_OVERLAY_ENABLED:-false}"
@@ -88,6 +90,7 @@ services:
       STORAGE_BASE_URL: "http://ai:8000/storage/fake"
       REDIS_URL: "redis://redis:6379/0"
     volumes:
+      - ai_data:/var/lib/icomic
       - "${ICOMIC_E2E_COST_DIR:-/tmp/icomic-e2e-costs}:/var/lib/icomic-e2e"
     expose:
       - "8000"
@@ -162,3 +165,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  ai_data:

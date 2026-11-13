@@ -15,7 +15,7 @@ services:
       ADAPTER_LANGUAGE: "${ADAPTER_LANGUAGE:-fake}"
       ADAPTER_VISION: "${ADAPTER_VISION:-fake}"
       ADAPTER_IMAGE: "${ADAPTER_IMAGE:-fake}"
-      ADAPTER_STORAGE: "${ADAPTER_STORAGE:-fake}"
+      ADAPTER_STORAGE: "${ADAPTER_STORAGE:-local}"
       ADAPTER_QUEUE: "${ADAPTER_QUEUE:-fake}"
       ADAPTER_CLOCK: "${ADAPTER_CLOCK:-fake}"
       # Inherit Meta configuration from the base file and adapter defaults.
