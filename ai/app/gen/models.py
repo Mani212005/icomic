@@ -208,6 +208,13 @@ class GeneratePanelTextRequest(BaseModel):
         "", description="Complete source text for this chapter, without truncation."
     )
     characters: list[str]
+    important_events: list[str] = Field(
+        [], description="Story events the approved outline says this chapter must show, in order."
+    )
+    character_names: list[str] = Field(
+        [], description="Characters the approved outline places in this chapter."
+    )
+    ending: str = Field("", description="How the approved outline says this chapter ends.")
 
 
 class GeneratePanelTextResponse(BaseModel):

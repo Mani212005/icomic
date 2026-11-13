@@ -345,8 +345,8 @@ func (m *InMemoryRepository) CreateChapter(_ context.Context, c *domain.Chapter)
 	if c.UpdatedAt.IsZero() {
 		c.UpdatedAt = time.Now().UTC()
 	}
-	cpy := *c
-	m.chapters[c.ID] = &cpy
+	cpy := cloneChapter(c)
+	m.chapters[c.ID] = cpy
 	return nil
 }
 
@@ -358,8 +358,7 @@ func (m *InMemoryRepository) GetChapter(_ context.Context, id string) (*domain.C
 	if !ok {
 		return nil, ErrNotFound
 	}
-	cpy := *c
-	return &cpy, nil
+	return cloneChapter(c), nil
 }
 
 func (m *InMemoryRepository) ListChapters(_ context.Context, projectID string) ([]*domain.Chapter, error) {
@@ -369,8 +368,7 @@ func (m *InMemoryRepository) ListChapters(_ context.Context, projectID string) (
 	var res []*domain.Chapter
 	for _, c := range m.chapters {
 		if c.ProjectID == projectID {
-			cpy := *c
-			res = append(res, &cpy)
+			res = append(res, cloneChapter(c))
 		}
 	}
 	sort.Slice(res, func(i, j int) bool { return res[i].ChapterNumber < res[j].ChapterNumber })
@@ -385,9 +383,17 @@ func (m *InMemoryRepository) UpdateChapter(_ context.Context, c *domain.Chapter)
 		return ErrNotFound
 	}
 	c.UpdatedAt = time.Now().UTC()
-	cpy := *c
-	m.chapters[c.ID] = &cpy
+	cpy := cloneChapter(c)
+	m.chapters[c.ID] = cpy
 	return nil
+}
+
+// cloneChapter copies a chapter with its own lists, so a stored record is never shared with a caller.
+func cloneChapter(c *domain.Chapter) *domain.Chapter {
+	cpy := *c
+	cpy.ImportantEvents = append([]string{}, c.ImportantEvents...)
+	cpy.CharacterNames = append([]string{}, c.CharacterNames...)
+	return &cpy
 }
 
 // Characters

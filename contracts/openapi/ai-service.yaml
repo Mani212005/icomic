@@ -1035,6 +1035,22 @@ components:
           type: array
           items:
             type: string
+        important_events:
+          type: array
+          items:
+            type: string
+          default: []
+          description: Story events the approved outline says this chapter must show, in order.
+        character_names:
+          type: array
+          items:
+            type: string
+          default: []
+          description: Characters the approved outline places in this chapter.
+        ending:
+          type: string
+          default: ''
+          description: How the approved outline says this chapter ends.
 
     GeneratePanelTextResponse:
       type: object

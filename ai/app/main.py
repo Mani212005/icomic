@@ -322,6 +322,9 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             characters=req.characters,
             panel_count=req.panel_count,
             chapter_script=req.chapter_script,
+            important_events=req.important_events,
+            character_names=req.character_names,
+            ending=req.ending,
             overlay_lettering=os.getenv("LETTERING_OVERLAY_ENABLED", "false").lower() == "true",
         )
         return GeneratePanelTextResponse(

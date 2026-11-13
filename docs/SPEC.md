@@ -841,6 +841,9 @@ The initial database must contain the following tables.
 - chapter_number
 - title
 - summary
+- important_events (JSONB array of text)
+- character_names (JSONB array of text)
+- ending
 - status
 
 ### characters
