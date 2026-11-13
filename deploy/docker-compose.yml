@@ -60,7 +60,7 @@ services:
       LOCAL_STORAGE_DIR: "${LOCAL_STORAGE_DIR:-/var/lib/icomic/storage}"
       ADAPTER_QUEUE: "${ADAPTER_QUEUE:-fake}"
       ADAPTER_CLOCK: "${ADAPTER_CLOCK:-fake}"
-      LETTERING_OVERLAY_ENABLED: "${LETTERING_OVERLAY_ENABLED:-false}"
+      LETTERING_OVERLAY_ENABLED: "${LETTERING_OVERLAY_ENABLED:-true}"
       # Empty follows LETTERING_OVERLAY_ENABLED: one vision call per painted overlay page.
       LETTERING_SUBJECT_DETECTION_ENABLED: "${LETTERING_SUBJECT_DETECTION_ENABLED:-}"
       # Model IDs are shared with the backend quote configuration.
@@ -80,6 +80,9 @@ services:
       META_IMAGE_MAX_REFERENCE_BYTES: "${META_IMAGE_MAX_REFERENCE_BYTES:-262144}"
       META_IMAGE_MAX_TOTAL_REFERENCE_BYTES: "${META_IMAGE_MAX_TOTAL_REFERENCE_BYTES:-2097152}"
       META_IMAGE_MAX_REQUEST_BYTES: "${META_IMAGE_MAX_REQUEST_BYTES:-3145728}"
+      # Personal spend cap in USD (at most 2). Unset keeps the default; set it empty to turn the cap off.
+      PROVIDER_SPEND_CAP_USD: "${PROVIDER_SPEND_CAP_USD-2}"
+      PROVIDER_COST_LEDGER_PATH: "${PROVIDER_COST_LEDGER_PATH:-/var/lib/icomic/provider-costs.json}"
       ICOMIC_E2E_LIVE: "${ICOMIC_E2E_LIVE:-0}"
       ICOMIC_E2E_RUN_ID: "${ICOMIC_E2E_RUN_ID:-}"
       ICOMIC_E2E_FAKE_STORAGE_DIR: "${ICOMIC_E2E_FAKE_STORAGE_DIR:-}"
@@ -97,7 +100,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')\" || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -114,7 +117,7 @@ services:
     environment:
       PORT: "8080"
       PYTHON_AI_URL: "http://ai:8000"
-      LETTERING_OVERLAY_ENABLED: "${LETTERING_OVERLAY_ENABLED:-false}"
+      LETTERING_OVERLAY_ENABLED: "${LETTERING_OVERLAY_ENABLED:-true}"
       DATABASE_URL: "postgres://icomic:icomic@postgres:5432/icomic?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
       DEV_AUTH_ENABLED: "true"
@@ -127,7 +130,7 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/readyz || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
