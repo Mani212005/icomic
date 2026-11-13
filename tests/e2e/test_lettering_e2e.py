@@ -1,7 +1,9 @@
 """Overlay generation and replacement vector storage through both real services."""
 
 import hashlib
+import json
 import subprocess
+import zipfile
 from io import BytesIO
 
 import httpx
@@ -165,6 +167,17 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     assert not exported.json().get("warnings")
     assert len(pdf) < 500_000
     assert pdf.count(b"/Type /Page /Parent") == len(pages) + 1
+    # The PNG ZIP carries the same stored lettering, drawn over the unchanged provider art.
+    zipped = api_client.post(f"/api/v1/projects/{project_id}/export", json={"format": "png"})
+    assert zipped.status_code == 202, zipped.text
+    assert not zipped.json().get("warnings")
+    with zipfile.ZipFile(BytesIO(httpx.get(zipped.json()["export"]["file_url"]).content)) as z:
+        manifest = json.loads(z.read("manifest.json"))
+        assert [p["lettering"] for p in manifest["pages"]] == ["drawn"] * len(pages)
+        lettered = Image.open(BytesIO(z.read("pages/page-001.png"))).convert("RGB")
+        assert lettered.size == (256, 384)
+        assert z.read(manifest["pages"][0]["source_file"]) == image
+        assert lettered.tobytes() != Image.open(BytesIO(image)).convert("RGB").tobytes()
     invalid = api_client.patch(override_url, json={"override": {"center": {"x": -0.5, "y": -0.5}}})
     assert invalid.status_code == 200, invalid.text
     flagged = api_client.post(f"/api/v1/projects/{project_id}/export")
@@ -176,6 +189,13 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     review = httpx.get(note_url).content
     note = subprocess.run(["pdftotext", "-", "-"], input=review, capture_output=True, check=True).stdout.decode()
     assert "LETTERING NOT EXPORTED" in note and "out_of_panel" in note
+    # A flagged layout is withheld from the PNG ZIP too, with the same typed warning.
+    zipped = api_client.post(f"/api/v1/projects/{project_id}/export", json={"format": "png"})
+    assert zipped.status_code == 202, zipped.text
+    assert zipped.json()["warnings"][0]["code"] == "lettering_review_required"
+    with zipfile.ZipFile(BytesIO(httpx.get(zipped.json()["export"]["file_url"]).content)) as z:
+        assert json.loads(z.read("manifest.json"))["pages"][0]["lettering"] == "withheld"
+        assert z.read("pages/page-001.png") == image
     # Explicit ink never consumes text-free art.
     assert (
         api_client.post(f"/api/v1/pages/{page_id}/line-art", json={"variant": "ink"}).status_code
