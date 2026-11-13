@@ -66,12 +66,23 @@ func (s *PersistentJobService) transition(ctx context.Context, id, status string
 	}
 	return err
 }
-func (s *PersistentJobService) CancelJob(ctx context.Context, id string) error {
-	err := s.transition(ctx, id, StatusCancelled, nil, nil, []string{StatusPending, StatusRunning})
-	if errors.Is(err, ErrJobAlreadyTerminal) {
-		return ErrCannotCancelJob
+
+// CancelJob stops a job that has not reached the provider and refunds its debit in one store
+// transaction. It never cancels a job a dispatcher has claimed: that job is settling.
+func (s *PersistentJobService) CancelJob(ctx context.Context, id string) (*db.CancelResult, error) {
+	canceller, ok := s.store.(db.GenerationCanceller)
+	if !ok {
+		return nil, ErrCancelUnsupported
 	}
-	return err
+	result, err := canceller.CancelGeneration(ctx, id)
+	if errors.Is(err, db.ErrNotFound) {
+		return nil, ErrJobNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	result.Job = publicJob(result.Job)
+	return result, nil
 }
 func (s *PersistentJobService) UpdateJobStatus(ctx context.Context, id, status string, cost *float64, msg *string) error {
 	return s.transition(ctx, id, status, cost, msg, nil)

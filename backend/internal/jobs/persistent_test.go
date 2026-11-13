@@ -33,6 +33,9 @@ func (s *durableJobStore) TransitionGeneration(ctx context.Context, id, status s
 	if err != nil {
 		return err
 	}
+	if db.TerminalStatus(job.Status) && (job.Status == jobs.StatusCancelled || status != job.Status) {
+		return db.ErrConflict
+	}
 	if len(allowed) > 0 {
 		found := false
 		for _, s := range allowed {
@@ -48,6 +51,27 @@ func (s *durableJobStore) TransitionGeneration(ctx context.Context, id, status s
 	job.ActualCost = cost
 	job.ErrorMessage = msg
 	return s.UpdateJob(ctx, job)
+}
+
+// CancelGeneration answers honestly for the fake store: a terminal job is finished, an unclaimed
+// pending job is cancelled and a running one is settling. The refund and the claim race are covered
+// against real PostgreSQL in the db package.
+func (s *durableJobStore) CancelGeneration(ctx context.Context, id string) (*db.CancelResult, error) {
+	job, err := s.GetJob(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	switch job.Status {
+	case jobs.StatusPending:
+		job.Status = jobs.StatusCancelled
+		if err := s.UpdateJob(ctx, job); err != nil {
+			return nil, err
+		}
+		return &db.CancelResult{Outcome: db.CancelOutcomeCancelled, Job: job}, nil
+	case jobs.StatusRunning:
+		return &db.CancelResult{Outcome: db.CancelOutcomeSettling, Job: job}, nil
+	}
+	return &db.CancelResult{Outcome: db.CancelOutcomeFinished, Job: job}, nil
 }
 func TestPersistentJobsSurviveServiceRecreationWithoutSecondCharge(t *testing.T) {
 	ctx := context.Background()
@@ -85,8 +109,11 @@ func TestPersistentJobsSurviveServiceRecreationWithoutSecondCharge(t *testing.T)
 	if err := second.CompleteJob(ctx, job.ID, credits.ImageUnitPrice); err != nil {
 		t.Fatal(err)
 	}
-	if err := second.CancelJob(ctx, job.ID); !errors.Is(err, jobs.ErrCannotCancelJob) {
-		t.Fatalf("terminal cancellation: %v", err)
+	if result, err := second.CancelJob(ctx, job.ID); err != nil || result.Outcome != db.CancelOutcomeFinished || result.Job.Status != jobs.StatusDone {
+		t.Fatalf("a finished job is reported finished and left alone: %+v %v", result, err)
+	}
+	if err := second.UpdateJobStatus(ctx, job.ID, jobs.StatusFailed, nil, nil); !errors.Is(err, jobs.ErrJobAlreadyTerminal) {
+		t.Fatalf("a done job must not become failed: %v", err)
 	}
 	if err := second.StartJob(ctx, "missing"); !errors.Is(err, jobs.ErrJobNotFound) {
 		t.Fatalf("missing job: %v", err)

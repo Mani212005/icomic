@@ -37,6 +37,12 @@ func existingGeneration(ctx context.Context, tx Transaction, job *domain.Generat
 	}
 	return existing, err
 }
+
+// paidGeneration reports whether a job type can spend at the provider. Everything but PDF/PNG
+// assembly can, so the global stop switch applies to all of it and to nothing else.
+func paidGeneration(kind string) bool {
+	return kind != "pdf_assembly" && kind != "assemble_pdf"
+}
 func imageJob(kind string) bool {
 	return kind == "character_reference" || kind == "draft_sketch" || kind == "final_line_art"
 }
@@ -81,10 +87,15 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 	} else if !errors.Is(err, ErrNotFound) {
 		return nil, false, err
 	}
-	if err := domain.CheckKillSwitchAndQuota(active || opts.KillSwitchActive, 0, 0, 0, 0); err != nil {
-		return nil, false, err
+	// The stop switch halts paid generation only. PDF/PNG export spends nothing at the provider
+	// and keeps working, so it is exempt from the switch and from the spend threshold.
+	paid := paidGeneration(job.JobType)
+	if paid {
+		if err := domain.CheckKillSwitchAndQuota(active || opts.KillSwitchActive, 0, 0, 0, 0); err != nil {
+			return nil, false, err
+		}
 	}
-	if threshold > 0 {
+	if paid && threshold > 0 {
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE transaction_type WHEN 'debit' THEN amount WHEN 'refund' THEN -amount ELSE 0 END),0) FROM credit_ledger`).Scan(&spend); err != nil {
 			return nil, false, err
 		}
@@ -164,7 +175,7 @@ func (p *PostgresRepository) CreateGeneration(ctx context.Context, job *domain.G
 		}
 	}
 
-	if threshold > 0 && spend+amount >= threshold {
+	if paid && threshold > 0 && spend+amount >= threshold {
 		if _, err := tx.ExecContext(ctx, `UPDATE generation_policy SET kill_switch_active=TRUE WHERE singleton=TRUE`); err != nil {
 			return nil, false, err
 		}
@@ -345,6 +356,12 @@ func (p *PostgresRepository) TransitionGeneration(ctx context.Context, id, statu
 	}
 	if err != nil {
 		return err
+	}
+	// A terminal status is never reversed: a late completion or failure cannot overwrite a
+	// cancellation (or any other final state). Rewriting the same final status is harmless,
+	// except for a cancelled job, which nothing may touch.
+	if TerminalStatus(current) && (current == "cancelled" || status != current) {
+		return ErrConflict
 	}
 	if len(allowed) > 0 {
 		found := false

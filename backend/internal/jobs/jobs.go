@@ -26,7 +26,7 @@ const (
 
 var (
 	ErrJobNotFound         = errors.New("generation job not found")
-	ErrCannotCancelJob     = errors.New("job cannot be cancelled in current status")
+	ErrCancelUnsupported   = errors.New("job store cannot cancel jobs")
 	ErrDuplicateIdempotent = errors.New("idempotent job already exists")
 	ErrInvalidStatus       = errors.New("invalid job status")
 	ErrJobAlreadyTerminal  = errors.New("job is already in a terminal status")
@@ -54,7 +54,10 @@ type CreateJobRequest struct {
 type JobService interface {
 	CreateJob(ctx context.Context, req CreateJobRequest) (*domain.GenerationJob, bool, error)
 	GetJob(ctx context.Context, jobID string) (*domain.GenerationJob, error)
-	CancelJob(ctx context.Context, jobID string) error
+	// CancelJob stops a job that has not reached the provider (outcome cancelled, debit refunded)
+	// and otherwise reports honestly: a job already claimed or sent is settling and keeps running
+	// to its own terminal state, and a job that already finished is returned unchanged.
+	CancelJob(ctx context.Context, jobID string) (*db.CancelResult, error)
 	UpdateJobStatus(ctx context.Context, jobID string, status string, actualCost *float64, errMsg *string) error
 
 	// Asynchronous lifecycle extensions
@@ -72,12 +75,14 @@ type InMemoryJobService struct {
 	jobsByIdempKey map[string]*domain.GenerationJob
 	cancelFuncs    map[string]context.CancelFunc
 	outbox         []*memoryDispatch
+	debits         map[string]float64
 }
 
 // memoryDispatch is the in-memory twin of a generation_dispatches row.
 type memoryDispatch struct {
 	pending    db.PendingDispatch
 	delivered  bool
+	cancelled  bool
 	leaseUntil time.Time
 }
 
@@ -86,6 +91,7 @@ func NewInMemoryJobService() *InMemoryJobService {
 		jobsByID:       make(map[string]*domain.GenerationJob),
 		jobsByIdempKey: make(map[string]*domain.GenerationJob),
 		cancelFuncs:    make(map[string]context.CancelFunc),
+		debits:         make(map[string]float64),
 	}
 }
 
@@ -120,6 +126,10 @@ func (s *InMemoryJobService) CreateJob(ctx context.Context, req CreateJobRequest
 	if existing, found := s.jobsByIdempKey[req.IdempotencyKey]; found {
 		copy := *existing
 		return &copy, true, nil
+	}
+	// Like the PostgreSQL store: the global stop switch halts paid generation only, never PDF/PNG export.
+	if req.KillSwitchActive && req.JobType != "pdf_assembly" && req.JobType != "assemble_pdf" {
+		return nil, false, domain.ErrKillSwitchActive
 	}
 
 	job := &domain.GenerationJob{
@@ -161,6 +171,9 @@ func (s *InMemoryJobService) CreateJob(ctx context.Context, req CreateJobRequest
 	if envelope != nil {
 		s.outbox = append(s.outbox, envelope)
 	}
+	if req.DebitAmount > 0 {
+		s.debits[job.ID] = req.DebitAmount
+	}
 	s.jobsByID[job.ID] = job
 	s.jobsByIdempKey[req.IdempotencyKey] = job
 	copy := *job
@@ -175,7 +188,7 @@ func (s *InMemoryJobService) ClaimDispatches(ctx context.Context, limit int, ign
 	now := time.Now()
 	var claimed []db.PendingDispatch
 	for _, d := range s.outbox {
-		if d.delivered {
+		if d.delivered || d.cancelled {
 			continue
 		}
 		if job, found := s.jobsByID[d.pending.JobID]; found && job.Status != StatusPending && job.Status != StatusRunning {
@@ -197,7 +210,7 @@ func (s *InMemoryJobService) FinishDispatch(ctx context.Context, jobID string) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, d := range s.outbox {
-		if d.pending.JobID == jobID {
+		if d.pending.JobID == jobID && !d.cancelled {
 			d.delivered = true
 		}
 	}
@@ -209,7 +222,7 @@ func (s *InMemoryJobService) ReleaseDispatch(ctx context.Context, jobID string) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, d := range s.outbox {
-		if d.pending.JobID == jobID && !d.delivered {
+		if d.pending.JobID == jobID && !d.delivered && !d.cancelled {
 			d.leaseUntil = time.Now().Add(db.DispatchRetryDelay)
 		}
 	}
@@ -232,30 +245,59 @@ func (s *InMemoryJobService) GetJob(ctx context.Context, jobID string) (*domain.
 	return &jobCopy, nil
 }
 
-// CancelJob cancels an active (pending or running) job.
-func (s *InMemoryJobService) CancelJob(ctx context.Context, jobID string) error {
+// CancelJob mirrors the PostgreSQL cancellation for the in-memory fakes. A pending job whose
+// envelope no dispatcher has claimed is cancelled and refunded; a claimed or running job is
+// settling and untouched; a terminal job is returned as it is. Repeating a cancel is idempotent.
+func (s *InMemoryJobService) CancelJob(ctx context.Context, jobID string) (*db.CancelResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	job, found := s.jobsByID[jobID]
 	if !found {
-		return ErrJobNotFound
+		return nil, ErrJobNotFound
 	}
-
-	if job.Status == StatusDone || job.Status == StatusFailed || job.Status == StatusUncertain || job.Status == StatusCancelled {
-		return ErrCannotCancelJob
+	result := func(outcome db.CancelOutcome, refunded float64) (*db.CancelResult, error) {
+		snapshot := *job
+		return &db.CancelResult{Outcome: outcome, Job: &snapshot, Refunded: refunded}, nil
 	}
-
+	switch job.Status {
+	case StatusCancelled:
+		return result(db.CancelOutcomeCancelled, s.debits[jobID])
+	case StatusDone, StatusFailed, StatusUncertain:
+		return result(db.CancelOutcomeFinished, 0)
+	}
+	var envelope *memoryDispatch
+	for _, d := range s.outbox {
+		if d.pending.JobID == jobID {
+			envelope = d
+		}
+	}
+	unsent := job.Status == StatusPending && (envelope == nil || (!envelope.delivered && !envelope.cancelled && envelope.pending.Attempts == 0))
+	if !unsent {
+		return result(db.CancelOutcomeSettling, 0)
+	}
+	refund := s.debits[jobID]
+	if refund > 0 {
+		if s.creditService == nil {
+			return nil, errors.New("credit service is required")
+		}
+		if _, err := s.creditService.Refund(ctx, credits.RefundRequest{UserID: job.UserID, ProjectID: job.ProjectID, GenerationJobID: jobID, Amount: refund}); err != nil {
+			return nil, err
+		}
+	}
 	job.Status = StatusCancelled
+	message := db.CancelMessage
+	job.ErrorMessage = &message
 	now := time.Now().UTC()
 	job.CompletedAt = &now
-
+	if envelope != nil {
+		envelope.cancelled = true
+	}
 	if cancel, ok := s.cancelFuncs[jobID]; ok {
 		cancel()
 		delete(s.cancelFuncs, jobID)
 	}
-
-	return nil
+	return result(db.CancelOutcomeCancelled, refund)
 }
 
 // UpdateJobStatus updates the status, actual cost, and error message of a job.
@@ -270,6 +312,10 @@ func (s *InMemoryJobService) UpdateJobStatus(ctx context.Context, jobID string, 
 	job, found := s.jobsByID[jobID]
 	if !found {
 		return ErrJobNotFound
+	}
+	// A terminal status is never reversed, and a cancelled job is never touched again.
+	if db.TerminalStatus(job.Status) && (job.Status == StatusCancelled || status != job.Status) {
+		return fmt.Errorf("%w: cannot change %s to %s", ErrJobAlreadyTerminal, job.Status, status)
 	}
 
 	job.Status = status

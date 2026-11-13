@@ -2547,7 +2547,8 @@ func (s *Server) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 		if status, statusErr := s.AIClient.GetJobStatus(r.Context(), job.ID); statusErr == nil && status != nil && (status.Status == jobs.StatusFailed || status.Status == jobs.StatusUncertain) {
 			workerStatus = status
 			if job.Status == jobs.StatusPending || job.Status == jobs.StatusRunning {
-				if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, string(status.Status), status.ActualCost, status.ErrorMessage); err != nil {
+				// A cancellation or completion that won the race stands: terminal states are never reversed.
+				if err := s.JobService.UpdateJobStatus(r.Context(), job.ID, string(status.Status), status.ActualCost, status.ErrorMessage); err != nil && !errors.Is(err, jobs.ErrJobAlreadyTerminal) {
 					writeError(w, http.StatusInternalServerError, "Unable to update generation status.")
 					return
 				}
@@ -2580,6 +2581,14 @@ func (s *Server) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"job": jobView})
 }
 
+// Cancel answers tell the user exactly what happened. Cancel is pending-only: it never claims to
+// have stopped a provider call that was already made.
+const (
+	cancelledMessage = "Cancelled before it reached the model. Nothing was charged."
+	settlingMessage  = "Already with the model. It will finish and you will be charged; the result is kept."
+	finishedMessage  = "This job had already finished."
+)
+
 // CancelJob handles POST /api/v1/generation-jobs/{id}/cancel
 func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 	userID := s.getUserID(r)
@@ -2596,12 +2605,30 @@ func (s *Server) CancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.JobService.CancelJob(r.Context(), id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	result, err := s.JobService.CancelJob(r.Context(), id)
+	if err != nil {
+		writeLookupError(w, err, "Job")
 		return
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Job cancelled successfully"})
+	message := finishedMessage
+	switch result.Outcome {
+	case db.CancelOutcomeCancelled:
+		message = cancelledMessage
+	case db.CancelOutcomeSettling:
+		message = settlingMessage
+	}
+	job = result.Job
+	writeJSON(w, http.StatusOK, gen.CancelJobResponse{
+		Outcome: gen.CancelJobResponseOutcome(result.Outcome),
+		Job: gen.GenerationJobRecord{
+			ID: job.ID, EntityID: &job.EntityID, ProjectID: job.ProjectID, UserID: job.UserID,
+			JobType: job.JobType, Stage: job.Stage, ModelID: job.ModelID, Status: gen.GenerationJobRecordStatus(job.Status),
+			IdempotencyKey: job.IdempotencyKey, EstimatedCost: job.EstimatedCost, ActualCost: job.ActualCost,
+			HashedUserID: job.HashedUserID, ErrorMessage: job.ErrorMessage, CreatedAt: job.CreatedAt, CompletedAt: job.CompletedAt,
+		},
+		Refunded: result.Refunded,
+		Message:  message,
+	})
 }
 
 // CreditUsage handles GET /api/v1/me/credit-usage
@@ -2813,6 +2840,9 @@ func generationErrorStatus(err error) int {
 	}
 }
 
+// stopSwitchMessage is what a refused paid generation tells the user while the global stop switch is on.
+const stopSwitchMessage = "Paid generation is stopped by the global kill switch, so no new generation can start. Finished pages, downloads and exports still work."
+
 // Stable error codes let clients distinguish lifetime book and rolling daily caps.
 func writeGenerationError(w http.ResponseWriter, err error) {
 	var serviceErr *gen.AIServiceError
@@ -2839,6 +2869,11 @@ func writeGenerationError(w http.ResponseWriter, err error) {
 		code = "book_budget_reached"
 	case errors.Is(err, domain.ErrDailyImageLimitReached):
 		code = "daily_image_limit_reached"
+	case errors.Is(err, domain.ErrKillSwitchActive):
+		// The global stop switch halts paid generation only; finished pages and exports still work.
+		code = "generation_stopped"
+		writeJSON(w, http.StatusTooManyRequests, JSONResponse{Error: err.Error(), Code: code, Message: stopSwitchMessage})
+		return
 	}
 	if code == "" {
 		status := generationErrorStatus(err)

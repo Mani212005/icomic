@@ -352,6 +352,20 @@ class GenerationReceipt(BaseModel):
     )
 
 
+class CancelJobResponse(BaseModel):
+    """
+    The honest answer to a cancel request. `cancelled`: the job had not reached the provider, so no provider call was or will be made, nothing was charged and the debit was refunded; the job is terminal and stays cancelled. `settling`: the job was already claimed or sent to the provider, so nothing was stopped; it keeps running to its own terminal status, its result and cost are kept and the user is charged. `finished`: the job had already reached `done`, `failed` or `uncertain` and is returned unchanged. Cancelling twice returns the same answer and never refunds twice.
+    """
+
+    outcome: Literal["cancelled", "settling", "finished"]
+    job: GenerationJobRecord
+    refunded: float = Field(
+        ...,
+        description="Amount returned to the balance by the cancellation. Zero unless the outcome is `cancelled` and the job had been debited.",
+    )
+    message: str
+
+
 class LetteringPoint(BaseModel):
     model_config = ConfigDict(
         extra="forbid",

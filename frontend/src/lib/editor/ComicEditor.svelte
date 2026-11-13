@@ -53,6 +53,10 @@
 	let jobError = null;
 	let jobStalled = '';
 	let resumeLabel = '';
+	let canCancel = false;
+	let cancelling = false;
+	let jobSettling = false;
+	let jobNotice = '';
 	const runner = new GenerationRunner({
 		get api() {
 			return apiClient;
@@ -64,6 +68,10 @@
 			currentJobStatus = view.status;
 			jobStalled = view.stalled;
 			resumeLabel = view.resumeLabel;
+			canCancel = view.canCancel;
+			cancelling = view.cancelling;
+			jobSettling = view.settling;
+			jobNotice = view.notice;
 		},
 		onError: (err) => (jobError = formatApiError(err))
 	});
@@ -245,6 +253,7 @@
 	}
 
 	const keepWaiting = () => runner.follow();
+	const cancelGeneration = () => runner.cancel();
 
 	async function runScriptAnalysis() {
 		const scriptText = (project.original_script || project.script || '').trim();
@@ -494,7 +503,7 @@
 	<div class="stage-workspace">
 
 	{#if isJobActive}
-		<div class="job-banner" role="status">
+		<div class="job-banner" class:settling={jobSettling} role="status" data-state={jobSettling ? 'settling' : 'active'}>
 			<div class="spinner"></div>
 			<div class="job-info">
 				<strong>{activeJobType}…</strong>
@@ -503,6 +512,16 @@
 			{#if jobStalled}
 				<button class="secondary-btn small" on:click={keepWaiting}>{resumeLabel}</button>
 			{/if}
+			{#if canCancel || cancelling}
+				<button class="secondary-btn small" on:click={cancelGeneration} disabled={cancelling}>
+					{cancelling ? 'Cancelling…' : 'Cancel generation'}
+				</button>
+			{/if}
+		</div>
+	{:else if jobNotice}
+		<div class="job-banner job-notice" role="status" data-state="notice">
+			<div class="job-info"><span>{jobNotice}</span></div>
+			<button class="secondary-btn small" on:click={() => runner.clearNotice()}>Dismiss</button>
 		</div>
 	{/if}
 

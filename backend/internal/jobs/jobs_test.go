@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"icomic/backend/internal/db"
+	"icomic/backend/internal/domain"
 	"icomic/backend/internal/jobs"
 )
 
@@ -52,24 +54,26 @@ func TestInMemoryJobService(t *testing.T) {
 		t.Fatalf("UpdateJobStatus failed: %v", err)
 	}
 
-	// 5. Cancel running job
-	if err := svc.CancelJob(ctx, job.ID); err != nil {
-		t.Fatalf("CancelJob failed: %v", err)
+	// 5. Cancelling a running job is not a cancellation: it is settling and nothing changes
+	result, err := svc.CancelJob(ctx, job.ID)
+	if err != nil || result.Outcome != db.CancelOutcomeSettling || result.Refunded != 0 {
+		t.Fatalf("expected settling for a running job, got %+v %v", result, err)
 	}
-	cancelled, _ := svc.GetJob(ctx, job.ID)
-	if cancelled.Status != jobs.StatusCancelled || cancelled.CompletedAt == nil {
-		t.Fatalf("expected cancelled status, got %s", cancelled.Status)
-	}
-
-	// 6. Cannot cancel already cancelled job
-	if err := svc.CancelJob(ctx, job.ID); err != jobs.ErrCannotCancelJob {
-		t.Fatalf("expected ErrCannotCancelJob for already cancelled job, got %v", err)
+	running, _ := svc.GetJob(ctx, job.ID)
+	if running.Status != jobs.StatusRunning || running.CompletedAt != nil {
+		t.Fatalf("a settling job must keep running, got %+v", running)
 	}
 
-	// Update to done
-	_ = svc.UpdateJobStatus(ctx, job.ID, jobs.StatusDone, &actualCost, nil)
-	if err := svc.CancelJob(ctx, job.ID); err != jobs.ErrCannotCancelJob {
-		t.Fatalf("expected ErrCannotCancelJob for done job, got %v", err)
+	// 6. The job finishes; a late cancel reports it finished and a terminal status is never reversed
+	if err := svc.UpdateJobStatus(ctx, job.ID, jobs.StatusDone, &actualCost, nil); err != nil {
+		t.Fatalf("finish running job: %v", err)
+	}
+	result, err = svc.CancelJob(ctx, job.ID)
+	if err != nil || result.Outcome != db.CancelOutcomeFinished || result.Job.Status != jobs.StatusDone {
+		t.Fatalf("expected finished for a done job, got %+v %v", result, err)
+	}
+	if err := svc.UpdateJobStatus(ctx, job.ID, jobs.StatusFailed, nil, nil); !errors.Is(err, jobs.ErrJobAlreadyTerminal) {
+		t.Fatalf("a done job must not become failed, got %v", err)
 	}
 }
 
@@ -153,8 +157,8 @@ func TestAsyncJobLifecycleTransitions(t *testing.T) {
 		IdempotencyKey: "idemp-3",
 	}
 	j3, _, _ := svc.CreateJob(ctx, req3)
-	if err := svc.CancelJob(ctx, j3.ID); err != nil {
-		t.Fatalf("CancelJob on pending failed: %v", err)
+	if result, err := svc.CancelJob(ctx, j3.ID); err != nil || result.Outcome != db.CancelOutcomeCancelled {
+		t.Fatalf("CancelJob on pending failed: %+v %v", result, err)
 	}
 	cancJob, _ := svc.GetJob(ctx, j3.ID)
 	if cancJob.Status != jobs.StatusCancelled || cancJob.CompletedAt == nil {
@@ -264,23 +268,34 @@ func TestDispatchAsync(t *testing.T) {
 
 	err = svc.DispatchAsync(ctx, j3.ID, func(taskCtx context.Context) (float64, error) {
 		close(taskStarted)
-		<-taskCtx.Done()
-		close(taskBlocked)
-		return 0.0, taskCtx.Err()
+		select {
+		case <-taskCtx.Done():
+			return 0.0, taskCtx.Err()
+		case <-taskBlocked:
+			return 0.02, nil
+		}
 	})
 	if err != nil {
 		t.Fatalf("DispatchAsync failed: %v", err)
 	}
 
 	<-taskStarted
-	if err := svc.CancelJob(ctx, j3.ID); err != nil {
-		t.Fatalf("CancelJob failed: %v", err)
+	// The task is already with the provider: cancelling reports settling and stops nothing.
+	result, err := svc.CancelJob(ctx, j3.ID)
+	if err != nil || result.Outcome != db.CancelOutcomeSettling {
+		t.Fatalf("expected settling for an in-flight job, got %+v %v", result, err)
 	}
-	<-taskBlocked
-	time.Sleep(10 * time.Millisecond)
-
-	res3, _ := svc.GetJob(ctx, j3.ID)
-	if res3.Status != jobs.StatusCancelled {
-		t.Fatalf("expected cancelled status, got %s", res3.Status)
+	close(taskBlocked)
+	deadline := time.Now().Add(2 * time.Second)
+	var res3 *domain.GenerationJob
+	for time.Now().Before(deadline) {
+		res3, _ = svc.GetJob(ctx, j3.ID)
+		if res3.Status != jobs.StatusRunning {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if res3.Status != jobs.StatusDone || res3.ActualCost == nil || *res3.ActualCost != 0.02 {
+		t.Fatalf("a settling job must finish with its result and cost, got %+v", res3)
 	}
 }

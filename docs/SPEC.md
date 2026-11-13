@@ -504,7 +504,7 @@ The system must ask the user to approve the estimated cost before each image gen
 The user must be able to:
 
 - Approve generation for that stage
-- Cancel generation
+- Cancel generation while it is still pending (see 8.5): a job that has not reached the provider is stopped for good and its debit refunded; a job already with the provider finishes and is charged
 - Reduce scope (e.g., generate one chapter at a time)
 
 The system must not charge for an image that it has not attempted to generate.
@@ -545,10 +545,10 @@ The API has no hard spend cap. The system must therefore enforce spend limits in
 The system must support:
 
 - A configurable lifetime per-book image budget (default 40), rolling per-user daily image cap (80) and monthly image cap (800). A 12-page book needs roughly 30 images, leaving room for revisions. Full refunds release image usage; new regenerations count, same-key replays do not.
-- A global budget kill switch: a single operator-set flag that halts all new image generation jobs for all users when the platform-wide spend reaches a configured threshold.
+- A global budget kill switch (the global stop switch): a single operator-set flag that halts all new paid generation (image, colour and text jobs that call the provider) for all users when the platform-wide spend reaches a configured threshold. It does not stop work that spends nothing at the provider: finished pages, downloads and PDF/PNG export keep working. Jobs committed but not yet sent are held, not sent, and can be cancelled for a refund.
 - Operators must be able to update the kill-switch threshold and reset it without a code deployment.
 
-When a quota or kill switch is active, the system must inform the user clearly and must not initiate the image generation job.
+When a quota or kill switch is active, the system must inform the user clearly (a structured `generation_stopped` error for the kill switch) and must not initiate the generation job.
 
 ### 5.6 Rate Limiting
 
@@ -792,7 +792,7 @@ The system must support:
 - Job creation
 - Job execution
 - Job retries (idempotent; re-executing a job must not double-charge credits)
-- Job cancellation
+- Job cancellation, pending-only and honest: cancelling a job that has not reached the provider atomically makes it terminal `cancelled`, ensures the dispatcher never sends it, and refunds its debit in the same transaction (idempotent on repeats). A job already claimed or sent is reported `settling`: it is not stopped, keeps its result and cost, and is charged. A terminal status is never reversed, so a late completion cannot overwrite a cancellation. Provider-side cancellation is not attempted.
 - Job status
 - Failed job recovery
 
@@ -1030,7 +1030,7 @@ POST   /api/v1/pages/:id/colour/approve
 ```http
 POST   /api/v1/projects/:id/estimate
 GET    /api/v1/generation-jobs/:id
-POST   /api/v1/generation-jobs/:id/cancel
+POST   /api/v1/generation-jobs/:id/cancel   (answers outcome: cancelled | settling | finished)
 GET    /api/v1/me/credit-usage
 ```
 

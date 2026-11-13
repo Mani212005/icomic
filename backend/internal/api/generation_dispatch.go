@@ -294,6 +294,9 @@ func (s *Server) dispatchOne(ctx context.Context, d db.PendingDispatch) {
 		}
 		return
 	}
+	// A job that is no longer pending or running (cancelled, or settled by another path) is never
+	// sent: this check, the cancelled envelope state and StartJob's terminal guard keep a cancelled
+	// job from ever reaching the provider.
 	if job.Status != jobs.StatusPending && job.Status != jobs.StatusRunning {
 		s.finishDispatch(ctx, d.JobID)
 		return
@@ -344,6 +347,12 @@ func (s *Server) pool() *dispatchPool {
 // leased to a previous process.
 func (s *Server) pumpDispatches(ctx context.Context, recoverAll bool) (int, error) {
 	if s.Dispatches == nil || s.AIClient == nil {
+		return 0, nil
+	}
+	// The global stop switch holds every unsent envelope. A held job stays pending, can still be
+	// cancelled for a full refund, and is sent once the switch is turned off. (The durable store
+	// also checks the persisted policy flag when it claims.)
+	if s.IsKillSwitchActive() {
 		return 0, nil
 	}
 	pool := s.pool()

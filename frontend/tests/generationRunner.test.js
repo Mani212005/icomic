@@ -194,3 +194,137 @@ test('a remembered job the server no longer knows is dropped quietly', async () 
 	assert.equal(runner.active, false);
 	assert.equal(storage.size(), 0);
 });
+
+// Cancel is pending-only and the server answers honestly. These jobs stay unfinished until the test
+// moves them, so the cancel lands while the runner is waiting on the job.
+function cancellableJobApi(initial, answer) {
+	const state = { status: initial, polls: 0, cancels: [] };
+	return {
+		state,
+		async getJob(id) {
+			state.polls += 1;
+			return { id, status: state.status };
+		},
+		async cancelJob(id) {
+			state.cancels.push(id);
+			if (answer instanceof Error) throw answer;
+			if (answer.outcome === 'cancelled') state.status = 'cancelled';
+			return { outcome: answer.outcome, job: { id, status: state.status }, refunded: answer.outcome === 'cancelled' ? 0.01 : 0 };
+		}
+	};
+}
+
+async function until(check) {
+	for (let i = 0; i < 500 && !check(); i += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+	assert.ok(check(), 'condition never became true');
+}
+
+// Starts a generation and waits until its receipt makes it cancellable. `done` settles with the run.
+async function startCancellable(runner, views) {
+	await runner.setProject('project-1');
+	const done = runner.run({
+		kind: JOB_KIND.PAGE,
+		label: 'Draft',
+		status: 'Generating',
+		entityId: 'page-1',
+		start: async () => ({ job: { id: 'job-c', status: 'pending' } })
+	});
+	await until(() => views.at(-1)?.canCancel);
+	return { done };
+}
+
+test('cancel is not offered until a receipt names a job, and does nothing before then', async () => {
+	const api = cancellableJobApi('pending', { outcome: 'cancelled' });
+	const { runner, views } = harness(api);
+	await runner.setProject('project-1');
+	let receipt;
+	const start = new Promise((resolve) => (receipt = resolve));
+	const done = runner.run({ kind: JOB_KIND.PAGE, label: 'Draft', status: 'Generating', start: () => start });
+	assert.equal(views.at(-1).canCancel, false, 'there is nothing on the server to cancel yet');
+	await runner.cancel();
+	assert.deepEqual(api.state.cancels, [], 'no request is sent for a job the server does not know');
+	api.state.status = 'done';
+	receipt({ job: { id: 'job-c', status: 'pending' } });
+	await done;
+});
+
+test('cancelling a job that has not reached the model stops it, charges nothing and releases the controls', async () => {
+	const api = cancellableJobApi('pending', { outcome: 'cancelled' });
+	const { runner, views, errors, settled, storage } = harness(api);
+	const { done } = await startCancellable(runner, views);
+	await runner.cancel();
+	await done;
+	assert.deepEqual(api.state.cancels, ['job-c']);
+	assert.equal(runner.active, false, 'a cancelled job is terminal: the controls unlock');
+	assert.equal(views.at(-1).notice, 'Cancelled, nothing was charged.');
+	assert.equal(errors.length, 0, 'a cancel is not an error');
+	assert.deepEqual(settled, [{ kind: 'refresh' }], 'the balance and the entity are reloaded');
+	assert.equal(storage.size(), 0, 'the cancelled job is forgotten');
+	const polls = api.state.polls;
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(api.state.polls, polls, 'polling stops once the job is cancelled');
+});
+
+test('cancelling a job already with the model is settling: the controls stay locked until it finishes, and it is charged', async () => {
+	const api = cancellableJobApi('running', { outcome: 'settling' });
+	const { runner, views, errors, settled } = harness(api);
+	const { done } = await startCancellable(runner, views);
+	await runner.cancel();
+	assert.equal(runner.active, true, 'a settling job is not terminal: the controls stay locked');
+	assert.equal(views.at(-1).settling, true);
+	assert.equal(views.at(-1).canCancel, false, 'cancel is offered once, then gone');
+	assert.equal(views.at(-1).status, 'Already with the model, finishing. You will be charged.');
+	assert.ok(!/stopped|cancelled/i.test(views.at(-1).status), 'it never claims the model was stopped');
+	await runner.cancel();
+	assert.deepEqual(api.state.cancels, ['job-c'], 'a second cancel sends nothing');
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(runner.active, true);
+	assert.equal(views.at(-1).status, 'Already with the model, finishing. You will be charged.', 'polling keeps the settling text');
+	assert.equal(settled.length, 0);
+
+	api.state.status = 'done';
+	await done;
+	assert.equal(runner.active, false, 'only the terminal job unlocks the controls');
+	assert.equal(settled.length, 1, 'the finished result is kept and shown');
+	assert.equal(settled[0].jobId, 'job-c');
+	assert.equal(views.at(-1).notice, 'This was already with the model when you cancelled, so it finished and you were charged.');
+	assert.equal(errors.length, 0);
+});
+
+test('a job that finished before the cancel landed is reported finished and settles normally', async () => {
+	const api = cancellableJobApi('running', { outcome: 'finished' });
+	const { runner, views, settled } = harness(api);
+	const { done } = await startCancellable(runner, views);
+	await runner.cancel();
+	assert.equal(views.at(-1).notice, 'This had already finished, so there was nothing to cancel.');
+	assert.equal(runner.active, true, 'the poll in flight still reports the final state');
+	api.state.status = 'done';
+	await done;
+	assert.equal(runner.active, false);
+	assert.equal(settled.length, 1);
+});
+
+test('a failed cancel request keeps the job running and lets the user try again', async () => {
+	const api = cancellableJobApi('running', Object.assign(new Error('Failed to fetch'), { status: 0 }));
+	const { runner, views, errors } = harness(api);
+	const { done } = await startCancellable(runner, views);
+	await runner.cancel();
+	assert.equal(errors.length, 1);
+	assert.equal(runner.active, true, 'nothing is known to have changed');
+	assert.equal(views.at(-1).cancelling, false);
+	assert.equal(views.at(-1).canCancel, true, 'the user may try again');
+	api.state.status = 'done';
+	await done;
+});
+
+test('a job cancelled elsewhere is reported as cancelled with no charge, not as an error', async () => {
+	const api = cancellableJobApi('pending', { outcome: 'cancelled' });
+	const { runner, views, errors, settled } = harness(api);
+	const { done } = await startCancellable(runner, views);
+	api.state.status = 'cancelled'; // another tab cancelled it
+	await done;
+	assert.equal(runner.active, false);
+	assert.equal(views.at(-1).notice, 'Cancelled, nothing was charged.');
+	assert.equal(errors.length, 0);
+	assert.deepEqual(settled, [{ kind: 'refresh' }]);
+});

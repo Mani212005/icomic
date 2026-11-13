@@ -36,7 +36,8 @@ type DispatchStore interface {
 	// ClaimDispatches leases up to limit pending envelopes. ignoreLeases reclaims envelopes
 	// still leased to a previous process, which a restarting single-instance backend uses.
 	ClaimDispatches(ctx context.Context, limit int, ignoreLeases bool) ([]PendingDispatch, error)
-	// FinishDispatch retires an envelope once its job is terminal. It is idempotent.
+	// FinishDispatch retires a pending envelope once its job is terminal. It is idempotent and
+	// never rewrites a cancelled envelope.
 	FinishDispatch(ctx context.Context, jobID string) error
 	// ReleaseDispatch makes a pending envelope claimable again after DispatchRetryDelay.
 	ReleaseDispatch(ctx context.Context, jobID string) error
@@ -73,9 +74,12 @@ func (p *PostgresRepository) ClaimDispatches(ctx context.Context, limit int, ign
         FROM generation_jobs j WHERE j.id=d.job_id AND d.state='pending' AND j.status NOT IN ('pending','running')`); err != nil {
 		return nil, err
 	}
+	// The global stop switch holds every unsent envelope: nothing new reaches the provider while
+	// it is on, and a held job stays pending (and cancellable) until the switch is turned off.
 	rows, err := p.db.QueryContext(ctx, `WITH due AS (
             SELECT job_id FROM generation_dispatches
             WHERE state='pending' AND ($2::boolean OR lease_until<=NOW())
+            AND NOT COALESCE((SELECT kill_switch_active FROM generation_policy WHERE singleton=TRUE),FALSE)
             ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED)
         UPDATE generation_dispatches d SET attempts=d.attempts+1, updated_at=NOW(),
             lease_until=NOW()+$3::bigint*INTERVAL '1 microsecond'
@@ -99,7 +103,7 @@ func (p *PostgresRepository) ClaimDispatches(ctx context.Context, limit int, ign
 }
 
 func (p *PostgresRepository) FinishDispatch(ctx context.Context, jobID string) error {
-	_, err := p.db.ExecContext(ctx, `UPDATE generation_dispatches SET state='delivered', updated_at=NOW() WHERE job_id=$1::uuid`, jobID)
+	_, err := p.db.ExecContext(ctx, `UPDATE generation_dispatches SET state='delivered', updated_at=NOW() WHERE job_id=$1::uuid AND state='pending'`, jobID)
 	return err
 }
 

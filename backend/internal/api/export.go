@@ -277,7 +277,9 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 	idempKey := uuid.NewString()
 
 	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		KillSwitchActive: s.IsKillSwitchActive(),
+		// PDF and PNG export spend nothing at the provider, so the global stop switch (which halts
+		// paid generation only) does not apply to it.
+		KillSwitchActive: false,
 		ProjectID:        proj.ID,
 		UserID:           userID,
 		JobType:          "assemble_pdf",
