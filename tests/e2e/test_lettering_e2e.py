@@ -7,6 +7,7 @@ from io import BytesIO
 import httpx
 import pytest
 from PIL import Image
+from conftest import artifact_url
 
 
 @pytest.mark.parametrize("go_api_server", [True], indirect=True)
@@ -59,8 +60,8 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     painted = api_client.post(
         f"/api/v1/pages/{page_id}/painted-page", json={"variant": "direct-from-brief"}
     )
-    assert painted.status_code == 200, painted.text
-    image_url = painted.json()["image_url"]
+    assert painted.status_code == 202, painted.text
+    image_url = artifact_url(api_client, painted.json())
     # The API hands out a short-lived scoped link; the browser fetches the image through it.
     image = httpx.get(image_url).content
     source_hash = hashlib.sha256(image).hexdigest()

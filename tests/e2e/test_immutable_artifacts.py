@@ -1,6 +1,7 @@
 """Earlier generation and export URLs survive regeneration through the public API."""
 
 import httpx
+from conftest import artifact_url
 
 
 def test_regeneration_preserves_previous_artifacts(api_client, ai_service):
@@ -30,11 +31,12 @@ def test_regeneration_preserves_previous_artifacts(api_client, ai_service):
     for character in characters:
         path = f"/api/v1/characters/{character['id']}"
         first = post(f"{path}/reference-image")
-        original = image_bytes(first["image_url"])
+        first_url = artifact_url(api_client, first)
+        original = image_bytes(first_url)
         second = post(f"{path}/reference-image", json={"prompt": "A new reference pose"})
         assert second["job"]["id"] != first["job"]["id"]
-        assert second["image_url"] != first["image_url"]
-        assert image_bytes(first["image_url"]) == original
+        assert artifact_url(api_client, second) != first_url
+        assert image_bytes(first_url) == original
         post(f"{path}/approve")
 
     chapter = post(f"/api/v1/projects/{project}/chapters")["chapters"][0]["id"]
@@ -43,14 +45,15 @@ def test_regeneration_preserves_previous_artifacts(api_client, ai_service):
     for stage in ("draft", "line-art"):
         path = f"/api/v1/pages/{page}/{stage}"
         first = post(path)
-        original = image_bytes(first["image_url"])
+        first_url = artifact_url(api_client, first)
+        original = image_bytes(first_url)
         if stage == "line-art":
             # Current approval freshness uses page UpdatedAt, including inking.
             post(f"/api/v1/pages/{page}/draft/approve")
         second = post(path)
         assert second["job"]["id"] != first["job"]["id"]
-        assert second["image_url"] != first["image_url"]
-        assert image_bytes(first["image_url"]) == original
+        assert artifact_url(api_client, second) != first_url
+        assert image_bytes(first_url) == original
         post(f"{path}/approve")
 
     first = post(f"/api/v1/projects/{project}/export")["export"]

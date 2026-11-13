@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	"icomic/backend/gen"
@@ -198,16 +197,15 @@ func (s *Server) generationDebit(job *domain.GenerationJob) float64 {
 	return 0
 }
 
-// recordGenerationFailure stores a failed or uncertain dispatch outcome with its usage.
-// Unknown provider outcomes keep the debit and record no cost estimate.
+// recordGenerationFailure stores a failed or uncertain dispatch outcome with the usage the AI
+// service recorded, which is zero when it recorded none. An unknown provider outcome keeps its debit.
 func (s *Server) recordGenerationFailure(ctx context.Context, job *domain.GenerationJob, cause error, cost float64) error {
 	message := safeGenerationMessage(cause)
 	status := jobs.StatusFailed
-	var actualCost *float64 = &cost
 	if uncertainProviderOutcome(cause) {
-		status, actualCost = jobs.StatusUncertain, nil
+		status = jobs.StatusUncertain
 	}
-	return s.JobService.UpdateJobStatus(ctx, job.ID, status, actualCost, &message)
+	return s.JobService.UpdateJobStatus(ctx, job.ID, status, &cost, &message)
 }
 
 // transientDispatchError reports an error that says nothing about the provider outcome: the
@@ -305,34 +303,120 @@ func (s *Server) dispatchOne(ctx context.Context, d db.PendingDispatch) {
 	}
 }
 
-// DispatchPending claims one bounded batch of committed envelopes and drives each to a terminal
-// state or back to the outbox. recoverAll also takes envelopes leased to a previous process.
-func (s *Server) DispatchPending(ctx context.Context, recoverAll bool) (int, error) {
+// writeReceipt answers a generation request as soon as its job, debit and dispatch envelope are
+// committed, without waiting for the provider. The client follows the job by ID through
+// GET /api/v1/generation-jobs/{id} and reads the finished entity once the job is done. A repeated
+// request with the same Idempotency-Key returns the same receipt and never a second charge.
+func (s *Server) writeReceipt(w http.ResponseWriter, job *domain.GenerationJob, entityType gen.GenerationReceiptEntityType, variant string) {
+	s.kickDispatcher()
+	receipt := gen.GenerationReceipt{
+		Job: gen.GenerationJobRecord{
+			ID: job.ID, EntityID: &job.EntityID, ProjectID: job.ProjectID, UserID: job.UserID,
+			JobType: job.JobType, Stage: job.Stage, ModelID: job.ModelID, Status: gen.GenerationJobRecordStatus(job.Status),
+			IdempotencyKey: job.IdempotencyKey, EstimatedCost: job.EstimatedCost, ActualCost: job.ActualCost,
+			HashedUserID: job.HashedUserID, ErrorMessage: job.ErrorMessage, CreatedAt: job.CreatedAt, CompletedAt: job.CompletedAt,
+		},
+		JobID: job.ID, Status: gen.GenerationReceiptStatus(job.Status),
+		EntityType: entityType, EntityID: job.EntityID, ProjectID: job.ProjectID,
+	}
+	if job.EntityID == "" {
+		receipt.Job.EntityID = nil
+	}
+	if variant != "" {
+		v := gen.GenerationReceiptVariant(variant)
+		receipt.Variant = &v
+	}
+	writeJSON(w, http.StatusAccepted, receipt)
+}
+
+// dispatchPool bounds in-flight envelope deliveries. Every claimer - the request that just
+// committed a job, the polling dispatcher and the restart recovery - takes slots from it, so
+// the bound holds however many of them run.
+type dispatchPool struct{ slots chan struct{} }
+
+func (s *Server) pool() *dispatchPool {
+	s.poolOnce.Do(func() { s.dispatchSlots = &dispatchPool{slots: make(chan struct{}, dispatchBatch)} })
+	return s.dispatchSlots
+}
+
+// pumpDispatches claims as many committed envelopes as there are free slots and starts each
+// delivery in the background. It returns how many it started. recoverAll also takes envelopes
+// leased to a previous process.
+func (s *Server) pumpDispatches(ctx context.Context, recoverAll bool) (int, error) {
 	if s.Dispatches == nil || s.AIClient == nil {
 		return 0, nil
 	}
-	claimed, err := s.Dispatches.ClaimDispatches(ctx, dispatchBatch, recoverAll)
+	pool := s.pool()
+	free := 0
+	for free < dispatchBatch {
+		select {
+		case pool.slots <- struct{}{}:
+			free++
+			continue
+		default:
+		}
+		break
+	}
+	if free == 0 {
+		return 0, nil
+	}
+	claimed, err := s.Dispatches.ClaimDispatches(ctx, free, recoverAll)
+	for i := len(claimed); i < free; i++ {
+		<-pool.slots
+	}
 	if err != nil {
 		return 0, err
 	}
-	var wg sync.WaitGroup
 	for _, d := range claimed {
-		wg.Add(1)
+		s.dispatchWG.Add(1)
 		go func() {
-			defer wg.Done()
+			defer s.dispatchWG.Done()
+			defer func() {
+				<-pool.slots
+				// A freed slot may let a waiting envelope start without waiting for the next poll.
+				s.kickDispatcher()
+			}()
 			s.dispatchOne(ctx, d)
 		}()
 	}
-	wg.Wait()
 	return len(claimed), nil
 }
 
+// kickDispatcher starts delivery of freshly committed work at once. The creating request calls
+// it after the commit and returns its receipt without waiting for the provider.
+func (s *Server) kickDispatcher() {
+	if s.Dispatches == nil || s.AIClient == nil {
+		return
+	}
+	s.dispatchWG.Add(1)
+	go func() {
+		defer s.dispatchWG.Done()
+		if _, err := s.pumpDispatches(context.Background(), false); err != nil {
+			log.Printf("generation dispatcher: %v", err)
+		}
+	}()
+}
+
+// WaitDispatches blocks until every delivery this process started has finished. It exists for
+// tests and orderly shutdown: pending envelopes remain durable either way.
+func (s *Server) WaitDispatches() { s.dispatchWG.Wait() }
+
+// DispatchPending claims one bounded batch of committed envelopes and drives each to a terminal
+// state or back to the outbox, returning once they have finished. recoverAll also takes
+// envelopes leased to a previous process.
+func (s *Server) DispatchPending(ctx context.Context, recoverAll bool) (int, error) {
+	n, err := s.pumpDispatches(ctx, recoverAll)
+	s.WaitDispatches()
+	return n, err
+}
+
 // RunDispatcher is the one bounded dispatcher. At most dispatchBatch envelopes run at once. The
-// first pass takes everything a previous process left, because a restart ends its in-flight requests.
+// first pass takes everything a previous process left, because a restart ends its in-flight
+// requests; later passes pick up envelopes whose retry delay or lease lapsed.
 func (s *Server) RunDispatcher(ctx context.Context) {
 	recoverAll := true
 	for ctx.Err() == nil {
-		claimed, err := s.DispatchPending(ctx, recoverAll)
+		claimed, err := s.pumpDispatches(ctx, recoverAll)
 		if err != nil {
 			log.Printf("generation dispatcher: %v", err)
 		} else {

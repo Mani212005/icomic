@@ -154,7 +154,7 @@ make test-ai
 # Or: ( cd ai && uv run --frozen pytest -v )
 ```
 
-Queue tests use `FakeQueueAdapter` for synchronous HTTP delivery and `fakeredis` with Lua for Redis atomic enqueue, claims, restart recovery, and response replay. No Redis process is needed. The Python runtime includes `redis`; the Redis consumer is selected only by `ADAPTER_QUEUE=redis`. Go HTTP tests assert dispatch after debit, repeated-key replay, durable lifecycle transitions, and idempotent refunds.
+Queue tests use `FakeQueueAdapter` for synchronous HTTP delivery and `fakeredis` with Lua for Redis atomic enqueue, claims, restart recovery, and response replay. No Redis process is needed. The Python runtime includes `redis`; the Redis consumer is selected only by `ADAPTER_QUEUE=redis`. Go HTTP tests assert dispatch after debit, repeated-key replay, durable lifecycle transitions, and idempotent refunds. Generation requests answer a `202` receipt before the provider runs: the tests use a blocking fake provider to prove the receipt is prompt, a repeated or recovered key never charges twice, and the finished entity appears when the job is done (hermetic in `internal/api`, on real PostgreSQL in `internal/db`). The E2E client follows each receipt to its settled job, as the browser does.
 
 ### 7. Svelte Frontend
 

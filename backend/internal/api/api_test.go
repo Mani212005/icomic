@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -523,8 +522,7 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 	for _, ch := range chars {
 		cID := ch.(map[string]interface{})["id"].(string)
 		reqRef := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+cID+"/reference-image", nil)
-		recRef := httptest.NewRecorder()
-		handler.ServeHTTP(recRef, reqRef)
+		recRef := serveGeneration(server, handler, reqRef)
 		if recRef.Code != http.StatusAccepted {
 			t.Fatalf("generate reference image failed: %d", recRef.Code)
 		}
@@ -575,8 +573,7 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 
 	// 9. Generate draft sketch on page
 	reqDraft := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/draft", nil)
-	recDraft := httptest.NewRecorder()
-	handler.ServeHTTP(recDraft, reqDraft)
+	recDraft := serveGeneration(server, handler, reqDraft)
 	if recDraft.Code != http.StatusAccepted {
 		t.Fatalf("generate draft failed: %d", recDraft.Code)
 	}
@@ -599,8 +596,7 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 
 	// 12. Generate line art
 	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
-	recLine := httptest.NewRecorder()
-	handler.ServeHTTP(recLine, reqLine)
+	recLine := serveGeneration(server, handler, reqLine)
 	if recLine.Code != http.StatusAccepted {
 		t.Fatalf("generate line art failed: %d", recLine.Code)
 	}
@@ -615,8 +611,7 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 
 	// 14. Colouring: suggest, edit, approve
 	reqPalSuggest := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/colour-palette/suggest", nil)
-	recPalSuggest := httptest.NewRecorder()
-	handler.ServeHTTP(recPalSuggest, reqPalSuggest)
+	recPalSuggest := serveGeneration(server, handler, reqPalSuggest)
 	if recPalSuggest.Code != http.StatusAccepted {
 		t.Fatalf("suggest colour palette failed: %d", recPalSuggest.Code)
 	}
@@ -752,14 +747,14 @@ func TestAIServiceFailureRefund(t *testing.T) {
 	server, handler, repo := setupTestServer(true, "user-fail")
 
 	proj := &domain.Project{
-		ID:       "proj-fail-1",
+		ID:       "b6a7c1f0-6e57-4b0a-9a4e-0f1c2d3e4f51",
 		UserID:   "user-fail",
 		Title:    "Fail Test",
 		ArtStyle: "manga",
 	}
 	_ = repo.CreateProject(context.Background(), proj)
 	char := &domain.Character{
-		ID:          "char-fail-1",
+		ID:          "c0a3d1b2-7f64-4c1b-8d5e-1a2b3c4d5e62",
 		ProjectID:   proj.ID,
 		Name:        "Hero",
 		Description: "A hero",
@@ -769,17 +764,17 @@ func TestAIServiceFailureRefund(t *testing.T) {
 	// Inject AI failure
 	fakeAI := server.AIClient.(*gen.FakeAIServiceClient)
 	fakeAI.GenerateCharacterReferenceFunc = func(ctx context.Context, req gen.GenerateCharacterReferenceRequest) (*gen.GenerateCharacterReferenceResponse, error) {
-		return nil, errors.New("upstream AI generation service timed out")
+		return nil, &gen.AIServiceError{Code: "UPSTREAM_UNAVAILABLE", Message: "Generation service is temporarily unavailable.", StatusCode: http.StatusServiceUnavailable}
 	}
 
 	initialBalance, _ := server.CreditService.GetBalance(context.Background(), "user-fail")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+char.ID+"/reference-image", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	rec := serveGeneration(server, handler, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 Bad Request on AI failure, got %d", rec.Code)
+	// The provider failure is no longer the HTTP answer: the receipt is 202 and the job carries it.
+	if job := settledJob(t, server, rec); job.Status != "failed" || job.ErrorMessage == nil {
+		t.Fatalf("expected the job to settle failed with a message, got %+v", job)
 	}
 
 	finalBalance, _ := server.CreditService.GetBalance(context.Background(), "user-fail")

@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +20,9 @@ type committedDispatcher struct {
 	dispatched int
 }
 
-func (d *committedDispatcher) DispatchAsync(ctx context.Context, id string, task func(context.Context) (float64, error)) error {
+// StartJob is the first step of every delivery, so it proves the debit committed before the
+// provider is called.
+func (d *committedDispatcher) StartJob(ctx context.Context, id string) error {
 	job, err := d.GetJob(ctx, id)
 	if err != nil {
 		return err
@@ -40,7 +41,7 @@ func (d *committedDispatcher) DispatchAsync(ctx context.Context, id string, task
 		return errors.New("dispatch before committed debit")
 	}
 	d.dispatched++
-	return d.JobService.DispatchAsync(ctx, id, task)
+	return d.JobService.StartJob(ctx, id)
 }
 
 func TestHTTPQueueDispatchReplayAndRefund(t *testing.T) {
@@ -74,7 +75,7 @@ func TestHTTPQueueDispatchReplayAndRefund(t *testing.T) {
 			s.AIClient.(*gen.FakeAIServiceClient).GenerateCharacterReferenceFunc = func(ctx context.Context, req gen.GenerateCharacterReferenceRequest) (*gen.GenerateCharacterReferenceResponse, error) {
 				calls++
 				if fail {
-					return nil, errors.New("worker generation failed")
+					return nil, &gen.AIServiceError{Code: "UPSTREAM_UNAVAILABLE", Message: "worker generation failed", StatusCode: http.StatusServiceUnavailable}
 				}
 				return &gen.GenerateCharacterReferenceResponse{JobID: req.JobID, ImageURL: "https://images.example/saved.png", ModelID: "fake"}, nil
 			}
@@ -82,30 +83,18 @@ func TestHTTPQueueDispatchReplayAndRefund(t *testing.T) {
 			for attempt := 0; attempt < 2; attempt++ {
 				req := httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+character.ID+"/reference-image", strings.NewReader(`{}`))
 				req.Header.Set("Idempotency-Key", "same-client-request")
-				rec := httptest.NewRecorder()
-				handler.ServeHTTP(rec, req)
-				expected := http.StatusAccepted
-				if fail && attempt == 0 {
-					expected = http.StatusInternalServerError
-				}
-				if rec.Code != expected {
+				rec := serveGeneration(s, handler, req)
+				if rec.Code != http.StatusAccepted {
 					t.Fatalf("attempt %d: %d %s", attempt, rec.Code, rec.Body.String())
 				}
-				if rec.Code == http.StatusAccepted {
-					var body struct {
-						Job domain.GenerationJob `json:"job"`
-					}
-					if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-						t.Fatal(err)
-					}
-					jobID = body.Job.ID
-					expectedStatus := jobs.StatusDone
-					if fail {
-						expectedStatus = jobs.StatusFailed
-					}
-					if body.Job.Status != expectedStatus {
-						t.Fatalf("job status %s", body.Job.Status)
-					}
+				settled := settledJob(t, s, rec)
+				jobID = settled.ID
+				expectedStatus := jobs.StatusDone
+				if fail {
+					expectedStatus = jobs.StatusFailed
+				}
+				if settled.Status != expectedStatus {
+					t.Fatalf("job status %s", settled.Status)
 				}
 			}
 			if calls != 1 || dispatcher.dispatched != 1 {

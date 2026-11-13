@@ -1,4 +1,6 @@
 
+import { newIdempotencyKey } from './idempotency.js';
+
 export class ApiClient {
 
 	constructor(options = {}) {
@@ -228,10 +230,25 @@ export class ApiClient {
 		return res && res.character ? res.character : res;
 	}
 
-	async generateCharacterReference(id) {
-		return this.request(`/api/v1/characters/${id}/reference-image`, {
-			method: 'POST'
-		});
+	// A paid generation returns a receipt ({ job, job_id, status, entity_type, entity_id }) as soon as
+	// the job and its charge are committed; the result is read from the job and the entity.
+	// One key per user action makes a repeated request return the same job instead of a second one,
+	// so a dropped connection is retried safely and never pays twice.
+	async postGeneration(path, options = {}) {
+		const key = options.idempotencyKey || newIdempotencyKey();
+		const attempts = options.attempts ?? 3;
+		for (let attempt = 1; ; attempt += 1) {
+			try {
+				return await this.request(path, { method: 'POST', headers: { 'Idempotency-Key': key } });
+			} catch (err) {
+				if (err?.status || !(err instanceof TypeError) || attempt >= attempts) throw err;
+				await new Promise((resolve) => setTimeout(resolve, (options.retryDelayMs ?? 500) * attempt));
+			}
+		}
+	}
+
+	async generateCharacterReference(id, options) {
+		return this.postGeneration(`/api/v1/characters/${id}/reference-image`, options);
 	}
 
 	async approveCharacter(id) {
@@ -317,10 +334,8 @@ export class ApiClient {
 		return res && res.page ? res.page : res;
 	}
 
-	async generateDraft(pageId) {
-		return this.request(`/api/v1/pages/${pageId}/draft`, {
-			method: 'POST'
-		});
+	async generateDraft(pageId, options) {
+		return this.postGeneration(`/api/v1/pages/${pageId}/draft`, options);
 	}
 
 	async approveDraft(pageId) {
@@ -330,10 +345,8 @@ export class ApiClient {
 		return res && res.page ? res.page : res;
 	}
 
-	async generateLineArt(pageId, variant) {
-		return this.request(`/api/v1/pages/${pageId}/line-art${variant === 'ink' ? '?variant=ink' : ''}`, {
-			method: 'POST'
-		});
+	async generateLineArt(pageId, variant, options) {
+		return this.postGeneration(`/api/v1/pages/${pageId}/line-art${variant === 'ink' ? '?variant=ink' : ''}`, options);
 	}
 
 	async approveLineArt(pageId, variant) {
@@ -348,10 +361,8 @@ export class ApiClient {
 		return res && res.palette ? res.palette : res;
 	}
 
-	async suggestColourPalette(pageId) {
-		return this.request(`/api/v1/pages/${pageId}/colour-palette/suggest`, {
-			method: 'POST'
-		});
+	async suggestColourPalette(pageId, options) {
+		return this.postGeneration(`/api/v1/pages/${pageId}/colour-palette/suggest`, options);
 	}
 
 	async updateColourPalette(pageId, palette) {

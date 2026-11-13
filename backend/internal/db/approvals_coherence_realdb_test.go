@@ -448,6 +448,7 @@ func TestRealDBApprovalAndAllocationFlowThroughHTTP(t *testing.T) {
 
 	expect(do("POST", "/characters/"+character.ID+"/approve", ""), http.StatusBadRequest, "approve character without reference image")
 	expect(do("POST", "/characters/"+character.ID+"/reference-image", ""), http.StatusAccepted, "reference image")
+	server.WaitDispatches() // the receipt precedes the provider call; approval needs the saved image
 	expect(do("POST", "/characters/"+character.ID+"/approve", ""), http.StatusOK, "approve character")
 
 	outline := func() string {

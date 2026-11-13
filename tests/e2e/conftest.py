@@ -74,6 +74,61 @@ def terminate_process(proc: subprocess.Popen) -> None:
         proc.wait()
 
 
+class ReceiptClient(httpx.Client):
+    """HTTP client that follows a generation receipt to its settled job.
+
+    A paid generation answers 202 with a receipt as soon as the job is committed, long before the
+    provider finishes. ``post`` then polls the job like the browser does, so a test sees the settled
+    state; pass ``settle=False`` to keep the bare receipt (job in flight).
+    """
+
+    def wait_for_job(self, job_id: str, timeout: float = 30.0) -> dict:
+        deadline = time.time() + timeout
+        job: dict = {}
+        delay = 0.05
+        while time.time() < deadline:
+            job = self.get(f"/api/v1/generation-jobs/{job_id}").json().get("job", {})
+            if job.get("status") in {"done", "failed", "uncertain", "cancelled"}:
+                return job
+            time.sleep(delay)
+            delay = min(delay * 1.5, 1.0)  # a long job is polled less often, like the browser
+        raise TimeoutError(f"job {job_id} did not settle within {timeout}s: {job}")
+
+    def post(self, url, *, settle: bool = True, **kwargs):
+        response = super().post(url, **kwargs)
+        if settle and response.status_code == 202:
+            try:
+                receipt = response.json()
+            except ValueError:
+                return response
+            if isinstance(receipt, dict) and receipt.get("job_id") and receipt.get("entity_type"):
+                self.wait_for_job(receipt["job_id"])
+        return response
+
+
+def artifact_url(client: httpx.Client, receipt: dict) -> str:
+    """The image a settled generation produced, read from its entity as a browser does.
+
+    A receipt carries no result: the finished entity names the job that produced each image.
+    """
+    project_id, entity_id, job_id = receipt["project_id"], receipt["entity_id"], receipt["job_id"]
+    if receipt["entity_type"] == "character":
+        characters = client.get(f"/api/v1/projects/{project_id}/characters").json()["characters"]
+        return next(c for c in characters if c["id"] == entity_id)["reference_image_url"]
+    for chapter in client.get(f"/api/v1/projects/{project_id}/chapters").json()["chapters"]:
+        for page in client.get(f"/api/v1/chapters/{chapter['id']}/pages").json()["pages"]:
+            if page["id"] != entity_id:
+                continue
+            for job_field, url_field in (
+                ("draft_image_job_id", "draft_image_url"),
+                ("line_art_image_job_id", "line_art_image_url"),
+                ("painted_page_image_job_id", "painted_page_image_url"),
+            ):
+                if page.get(job_field) == job_id:
+                    return page[url_field]
+    raise AssertionError(f"job {job_id} produced no image on {receipt['entity_type']} {entity_id}")
+
+
 @pytest.fixture(scope="session")
 def repo_root() -> Path:
     return REPO_ROOT
@@ -269,13 +324,13 @@ def go_api_server(
 
 
 @pytest.fixture
-def api_client(go_api_server: dict[str, Any]) -> Generator[httpx.Client, None, None]:
+def api_client(go_api_server: dict[str, Any]) -> Generator[ReceiptClient, None, None]:
     """HTTP client authenticated with the supported dev identity (dev@icomic.local)."""
     headers = {
         "X-User-ID": "00000000-0000-0000-0000-000000000001",
         "Content-Type": "application/json",
     }
-    with httpx.Client(base_url=go_api_server["base_url"], headers=headers, timeout=10.0) as client:
+    with ReceiptClient(base_url=go_api_server["base_url"], headers=headers, timeout=10.0) as client:
         yield client
 
 
@@ -284,7 +339,7 @@ def kill_switch_server(
     compiled_go_server: Path,
     ai_service: dict[str, Any],
     temp_test_dir: Path,
-) -> Generator[httpx.Client, None, None]:
+) -> Generator[ReceiptClient, None, None]:
     """Start an isolated Go API server instance with KILL_SWITCH=true active."""
     ks_port = find_free_port()
     media_dir = temp_test_dir / "ks_media"
@@ -324,7 +379,7 @@ def kill_switch_server(
         "X-User-ID": "00000000-0000-0000-0000-000000000001",
         "Content-Type": "application/json",
     }
-    with httpx.Client(base_url=base_url, headers=headers, timeout=10.0) as client:
+    with ReceiptClient(base_url=base_url, headers=headers, timeout=10.0) as client:
         yield client
 
     terminate_process(proc)
@@ -336,7 +391,7 @@ def quota_server(
     compiled_go_server: Path,
     ai_service: dict[str, Any],
     temp_test_dir: Path,
-) -> Generator[httpx.Client, None, None]:
+) -> Generator[ReceiptClient, None, None]:
     """Start an isolated Go API server instance for quota exhaustion testing."""
     q_port = find_free_port()
     media_dir = temp_test_dir / "quota_media"
@@ -376,7 +431,7 @@ def quota_server(
         "X-User-ID": "00000000-0000-0000-0000-000000000001",
         "Content-Type": "application/json",
     }
-    with httpx.Client(base_url=base_url, headers=headers, timeout=10.0) as client:
+    with ReceiptClient(base_url=base_url, headers=headers, timeout=10.0) as client:
         yield client
 
     terminate_process(proc)

@@ -32,7 +32,7 @@ def painted_project(api_client: httpx.Client, approve: bool = True) -> tuple[str
     page_id = pages[0]["id"]
     assert api_client.post(f"/api/v1/pages/{page_id}/draft").status_code == 202
     assert api_client.post(f"/api/v1/pages/{page_id}/draft/approve").status_code == 200
-    assert api_client.post(f"/api/v1/pages/{page_id}/line-art").status_code == 200
+    assert api_client.post(f"/api/v1/pages/{page_id}/line-art").status_code == 202
     if approve:
         assert api_client.post(f"/api/v1/pages/{page_id}/line-art/approve").status_code == 200
     return project_id, len(pages)

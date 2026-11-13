@@ -172,6 +172,9 @@ func seedWriteFailureFlow(t *testing.T, repo db.Repository) {
 }
 
 func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
+	// Debited image and palette generations answer with a receipt before saving, so a failed save
+	// is not an HTTP 500: the job must stay unfinished (never done) for the dispatcher to retry.
+	deferred := map[string]bool{"reference image": true, "draft generation": true, "line art generation": true, "palette suggestion": true}
 	cases := []struct{ name, method, path, operation string }{
 		{"analysis character", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/analyze", "CreateCharacter"},
 		{"analysis project", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/analyze", "UpdateProject"},
@@ -225,6 +228,16 @@ func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 			}
 			if tc.name == "page edit" {
 				body = `{"panel_ids":["a8a24397-3780-5a99-acea-8ab882a2ef5b"]}`
+			}
+			if deferred[tc.name] {
+				rec = serveGeneration(s, s.NewRouter(), httptest.NewRequest(tc.method, "/api/v1"+tc.path, strings.NewReader(body)))
+				if rec.Code != http.StatusAccepted || failing.calls != 1 {
+					t.Fatalf("expected a 202 receipt and one failed %s, calls=%d HTTP %d: %s", tc.operation, failing.calls, rec.Code, rec.Body.String())
+				}
+				if status := settledJob(t, s, rec).Status; status != "running" {
+					t.Fatalf("a result that could not be saved must leave the job unfinished for retry, got %s", status)
+				}
+				return
 			}
 			s.NewRouter().ServeHTTP(rec, httptest.NewRequest(tc.method, "/api/v1"+tc.path, strings.NewReader(body)))
 			if rec.Code != http.StatusInternalServerError || failing.calls != 1 {
@@ -289,8 +302,7 @@ func TestPaletteRequiresStoredLineArtBeforeCharging(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rec := httptest.NewRecorder()
-			s.NewRouter().ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette/suggest", nil))
+			rec := serveGeneration(s, s.NewRouter(), httptest.NewRequest("POST", "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette/suggest", nil))
 			if strings.HasPrefix(imageURL, "https://") {
 				if rec.Code != http.StatusAccepted || calls != 1 {
 					t.Fatalf("HTTP %d calls=%d: %s", rec.Code, calls, rec.Body.String())

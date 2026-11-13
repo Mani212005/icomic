@@ -235,17 +235,54 @@ def json_request(
         method=method,
         headers=headers,
     )
-    try:
-        with urlopen(request, timeout=16 * 60) as response:
-            body = response.read()
-            if "application/pdf" in response.headers.get("Content-Type", ""):
-                return body
-            return json.loads(body) if body else {}
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise E2EError(f"{method} {path} returned HTTP {exc.code}: {detail}") from exc
-    except URLError as exc:
-        raise E2EError(f"{method} {path} failed: {exc.reason}") from exc
+    for attempt in range(6):
+        try:
+            with urlopen(request, timeout=16 * 60) as response:
+                body = response.read()
+                if "application/pdf" in response.headers.get("Content-Type", ""):
+                    return body
+                result = json.loads(body) if body else {}
+            break
+        except HTTPError as exc:
+            # The per-user request budget refills each minute; a busy moment is not a failure.
+            detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 429 and attempt < 5 and "Request limit" in detail:
+                time.sleep(5)
+                continue
+            raise E2EError(f"{method} {path} returned HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise E2EError(f"{method} {path} failed: {exc.reason}") from exc
+    if method == "POST" and isinstance(result, dict) and result.get("job_id") and result.get("entity_type"):
+        settle_receipt(method, path, result)
+    return result
+
+
+JOB_FINAL_STATES = {"done", "failed", "uncertain", "cancelled"}
+
+
+def settle_receipt(method: str, path: str, receipt: dict[str, Any]) -> dict[str, Any]:
+    """Follow a generation receipt to its settled job, as the browser does by polling.
+
+    A paid generation answers 202 as soon as the job is committed, before the provider runs. A job
+    that settles anywhere but done raises, as the synchronous request used to when the provider failed.
+    """
+    job_id = receipt["job_id"]
+    deadline = time.monotonic() + 16 * 60
+    job: dict[str, Any] = {}
+    delay = 0.05
+    while time.monotonic() < deadline:
+        job = json_request(f"/api/v1/generation-jobs/{job_id}").get("job", {})
+        if job.get("status") in JOB_FINAL_STATES:
+            break
+        time.sleep(delay)
+        delay = min(delay * 1.5, 1.0)  # a long job is polled less often, like the browser
+    else:
+        raise E2EError(f"{method} {path} job {job_id} did not settle: {job.get('status')}")
+    if job["status"] != "done":
+        raise E2EError(
+            f"{method} {path} job {job_id} {job['status']}: {job.get('error_message') or ''}"
+        )
+    return job
 
 
 def binary_request(path: str, method: str, body: bytes, content_type: str) -> Any:
@@ -976,13 +1013,15 @@ def run_flow(
             continue
         palette_result = json_request(f"/api/v1/pages/{page_id}/colour-palette")
         if not palette_result.get("palette"):
-            palette_result = checked_call(
+            checked_call(
                 guard,
                 "palette",
                 1,
                 "POST",
                 f"/api/v1/pages/{page_id}/colour-palette/suggest",
             )
+            # The receipt carries no palette: read what the settled job saved.
+            palette_result = json_request(f"/api/v1/pages/{page_id}/colour-palette")
         page_chapter_id = page_chapter_ids[page_id]
         current_pages = json_request(f"/api/v1/chapters/{page_chapter_id}/pages").get(
             "pages", []

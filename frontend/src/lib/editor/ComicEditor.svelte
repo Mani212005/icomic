@@ -3,7 +3,7 @@
 	import ErrorBanner from './ErrorBanner.svelte';
 	import { stageList, quoteStages } from './stages.js';
 	import { Icon, BetaTag, revealCards } from '#lib/design/shell.js';
-	import { ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob } from './features.js';
+	import { ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
 	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote } from '#lib/api/types.js';
 	const INK_VARIANT = 'ink';
 
@@ -51,7 +51,22 @@
 	let currentJobStatus = '';
 	let activeJobType = '';
 	let jobError = null;
-	let currentAbortController = null;
+	let jobStalled = '';
+	let resumeLabel = '';
+	const runner = new GenerationRunner({
+		get api() {
+			return apiClient;
+		},
+		settle: settleJob,
+		onChange: (view) => {
+			isJobActive = view.active;
+			activeJobType = view.label;
+			currentJobStatus = view.status;
+			jobStalled = view.stalled;
+			resumeLabel = view.resumeLabel;
+		},
+		onError: (err) => (jobError = formatApiError(err))
+	});
 
 	let editingCharId = null;
 	let editCharForm = { name: '', description: '', appearance: '', clothing: '' };
@@ -160,6 +175,7 @@
 		letteringSessions = new Map();
 		exportCompleted = false;
 		reloadProjectData();
+		runner.setProject(project.id);
 	}
 
 	export async function reloadProjectData() {
@@ -217,6 +233,19 @@
 
 	reloadProjectData();
 
+	// What a finished job changes on screen, by the kind the receipt was started for.
+	async function settleJob(job) {
+		if (job.kind === JOB_KIND.PALETTE) {
+			const saved = await apiClient.getColourPalette(job.entityId);
+			updatePagePalette(job.entityId, normalizePalette(saved?.palette || saved));
+			return;
+		}
+		await reloadProjectData();
+		if (job.kind === JOB_KIND.SCRIPT) activeStage = STAGES.CHARACTERS;
+	}
+
+	const keepWaiting = () => runner.follow();
+
 	async function runScriptAnalysis() {
 		const scriptText = (project.original_script || project.script || '').trim();
 		if (!scriptText) {
@@ -224,53 +253,32 @@
 			return;
 		}
 		jobError = null;
-		isJobActive = true;
-		activeJobType = 'Script';
-		currentJobStatus = 'Analyzing…';
-
-		try {
-
-			await apiClient.updateProject(project.id, {
-				title: project.title,
-				art_style: project.art_style,
-				chapter_count: Number(project.chapter_count) || 1,
-				original_script: scriptText,
-				script: scriptText
-			});
-
-			const res = await apiClient.analyzeScript(project.id, scriptText);
-			if (res && res.job) {
-				await pollJob(apiClient, res.job.id, {
-					intervalMs: 500,
-					onProgress: (j) => (currentJobStatus = `Status: ${j.status}`)
+		await runner.run({
+			kind: JOB_KIND.SCRIPT,
+			label: 'Script',
+			status: 'Analyzing…',
+			start: async () => {
+				await apiClient.updateProject(project.id, {
+					title: project.title,
+					art_style: project.art_style,
+					chapter_count: Number(project.chapter_count) || 1,
+					original_script: scriptText,
+					script: scriptText
 				});
+				return apiClient.analyzeScript(project.id, scriptText);
 			}
-			await reloadProjectData();
-			activeStage = STAGES.CHARACTERS;
-		} catch (err) {
-			jobError = formatApiError(err);
-		} finally {
-			isJobActive = false;
-		}
+		});
 	}
 
-	async function regenerateCharacterReference(charId) {
+	function regenerateCharacterReference(charId) {
 		jobError = null;
-		isJobActive = true;
-		activeJobType = 'Reference';
-		currentJobStatus = 'Rendering…';
-
-		try {
-			const res = await apiClient.generateCharacterReference(charId);
-			if (res && res.job) {
-				await pollJob(apiClient, res.job.id, { intervalMs: 500 });
-			}
-			await reloadProjectData();
-		} catch (err) {
-			jobError = formatApiError(err);
-		} finally {
-			isJobActive = false;
-		}
+		return runner.run({
+			kind: JOB_KIND.CHARACTER,
+			label: 'Reference',
+			status: 'Rendering…',
+			entityId: charId,
+			start: (idempotencyKey) => apiClient.generateCharacterReference(charId, { idempotencyKey })
+		});
 	}
 
 	async function approveCharacter(charId) {
@@ -410,23 +418,15 @@
 		}
 	}
 
-	async function generateDraft(pageId) {
+	function generateDraft(pageId) {
 		jobError = null;
-		isJobActive = true;
-		activeJobType = 'Draft';
-		currentJobStatus = 'Generating…';
-
-		try {
-			const res = await apiClient.generateDraft(pageId);
-			if (res && res.job) {
-				await pollJob(apiClient, res.job.id, { intervalMs: 500 });
-			}
-			await reloadProjectData();
-		} catch (err) {
-			jobError = formatApiError(err);
-		} finally {
-			isJobActive = false;
-		}
+		return runner.run({
+			kind: JOB_KIND.PAGE,
+			label: 'Draft',
+			status: 'Generating…',
+			entityId: pageId,
+			start: (idempotencyKey) => apiClient.generateDraft(pageId, { idempotencyKey })
+		});
 	}
 
 	async function approveDraft(pageId) {
@@ -439,23 +439,16 @@
 		}
 	}
 
-	async function generateLineArt(pageId) {
+	function generateLineArt(pageId) {
+		const variant = finishVariant;
 		jobError = null;
-		isJobActive = true;
-		activeJobType = finishVariant === INK_VARIANT ? 'Ink' : 'Paint';
-		currentJobStatus = 'Generating…';
-
-		try {
-			const res = await apiClient.generateLineArt(pageId, finishVariant);
-			if (res && res.job) {
-				await pollJob(apiClient, res.job.id, { intervalMs: 500 });
-			}
-			await reloadProjectData();
-		} catch (err) {
-			jobError = formatApiError(err);
-		} finally {
-			isJobActive = false;
-		}
+		return runner.run({
+			kind: JOB_KIND.PAGE,
+			label: variant === INK_VARIANT ? 'Ink' : 'Paint',
+			status: 'Generating…',
+			entityId: pageId,
+			start: (idempotencyKey) => apiClient.generateLineArt(pageId, variant, { idempotencyKey })
+		});
 	}
 
 	async function approveLineArt(pageId) {
@@ -484,32 +477,15 @@
 		}
 	}
 
-	async function suggestNewPalette(pageId) {
+	function suggestNewPalette(pageId) {
 		jobError = null;
-		isJobActive = true;
-		activeJobType = 'Palette';
-		currentJobStatus = 'Suggesting…';
-
-		try {
-			const res = await apiClient.suggestColourPalette(pageId);
-			if (res && res.job) {
-				await pollJob(apiClient, res.job.id, { intervalMs: 500 });
-			}
-			if (res && res.palette) {
-				updatePagePalette(pageId, normalizePalette(res.palette));
-			}
-		} catch (err) {
-			jobError = formatApiError(err);
-		} finally {
-			isJobActive = false;
-		}
-	}
-
-	function cancelActiveJob() {
-		if (currentAbortController) {
-			currentAbortController.abort();
-		}
-		isJobActive = false;
+		return runner.run({
+			kind: JOB_KIND.PALETTE,
+			label: 'Palette',
+			status: 'Suggesting…',
+			entityId: pageId,
+			start: (idempotencyKey) => apiClient.suggestColourPalette(pageId, { idempotencyKey })
+		});
 	}
 </script>
 
@@ -522,9 +498,11 @@
 			<div class="spinner"></div>
 			<div class="job-info">
 				<strong>{activeJobType}…</strong>
-				<span>{currentJobStatus}</span>
+				<span>{jobStalled || currentJobStatus}</span>
 			</div>
-			<button class="cancel-job-btn" on:click={cancelActiveJob}>Cancel</button>
+			{#if jobStalled}
+				<button class="secondary-btn small" on:click={keepWaiting}>{resumeLabel}</button>
+			{/if}
 		</div>
 	{/if}
 
@@ -643,7 +621,7 @@
 						{/if}
 
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => regenerateCharacterReference(char.id)}>
+							<button class="secondary-btn" disabled={isJobActive} on:click={() => regenerateCharacterReference(char.id)}>
 								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('character_reference', costQuotes)})
 							</button>
 
@@ -847,7 +825,7 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => generateDraft(page.id)}>
+							<button class="secondary-btn" disabled={isJobActive} on:click={() => generateDraft(page.id)}>
 								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('draft_sketch', costQuotes)})
 							</button>
 
@@ -942,7 +920,7 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-							<button class="secondary-btn" on:click={() => generateLineArt(page.id)} aria-label="Regenerate">
+							<button class="secondary-btn" aria-label="Regenerate" disabled={isJobActive} on:click={() => generateLineArt(page.id)}>
 								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('final_line_art', costQuotes)})
 							</button>
 
@@ -987,7 +965,7 @@
 			<div class="page-colour-editor">
 				<div class="page-colour-heading">
 					<h3>Page {page.page_number}</h3>
-					<button class="secondary-btn" on:click={() => suggestNewPalette(page.id)}>
+					<button class="secondary-btn" disabled={isJobActive} on:click={() => suggestNewPalette(page.id)}>
 						<Icon name="colour" size={18} /> Palette ({quoteLabel('colour_suggestion', costQuotes)})
 					</button>
 				</div>

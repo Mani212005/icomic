@@ -351,3 +351,65 @@ test('ApiClient normalizes script aliases without sending unknown fields', async
 	 { original_script: 'The edited script' }
 	]);
 });
+
+test('ApiClient retries a dropped generation request with the same idempotency key', async () => {
+	const originalFetch = globalThis.fetch;
+	const keys = [];
+	try {
+		globalThis.fetch = async (url, options) => {
+			keys.push(options.headers['Idempotency-Key']);
+			// The server committed the job but the answer never arrived (a flaky tunnel).
+			if (keys.length === 1) throw new TypeError('Failed to fetch');
+			return { ok: true, status: 202, json: async () => ({ job: { id: 'job-1', status: 'running' } }) };
+		};
+		const client = new ApiClient('http://test-api:8080');
+		const receipt = await client.generateDraft('page-1', { retryDelayMs: 1 });
+		assert.equal(receipt.job.id, 'job-1');
+		assert.equal(keys.length, 2);
+		assert.ok(keys[0] && keys[0] === keys[1], 'a retry must repeat the key so the server returns the same job');
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
+test('ApiClient never retries a generation the server answered, and gives up on a dead connection', async () => {
+	const originalFetch = globalThis.fetch;
+	let calls = 0;
+	try {
+		globalThis.fetch = async () => {
+			calls += 1;
+			return { ok: false, status: 402, json: async () => ({ message: 'Not enough credits' }) };
+		};
+		const client = new ApiClient('http://test-api:8080');
+		await assert.rejects(client.generateCharacterReference('c-1', { retryDelayMs: 1 }), { message: 'Not enough credits' });
+		assert.equal(calls, 1);
+
+		calls = 0;
+		globalThis.fetch = async () => {
+			calls += 1;
+			throw new TypeError('Failed to fetch');
+		};
+		await assert.rejects(client.suggestColourPalette('p-1', { retryDelayMs: 1 }), TypeError);
+		assert.equal(calls, 3);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
+test('ApiClient sends one fresh idempotency key per generation action', async () => {
+	const originalFetch = globalThis.fetch;
+	const keys = [];
+	try {
+		globalThis.fetch = async (url, options) => {
+			keys.push(options.headers['Idempotency-Key']);
+			return { ok: true, status: 202, json: async () => ({ job: { id: `job-${keys.length}` } }) };
+		};
+		const client = new ApiClient('http://test-api:8080');
+		await client.generateLineArt('page-1', 'ink');
+		await client.generateLineArt('page-1', 'ink');
+		assert.equal(keys.length, 2);
+		assert.notEqual(keys[0], keys[1]);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});

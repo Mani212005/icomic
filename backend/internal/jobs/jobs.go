@@ -71,6 +71,14 @@ type InMemoryJobService struct {
 	jobsByID       map[string]*domain.GenerationJob
 	jobsByIdempKey map[string]*domain.GenerationJob
 	cancelFuncs    map[string]context.CancelFunc
+	outbox         []*memoryDispatch
+}
+
+// memoryDispatch is the in-memory twin of a generation_dispatches row.
+type memoryDispatch struct {
+	pending    db.PendingDispatch
+	delivered  bool
+	leaseUntil time.Time
 }
 
 func NewInMemoryJobService() *InMemoryJobService {
@@ -129,6 +137,19 @@ func (s *InMemoryJobService) CreateJob(ctx context.Context, req CreateJobRequest
 		CreatedAt:      time.Now().UTC(),
 	}
 
+	// A request that cannot be serialized fails before any debit, like the PostgreSQL commit.
+	var envelope *memoryDispatch
+	if req.Envelope != nil {
+		request, err := db.StampJobID(req.Envelope.Request, job.ID)
+		if err != nil {
+			return nil, false, err
+		}
+		envelope = &memoryDispatch{
+			pending:    db.PendingDispatch{JobID: job.ID, Operation: req.Envelope.Operation, Request: request},
+			leaseUntil: time.Now(),
+		}
+	}
+
 	if req.DebitAmount > 0 {
 		if s.creditService == nil {
 			return nil, false, errors.New("credit service is required")
@@ -137,11 +158,65 @@ func (s *InMemoryJobService) CreateJob(ctx context.Context, req CreateJobRequest
 			return nil, false, err
 		}
 	}
+	if envelope != nil {
+		s.outbox = append(s.outbox, envelope)
+	}
 	s.jobsByID[job.ID] = job
 	s.jobsByIdempKey[req.IdempotencyKey] = job
 	copy := *job
 	return &copy, false, nil
 }
+
+// ClaimDispatches mirrors the PostgreSQL outbox for the in-memory fakes: a committed envelope is
+// claimable at once, a claim leases it, and a settled job never dispatches.
+func (s *InMemoryJobService) ClaimDispatches(ctx context.Context, limit int, ignoreLeases bool) ([]db.PendingDispatch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	var claimed []db.PendingDispatch
+	for _, d := range s.outbox {
+		if d.delivered {
+			continue
+		}
+		if job, found := s.jobsByID[d.pending.JobID]; found && job.Status != StatusPending && job.Status != StatusRunning {
+			d.delivered = true
+			continue
+		}
+		if len(claimed) >= limit || (!ignoreLeases && d.leaseUntil.After(now)) {
+			continue
+		}
+		d.pending.Attempts++
+		d.leaseUntil = now.Add(db.DispatchLease)
+		claimed = append(claimed, d.pending)
+	}
+	return claimed, nil
+}
+
+// FinishDispatch retires an envelope once its job is terminal. It is idempotent.
+func (s *InMemoryJobService) FinishDispatch(ctx context.Context, jobID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, d := range s.outbox {
+		if d.pending.JobID == jobID {
+			d.delivered = true
+		}
+	}
+	return nil
+}
+
+// ReleaseDispatch makes a pending envelope claimable again after db.DispatchRetryDelay.
+func (s *InMemoryJobService) ReleaseDispatch(ctx context.Context, jobID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, d := range s.outbox {
+		if d.pending.JobID == jobID && !d.delivered {
+			d.leaseUntil = time.Now().Add(db.DispatchRetryDelay)
+		}
+	}
+	return nil
+}
+
+var _ db.DispatchStore = (*InMemoryJobService)(nil)
 
 // GetJob retrieves a generation job by its ID.
 func (s *InMemoryJobService) GetJob(ctx context.Context, jobID string) (*domain.GenerationJob, error) {

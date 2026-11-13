@@ -163,8 +163,7 @@ func TestUploadColourImagePreservesLineArtAndExportUsesApprovedColour(t *testing
 
 	regenerate := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
 	regenerate.Header.Set("X-User-ID", "owner")
-	regenerateRec := httptest.NewRecorder()
-	handler.ServeHTTP(regenerateRec, regenerate)
+	regenerateRec := serveGeneration(server, handler, regenerate)
 	if regenerateRec.Code != http.StatusAccepted {
 		t.Fatalf("line art regeneration returned %d: %s", regenerateRec.Code, regenerateRec.Body.String())
 	}

@@ -122,9 +122,8 @@ func TestGeneratePaintedPage_VariantsAndGates(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"variant": "draft-conditioned"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/painted-page", bytes.NewReader(body))
 	req.Header.Set("X-User-ID", "owner")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	rec := serveGeneration(server, handler, req)
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("draft-conditioned generation returned %d: %s", rec.Code, rec.Body.String())
 	}
 	if lastDraftURL == nil || *lastDraftURL != "http://storage/draft.png" {
@@ -151,9 +150,8 @@ func TestGeneratePaintedPage_VariantsAndGates(t *testing.T) {
 	bodyDirect, _ := json.Marshal(map[string]string{"variant": "direct-from-brief"})
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/painted-page", bytes.NewReader(bodyDirect))
 	req.Header.Set("X-User-ID", "owner")
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	rec = serveGeneration(server, handler, req)
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("direct-from-brief generation should succeed without draft approval, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if lastDraftURL != nil {
@@ -253,22 +251,13 @@ func TestLineArtEndpoint_DefaultsToDirectFromBriefPaintedFinish(t *testing.T) {
 	// The ordinary finish endpoint creates the default painted page.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
 	req.Header.Set("X-User-ID", "owner")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	rec := serveGeneration(server, handler, req)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("default line-art route returned %d: %s", rec.Code, rec.Body.String())
 	}
-	var response struct {
-		Job struct {
-			Status string `json:"status"`
-		} `json:"job"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Job.Status != "done" {
-		t.Fatalf("painted default returned job status %q, want done", response.Job.Status)
+	if status := settledJob(t, server, rec).Status; status != "done" {
+		t.Fatalf("painted default settled with job status %q, want done", status)
 	}
 	if !calledPainted {
 		t.Fatal("expected GeneratePaintedPage to be called by the default finish route")
@@ -320,9 +309,8 @@ func TestPaintedPageRegeneratesOverlayLayoutWithStoredArtURL(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
 	req.Header.Set("X-User-ID", "owner")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	rec := serveGeneration(server, handler, req)
+	if rec.Code != http.StatusAccepted {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
 	if !generated {
@@ -356,8 +344,7 @@ func TestLineArtEndpointKeepsInkExplicit(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
 	req.Header.Set("X-User-ID", "owner")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	rec := serveGeneration(server, handler, req)
 	if rec.Code != http.StatusAccepted || !calledInk {
 		t.Fatalf("explicit ink route returned %d (called=%v): %s", rec.Code, calledInk, rec.Body.String())
 	}
@@ -369,7 +356,7 @@ func TestLineArtEndpointKeepsInkExplicit(t *testing.T) {
 
 // overlayPaintedPageFixture returns an overlay page whose painted page generation answers
 // with the given subject detection result, and the layout requests the Go API then makes.
-func overlayPaintedPageFixture(t *testing.T, subjects *[]gen.LetteringSubject, source *gen.LetteringSubjectsSource) (http.Handler, db.Repository, string, *[]gen.LetteringLayoutRequest) {
+func overlayPaintedPageFixture(t *testing.T, subjects *[]gen.LetteringSubject, source *gen.LetteringSubjectsSource) (*api.Server, http.Handler, db.Repository, string, *[]gen.LetteringLayoutRequest) {
 	t.Helper()
 	server, handler, repo, _, pageID := paintedPageFixture(t)
 	ctx := context.Background()
@@ -396,16 +383,15 @@ func overlayPaintedPageFixture(t *testing.T, subjects *[]gen.LetteringSubject, s
 		requests = append(requests, req)
 		return &gen.LetteringLayout{Version: "lettering-layout-v1", PageID: req.Document.PageID, PageAspect: req.Document.PageAspect, Bubbles: []gen.LetteringBubble{}, Issues: []gen.LetteringIssue{}}, nil
 	}
-	return handler, repo, pg.ID, &requests
+	return server, handler, repo, pg.ID, &requests
 }
 
-func paintOverlayPage(t *testing.T, handler http.Handler, pageID string) {
+func paintOverlayPage(t *testing.T, server *api.Server, handler http.Handler, pageID string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
 	req.Header.Set("X-User-ID", "owner")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	rec := serveGeneration(server, handler, req)
+	if rec.Code != http.StatusAccepted {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
 }
@@ -414,9 +400,9 @@ func TestPaintedPageCachesVisionSubjectsAndReusesThemForLaterLayouts(t *testing.
 	face := gen.LetteringSubject{Kind: gen.LetteringSubjectKind("face"), Confidence: 0.9, Character: strPtr("Nia"), Rect: gen.LetteringUnitRect{X: 0.2, Y: 0.1, Width: 0.1, Height: 0.1}}
 	boxes := []gen.LetteringSubject{face}
 	source := gen.Vision
-	handler, repo, pageID, requests := overlayPaintedPageFixture(t, &boxes, &source)
+	server, handler, repo, pageID, requests := overlayPaintedPageFixture(t, &boxes, &source)
 
-	paintOverlayPage(t, handler, pageID)
+	paintOverlayPage(t, server, handler, pageID)
 
 	last := (*requests)[len(*requests)-1]
 	if last.Subjects == nil || len(*last.Subjects) != 1 || (*last.Subjects)[0].Character == nil || *(*last.Subjects)[0].Character != "Nia" {
@@ -450,9 +436,9 @@ func TestPaintedPageCachesVisionSubjectsAndReusesThemForLaterLayouts(t *testing.
 
 func TestPaintedPageSubjectFallbackKeepsHeuristicsAndStillLetters(t *testing.T) {
 	source := gen.Fallback
-	handler, repo, pageID, requests := overlayPaintedPageFixture(t, nil, &source)
+	server, handler, repo, pageID, requests := overlayPaintedPageFixture(t, nil, &source)
 
-	paintOverlayPage(t, handler, pageID)
+	paintOverlayPage(t, server, handler, pageID)
 
 	last := (*requests)[len(*requests)-1]
 	if last.Subjects != nil {

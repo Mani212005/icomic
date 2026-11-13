@@ -112,8 +112,7 @@ func TestGenerationReplayReturnsExistingImageWithoutDispatch(t *testing.T) {
 	ai := &generationObserver{AIService: s.AIClient}
 	s.AIClient = ai
 	for attempt := 0; attempt < 2; attempt++ {
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+character.ID+"/reference-image", strings.NewReader(`{}`)))
+		rec := serveGeneration(s, handler, httptest.NewRequest(http.MethodPost, "/api/v1/characters/"+character.ID+"/reference-image", strings.NewReader(`{}`)))
 		if rec.Code != http.StatusAccepted {
 			t.Fatalf("attempt %d: %d %s", attempt, rec.Code, rec.Body.String())
 		}
