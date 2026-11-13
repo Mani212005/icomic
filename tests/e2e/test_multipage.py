@@ -25,6 +25,8 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
         "PYTHON_AI_URL": ai_service["base_url"],
         "DEV_AUTH_ENABLED": "true",
         "MEDIA_DIR": str(tmp_path / "media"),
+        # The runner drives a whole book in a minute and follows every generation receipt by polling.
+        "REQUESTS_PER_USER_PER_MINUTE": "1200",
     }
     with (tmp_path / "go.log").open("w") as log:
         proc = subprocess.Popen(

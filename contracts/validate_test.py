@@ -103,6 +103,63 @@ class TestContracts(unittest.TestCase):
             with self.assertRaises(jsonschema.ValidationError):
                 validator.validate(invalid)
 
+    def test_public_generation_contract_covers_every_receipt_route(self):
+        """Every paid generation route the Go router serves answers a 202 receipt, and says so here."""
+        import re
+
+        public = yaml.safe_load((CONTRACTS_DIR / "openapi/generation-api.yaml").read_text())
+        router = (CONTRACTS_DIR.parent / "backend/internal/api/router.go").read_text()
+        served = set(
+            re.findall(
+                r'handle\("POST (/api/v1/[^"]+)", s\.(?:GenerateCharacterReference|GenerateDraft|GenerateLineArt|GeneratePaintedPage|SuggestColourPalette)\)',
+                router,
+            )
+        )
+        self.assertEqual(len(served), 5, "expected the five debited generation routes in the router")
+        self.assertEqual(served - set(public["paths"]), set(), "generation routes missing from generation-api.yaml")
+        for path in served:
+            responses = public["paths"][path]["post"]["responses"]
+            self.assertIn("202", responses, f"{path} must document its receipt")
+            self.assertNotIn("200", responses, f"{path} no longer returns a completed result")
+            self.assertEqual(responses["202"], {"$ref": "#/components/responses/Receipt"})
+        self.assertIn("get", public["paths"]["/api/v1/generation-jobs/{id}"])
+
+    def test_generation_receipt_schema_accepts_a_receipt_and_rejects_a_result(self):
+        spec = yaml.safe_load((CONTRACTS_DIR / "openapi/ai-service.yaml").read_text())
+        validator = jsonschema.Draft202012Validator(
+            {"$ref": "#/components/schemas/GenerationReceipt", "components": spec["components"]}
+        )
+        job = {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "project_id": "22222222-2222-2222-2222-222222222222",
+            "user_id": "33333333-3333-3333-3333-333333333333",
+            "job_type": "draft_sketch",
+            "stage": "draft",
+            "model_id": "muse-image-1.0",
+            "status": "pending",
+            "idempotency_key": "key",
+            "estimated_cost": 0.01,
+            "hashed_user_id": "hash",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+        receipt = {
+            "job": job,
+            "job_id": job["id"],
+            "status": "pending",
+            "entity_type": "page",
+            "entity_id": "44444444-4444-4444-4444-444444444444",
+            "project_id": job["project_id"],
+        }
+        validator.validate(receipt)
+        validator.validate({**receipt, "variant": "direct-from-brief"})
+        for invalid in [
+            {key: value for key, value in receipt.items() if key != "job_id"},
+            {**receipt, "entity_type": "project"},
+            {**receipt, "status": "finished"},
+        ]:
+            with self.assertRaises(jsonschema.ValidationError):
+                validator.validate(invalid)
+
     def test_job_schema(self):
         schema_path = CONTRACTS_DIR / "schemas" / "job.schema.json"
         self.assertTrue(schema_path.exists(), f"Missing schema at {schema_path}")

@@ -131,3 +131,113 @@ test('pollJob cancels immediately when AbortSignal fires', async () => {
 		}
 	);
 });
+
+test('pollJob treats an uncertain job as final and never reports it as retryable', async () => {
+	const mockClient = {
+		async getJob(id) {
+			return { id, status: JOB_STATUS.UNCERTAIN, error_message: 'The generation outcome could not be confirmed.' };
+		}
+	};
+	await assert.rejects(
+		async () => pollJob(mockClient, 'job-uncertain', { intervalMs: 5 }),
+		(err) => {
+			assert.ok(err instanceof JobPollingError);
+			assert.equal(err.code, 'OUTCOME_UNKNOWN');
+			assert.equal(err.retryable, false);
+			assert.match(err.message, /could not be confirmed/);
+			return true;
+		}
+	);
+});
+
+test('pollJob keeps following a job across a dropped connection', async () => {
+	let calls = 0;
+	const mockClient = {
+		async getJob(id) {
+			calls += 1;
+			if (calls === 2 || calls === 3) throw new TypeError('Failed to fetch');
+			return { id, status: calls < 5 ? JOB_STATUS.RUNNING : JOB_STATUS.DONE };
+		}
+	};
+	const job = await pollJob(mockClient, 'job-flaky', { intervalMs: 1 });
+	assert.equal(job.status, JOB_STATUS.DONE);
+	assert.equal(calls, 5);
+});
+
+test('pollJob reports lost contact, not failure, when the connection stays down', async () => {
+	const mockClient = {
+		async getJob() {
+			throw new TypeError('Failed to fetch');
+		}
+	};
+	await assert.rejects(
+		async () => pollJob(mockClient, 'job-offline', { intervalMs: 1 }),
+		(err) => {
+			assert.equal(err.code, 'POLL_FAILED');
+			assert.equal(err.retryable, true);
+			assert.match(err.message, /may still be running/);
+			return true;
+		}
+	);
+});
+
+test('pollJob rethrows an answer from the server instead of retrying it', async () => {
+	let calls = 0;
+	const mockClient = {
+		async getJob() {
+			calls += 1;
+			throw Object.assign(new Error('Job not found'), { status: 404 });
+		}
+	};
+	await assert.rejects(async () => pollJob(mockClient, 'job-gone', { intervalMs: 1 }), { status: 404 });
+	assert.equal(calls, 1);
+});
+
+test('pollJob waits long enough by default for a slow image provider', async () => {
+	const realNow = Date.now;
+	let now = realNow();
+	let calls = 0;
+	Date.now = () => now;
+	try {
+		const mockClient = {
+			async getJob(id) {
+				calls += 1;
+				now += 5 * 60 * 1000; // five minutes pass between polls
+				return { id, status: calls < 3 ? JOB_STATUS.RUNNING : JOB_STATUS.DONE };
+			}
+		};
+		const job = await pollJob(mockClient, 'job-slow', { intervalMs: 1 });
+		assert.equal(job.status, JOB_STATUS.DONE);
+	} finally {
+		Date.now = realNow;
+	}
+});
+
+test('pollJob rides out a busy API (429, 503) instead of failing a healthy job', async () => {
+	let calls = 0;
+	const mockClient = {
+		async getJob(id) {
+			calls += 1;
+			if (calls === 1) throw Object.assign(new Error('Request limit reached; retry later'), { status: 429 });
+			if (calls === 2) throw Object.assign(new Error('Unavailable'), { status: 503 });
+			return { id, status: JOB_STATUS.DONE };
+		}
+	};
+	const job = await pollJob(mockClient, 'job-busy', { intervalMs: 1 });
+	assert.equal(job.status, JOB_STATUS.DONE);
+	assert.equal(calls, 3);
+});
+
+test('pollJob polls a long job less often, up to its ceiling', async () => {
+	const stamps = [];
+	const mockClient = {
+		async getJob(id) {
+			stamps.push(Date.now());
+			return { id, status: stamps.length < 8 ? JOB_STATUS.RUNNING : JOB_STATUS.DONE };
+		}
+	};
+	await pollJob(mockClient, 'job-long', { intervalMs: 4, maxIntervalMs: 20 });
+	const gaps = stamps.slice(1).map((t, i) => t - stamps[i]);
+	assert.ok(gaps[gaps.length - 1] >= gaps[0], `gaps should not shrink: ${gaps}`);
+	assert.ok(Math.max(...gaps) < 60, `gaps stay under the ceiling: ${gaps}`);
+});

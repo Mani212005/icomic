@@ -1,0 +1,163 @@
+openapi: 3.1.0
+info:
+  title: Icomic Generation API
+  version: 1.0.0
+  description: >-
+    Public Go API for paid generations (character reference, draft, finished page, colour palette) and
+    job polling. A generation request answers with a receipt as soon as its job is committed and never
+    waits for the provider. Shared payload models are generated from ai-service.yaml.
+paths:
+  /api/v1/characters/{id}/reference-image:
+    post:
+      operationId: generateCharacterReference
+      description: Generate a character reference image. Results appear on the character once the job is done.
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          $ref: '#/components/responses/Receipt'
+        '400':
+          description: A prerequisite approval is missing or stale, or the prompt was moderated
+        '402':
+          description: Not enough credits
+        '409':
+          description: A generation for this entity and stage is already active
+        '429':
+          description: Kill switch, quota or request limit
+  /api/v1/pages/{id}/draft:
+    post:
+      operationId: generateDraft
+      description: Generate a draft sketch. The draft appears on the page once the job is done.
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          $ref: '#/components/responses/Receipt'
+        '400':
+          description: A prerequisite approval is missing or stale
+        '402':
+          description: Not enough credits
+        '409':
+          description: A generation for this entity and stage is already active
+        '429':
+          description: Kill switch, quota or request limit
+  /api/v1/pages/{id}/line-art:
+    post:
+      operationId: generateLineArt
+      description: Generate the finished page. Painted by default; `variant=ink` selects ink line art.
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: variant
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ink]
+      responses:
+        '202':
+          $ref: '#/components/responses/Receipt'
+        '400':
+          description: A prerequisite approval is missing or stale
+        '402':
+          description: Not enough credits
+        '409':
+          description: A generation for this entity and stage is already active
+        '429':
+          description: Kill switch, quota or request limit
+  /api/v1/pages/{id}/painted-page:
+    post:
+      operationId: generatePaintedPage
+      description: Generate the painted page with an explicit variant.
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          $ref: '#/components/responses/Receipt'
+        '400':
+          description: A prerequisite approval is missing or stale
+        '402':
+          description: Not enough credits
+        '409':
+          description: A generation for this entity and stage is already active
+        '429':
+          description: Kill switch, quota or request limit
+  /api/v1/pages/{id}/colour-palette/suggest:
+    post:
+      operationId: suggestColourPalette
+      description: Suggest a colour palette. Read it from the page's palette once the job is done.
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          $ref: '#/components/responses/Receipt'
+        '400':
+          description: Line art is not approved
+        '402':
+          description: Not enough credits
+        '409':
+          description: A generation for this entity and stage is already active
+        '429':
+          description: Kill switch, quota or request limit
+  /api/v1/generation-jobs/{id}:
+    get:
+      operationId: getGenerationJob
+      description: >-
+        Poll a job by the id from its receipt. Safe to call after a reload or from another tab: the job
+        outlives the request that created it. `uncertain` means the provider outcome could not be confirmed;
+        the charge stays and the request must not be retried blindly.
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '200':
+          description: The job with the worker's structured error guidance, when it failed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                properties:
+                  job:
+                    allOf:
+                      - $ref: './ai-service.yaml#/components/schemas/GenerationJobRecord'
+                      - type: object
+                        properties:
+                          error_code:
+                            type: string
+                          retryable:
+                            type: boolean
+                          retry_after_seconds:
+                            type: number
+        '403':
+          description: Job belongs to another user
+        '404':
+          description: Job does not exist
+components:
+  parameters:
+    ResourceID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >-
+        One key per user action. Repeating the request with the same key returns the original job instead of
+        creating or charging another, so a client may retry after a dropped connection.
+      schema:
+        type: string
+  responses:
+    Receipt:
+      description: The job is committed and its debit taken; delivery to the provider follows.
+      content:
+        application/json:
+          schema:
+            $ref: './ai-service.yaml#/components/schemas/GenerationReceipt'

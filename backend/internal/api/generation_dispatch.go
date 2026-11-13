@@ -197,16 +197,15 @@ func (s *Server) generationDebit(job *domain.GenerationJob) float64 {
 	return 0
 }
 
-// recordGenerationFailure stores a failed or uncertain dispatch outcome with its usage.
-// Unknown provider outcomes keep the debit and record no cost estimate.
+// recordGenerationFailure stores a failed or uncertain dispatch outcome with the usage the AI
+// service recorded, which is zero when it recorded none. An unknown provider outcome keeps its debit.
 func (s *Server) recordGenerationFailure(ctx context.Context, job *domain.GenerationJob, cause error, cost float64) error {
 	message := safeGenerationMessage(cause)
 	status := jobs.StatusFailed
-	var actualCost *float64 = &cost
 	if uncertainProviderOutcome(cause) {
-		status, actualCost = jobs.StatusUncertain, nil
+		status = jobs.StatusUncertain
 	}
-	return s.JobService.UpdateJobStatus(ctx, job.ID, status, actualCost, &message)
+	return s.JobService.UpdateJobStatus(ctx, job.ID, status, &cost, &message)
 }
 
 // transientDispatchError reports an error that says nothing about the provider outcome: the
@@ -308,20 +307,26 @@ func (s *Server) dispatchOne(ctx context.Context, d db.PendingDispatch) {
 // committed, without waiting for the provider. The client follows the job by ID through
 // GET /api/v1/generation-jobs/{id} and reads the finished entity once the job is done. A repeated
 // request with the same Idempotency-Key returns the same receipt and never a second charge.
-func (s *Server) writeReceipt(w http.ResponseWriter, job *domain.GenerationJob, entityType string, extra map[string]interface{}) {
+func (s *Server) writeReceipt(w http.ResponseWriter, job *domain.GenerationJob, entityType gen.GenerationReceiptEntityType, variant string) {
 	s.kickDispatcher()
-	body := map[string]interface{}{
-		"job":         job,
-		"job_id":      job.ID,
-		"status":      job.Status,
-		"entity_type": entityType,
-		"entity_id":   job.EntityID,
-		"project_id":  job.ProjectID,
+	receipt := gen.GenerationReceipt{
+		Job: gen.GenerationJobRecord{
+			ID: job.ID, EntityID: &job.EntityID, ProjectID: job.ProjectID, UserID: job.UserID,
+			JobType: job.JobType, Stage: job.Stage, ModelID: job.ModelID, Status: gen.GenerationJobRecordStatus(job.Status),
+			IdempotencyKey: job.IdempotencyKey, EstimatedCost: job.EstimatedCost, ActualCost: job.ActualCost,
+			HashedUserID: job.HashedUserID, ErrorMessage: job.ErrorMessage, CreatedAt: job.CreatedAt, CompletedAt: job.CompletedAt,
+		},
+		JobID: job.ID, Status: gen.GenerationReceiptStatus(job.Status),
+		EntityType: entityType, EntityID: job.EntityID, ProjectID: job.ProjectID,
 	}
-	for key, value := range extra {
-		body[key] = value
+	if job.EntityID == "" {
+		receipt.Job.EntityID = nil
 	}
-	writeJSON(w, http.StatusAccepted, body)
+	if variant != "" {
+		v := gen.GenerationReceiptVariant(variant)
+		receipt.Variant = &v
+	}
+	writeJSON(w, http.StatusAccepted, receipt)
 }
 
 // dispatchPool bounds in-flight envelope deliveries. Every claimer - the request that just

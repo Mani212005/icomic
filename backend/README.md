@@ -82,9 +82,9 @@ policy row, user and project, reads quotas and `stage_approvals`, rejects an act
 job for the same entity and stage, then inserts the job and debit in one
 transaction. The unique idempotency key returns the existing job without another
 debit. Callers must honor the returned `existed` flag and dispatch only after the
-method returns successfully. HTTP generation remains synchronous; durable queue
-dispatch is a separate integration and `PersistentJobService.DispatchAsync`
-returns an explicit configuration error.
+method returns successfully. Debited generation endpoints answer a `202` receipt
+at that point and the bounded dispatcher delivers the committed envelope; text,
+outline, panel and export requests still wait for their result.
 
 Quota counters are committed image-attempt rows in `image_quota_usage`.
 Insertion increments both rolling counts atomically with the debit, using the
@@ -145,7 +145,7 @@ Resource safeguards are configured separately from image quotas and spending:
 | `REQUEST_ADMISSION_KEYS` | 10000 | Maximum combined IP/user admission entries |
 | `HTTP_READ_HEADER_TIMEOUT` | 5s | Deadline for receiving request headers |
 | `HTTP_READ_TIMEOUT` | 30s | Deadline for receiving the complete request |
-| `HTTP_WRITE_TIMEOUT` | 20m | Response deadline, accommodating the current synchronous AI path |
+| `HTTP_WRITE_TIMEOUT` | 20m | Response deadline, accommodating the text, outline, panel and export requests that still wait for their result |
 | `HTTP_IDLE_TIMEOUT` | 60s | Idle keep-alive connection deadline |
 | `HTTP_MAX_HEADER_BYTES` | 32768 | Maximum request header bytes (Go may allow its additional read buffer) |
 

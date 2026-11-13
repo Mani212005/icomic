@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+from conftest import artifact_url
 
 try:
     from .pdf_verifier import verify_pdf_structure
@@ -54,11 +55,11 @@ def test_painted_page_route_e2e(api_client: httpx.Client) -> None:
 
     # 6. Default finish route creates one direct-from-brief painted page.
     painted_res = api_client.post(f"/api/v1/pages/{page_id}/line-art")
-    assert painted_res.status_code == 200, painted_res.text
+    assert painted_res.status_code == 202, painted_res.text
     painted_data = painted_res.json()
     assert painted_data["variant"] == "direct-from-brief"
-    assert painted_data["image_url"].startswith("http")
-    assert painted_data["job"]["status"] == "done"
+    assert artifact_url(api_client, painted_data).startswith("http")
+    assert api_client.get(f"/api/v1/generation-jobs/{painted_data['job_id']}").json()["job"]["status"] == "done"
 
     # 7. Approve finished painted page
     app_painted_res = api_client.post(f"/api/v1/pages/{page_id}/line-art/approve")
@@ -128,10 +129,10 @@ def test_painted_page_direct_from_brief_e2e(api_client: httpx.Client) -> None:
             f"/api/v1/pages/{p_id}/painted-page",
             json={"variant": "direct-from-brief"},
         )
-        assert direct_res.status_code == 200, direct_res.text
+        assert direct_res.status_code == 202, direct_res.text
         direct_data = direct_res.json()
         assert direct_data["variant"] == "direct-from-brief"
-        assert direct_data["image_url"].startswith("http")
+        assert artifact_url(api_client, direct_data).startswith("http")
 
         app_res = api_client.post(f"/api/v1/pages/{p_id}/painted-page/approve")
         assert app_res.status_code == 200, app_res.text
@@ -168,7 +169,7 @@ def test_explicit_ink_finish_e2e(api_client: httpx.Client) -> None:
 
     ink = api_client.post(f"/api/v1/pages/{page_id}/line-art?variant=ink")
     assert ink.status_code == 202, ink.text
-    assert ink.json()["image_url"].startswith("http")
+    assert artifact_url(api_client, ink.json()).startswith("http")
     approved = api_client.post(f"/api/v1/pages/{page_id}/line-art/approve?variant=ink")
     assert approved.status_code == 200, approved.text
     assert approved.json()["page"]["line_art_approved_at"]

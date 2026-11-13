@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, SecretStr
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel, SecretStr
 
 
 class AccountKind(RootModel[Literal["guest", "registered"]]):
@@ -312,6 +312,44 @@ class JobStatusResponse(BaseModel):
     error_code: str | None = None
     retryable: bool = False
     retry_after_seconds: float | None = Field(None, ge=0.0)
+
+
+class GenerationJobRecord(BaseModel):
+    """
+    The public record of a generation job, as the Go API returns it from a receipt and from job polling.
+    """
+
+    id: str
+    entity_id: str | None = Field(None, description="The character or page the job generates for.")
+    project_id: str
+    user_id: str
+    job_type: str
+    stage: str
+    model_id: str
+    status: Literal["pending", "running", "done", "failed", "uncertain", "cancelled"]
+    idempotency_key: str
+    estimated_cost: float
+    actual_cost: float | None = None
+    hashed_user_id: str
+    error_message: str | None = None
+    created_at: AwareDatetime
+    completed_at: AwareDatetime | None = None
+
+
+class GenerationReceipt(BaseModel):
+    """
+    The 202 answer of a paid generation request. It is sent as soon as the job, its debit and its dispatch envelope are committed, before any provider call. It carries no result: follow the job by id and read the finished entity. A repeated request with the same Idempotency-Key returns the same receipt, with the job's current status, and never charges again.
+    """
+
+    job: GenerationJobRecord
+    job_id: str
+    status: Literal["pending", "running", "done", "failed", "uncertain", "cancelled"]
+    entity_type: Literal["character", "page"]
+    entity_id: str
+    project_id: str
+    variant: Literal["draft-conditioned", "direct-from-brief"] | None = Field(
+        None, description="Painted page requests only. The finish variant the page request created."
+    )
 
 
 class LetteringPoint(BaseModel):

@@ -1590,6 +1590,76 @@ components:
           nullable: true
           minimum: 0
 
+    GenerationJobRecord:
+      type: object
+      description: The public record of a generation job, as the Go API returns it from a receipt and from job polling.
+      required: [id, project_id, user_id, job_type, stage, model_id, status, idempotency_key, estimated_cost, hashed_user_id, created_at]
+      properties:
+        id:
+          type: string
+        entity_id:
+          type: string
+          description: The character or page the job generates for.
+        project_id:
+          type: string
+        user_id:
+          type: string
+        job_type:
+          type: string
+        stage:
+          type: string
+        model_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, done, failed, uncertain, cancelled]
+        idempotency_key:
+          type: string
+        estimated_cost:
+          type: number
+        actual_cost:
+          type: number
+          nullable: true
+        hashed_user_id:
+          type: string
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+    GenerationReceipt:
+      type: object
+      description: >-
+        The 202 answer of a paid generation request. It is sent as soon as the job, its debit and its
+        dispatch envelope are committed, before any provider call. It carries no result: follow the job by
+        id and read the finished entity. A repeated request with the same Idempotency-Key returns the same
+        receipt, with the job's current status, and never charges again.
+      required: [job, job_id, status, entity_type, entity_id, project_id]
+      properties:
+        job:
+          $ref: '#/components/schemas/GenerationJobRecord'
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, done, failed, uncertain, cancelled]
+        entity_type:
+          type: string
+          enum: [character, page]
+        entity_id:
+          type: string
+        project_id:
+          type: string
+        variant:
+          type: string
+          enum: [draft-conditioned, direct-from-brief]
+          description: Painted page requests only. The finish variant the page request created.
+
     LetteringPoint:
       type: object
       additionalProperties: false

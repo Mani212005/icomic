@@ -226,17 +226,25 @@ def mark_job_done_in_db(job_id: str | None) -> None:
 
 def call_painted_page(
     guard: CostGuard,
+    chapter_id: str,
     page_id: str,
     variant: str,
 ) -> str:
     """Generate painted page variant with cost accounting."""
     estimate = guard.before_call("image", 1)
+    # The request answers with a receipt; json_request follows the job until it settles.
     resp = json_request(
         f"/api/v1/pages/{page_id}/painted-page",
         "POST",
         {"variant": variant},
     )
-    img_url = require(resp, "image_url", f"Variant {variant} response missing image_url")
+    pages = json_request(f"/api/v1/chapters/{chapter_id}/pages").get("pages", [])
+    saved_page = next((page for page in pages if page.get("id") == page_id), {})
+    if saved_page.get("painted_page_image_job_id") != resp.get("job_id"):
+        raise E2EError(f"Variant {variant} job did not produce the page's painted image")
+    img_url = require(
+        saved_page, "painted_page_image_url", f"Variant {variant} page missing painted image"
+    )
     job_id = None
     if isinstance(resp, dict):
         job_record = resp.get("job")
@@ -287,7 +295,7 @@ def run_flow_quality_compare(
             print(f"PASS Variant A already generated: {var_a_url}")
         else:
             print("Generating Variant A (draft-conditioned)...", flush=True)
-            var_a_url = call_painted_page(guard, page_id, "draft-conditioned")
+            var_a_url = call_painted_page(guard, chapter_id, page_id, "draft-conditioned")
             print(f"PASS Variant A generated: {var_a_url}")
     else:
         # 1. Project creation
@@ -379,7 +387,7 @@ def run_flow_quality_compare(
 
         # 7. Generate finished painted page: Variant A (draft-conditioned)
         print("Generating Variant A (draft-conditioned)...", flush=True)
-        var_a_url = call_painted_page(guard, page_id, "draft-conditioned")
+        var_a_url = call_painted_page(guard, chapter_id, page_id, "draft-conditioned")
         print(f"PASS Variant A generated: {var_a_url}")
 
     # Ensure draft approval is fresh before Variant B
@@ -387,7 +395,7 @@ def run_flow_quality_compare(
 
     # 8. Generate finished painted page: Variant B (direct-from-brief)
     print("Generating Variant B (direct-from-brief)...", flush=True)
-    var_b_url = call_painted_page(guard, page_id, "direct-from-brief")
+    var_b_url = call_painted_page(guard, chapter_id, page_id, "direct-from-brief")
     print(f"PASS Variant B generated: {var_b_url}")
 
     # 9. Fetch and save all assets

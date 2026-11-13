@@ -552,7 +552,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if existed {
-		s.writeReceipt(w, job, "character", nil)
+		s.writeReceipt(w, job, gen.Character, "")
 		return
 	}
 
@@ -568,7 +568,7 @@ func (s *Server) GenerateCharacterReference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.writeReceipt(w, job, "character", nil)
+	s.writeReceipt(w, job, gen.Character, "")
 }
 
 // ApproveCharacter handles POST /api/v1/characters/{id}/approve
@@ -1703,7 +1703,7 @@ func (s *Server) GenerateDraft(w http.ResponseWriter, r *http.Request) {
 		writeGenerationError(w, err)
 		return
 	}
-	s.writeReceipt(w, job, "page", nil)
+	s.writeReceipt(w, job, gen.Page, "")
 }
 
 // ApproveDraft handles POST /api/v1/pages/{id}/draft/approve
@@ -1898,7 +1898,7 @@ func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
 		writeGenerationError(w, err)
 		return
 	}
-	s.writeReceipt(w, job, "page", nil)
+	s.writeReceipt(w, job, gen.Page, "")
 }
 
 // ApproveLineArt handles POST /api/v1/pages/{id}/line-art/approve
@@ -2153,10 +2153,10 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existed {
-		s.writeReceipt(w, job, "page", map[string]interface{}{"variant": pg.PaintedPageVariant})
+		s.writeReceipt(w, job, gen.Page, pg.PaintedPageVariant)
 		return
 	}
-	s.writeReceipt(w, job, "page", map[string]interface{}{"variant": chosenVariant})
+	s.writeReceipt(w, job, gen.Page, chosenVariant)
 }
 
 // ApprovePaintedPage handles POST /api/v1/pages/{id}/painted-page/approve
@@ -2325,7 +2325,7 @@ func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
 		writeGenerationError(w, err)
 		return
 	}
-	s.writeReceipt(w, job, "page", nil)
+	s.writeReceipt(w, job, gen.Page, "")
 }
 
 // UpdateColourPalette handles PATCH /api/v1/pages/{id}/colour-palette

@@ -26,6 +26,7 @@ export const JOB_STATUS = {
 	RUNNING: 'running',
 	DONE: 'done',
 	FAILED: 'failed',
+	UNCERTAIN: 'uncertain',
 	CANCELLED: 'cancelled'
 };
 
