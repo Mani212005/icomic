@@ -127,11 +127,6 @@ func (s *InMemoryJobService) CreateJob(ctx context.Context, req CreateJobRequest
 		copy := *existing
 		return &copy, true, nil
 	}
-	// Like the PostgreSQL store: the global stop switch halts paid generation only, never PDF/PNG export.
-	if req.KillSwitchActive && req.JobType != "pdf_assembly" && req.JobType != "assemble_pdf" {
-		return nil, false, domain.ErrKillSwitchActive
-	}
-
 	job := &domain.GenerationJob{
 		EntityID:       req.EntityID,
 		ID:             generateJobID(),
