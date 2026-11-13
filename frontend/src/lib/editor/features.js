@@ -5,3 +5,5 @@ export { default as ExportView } from '../export/ExportView.svelte';
 export { LetteringSession } from '../lettering/session.js';
 export { pollJob, JobPollingError } from '../api/jobPolling.js';
 export { GenerationRunner, JOB_KIND } from './generationRunner.js';
+export { default as ApprovalTag } from './ApprovalTag.svelte';
+export { default as ApprovalAction } from './ApprovalAction.svelte';
