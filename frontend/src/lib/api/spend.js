@@ -21,6 +21,7 @@ export function spendView(spend) {
 	const level = left <= 0 ? 'out' : left < cap * 0.25 ? 'low' : 'ok';
 	return {
 		text: `${up(spent)} / ${down(cap)}`,
+		short: up(spent),
 		title: level === 'out'
 			? `Spend cap reached: ${up(spent)} of ${down(cap)}. No further paid call is sent.`
 			: `Spent ${up(spent)} of the ${down(cap)} cap. ${down(left)} left.`,

@@ -10,6 +10,7 @@ const spend = (cap, spent, left) => ({ enabled: true, cap_usd: cap, spent_usd: s
 test('the header shows the running total, the cap and what is left', () => {
 	const view = spendView(spend(2, 0.37, 1.63));
 	assert.equal(view.text, '$0.37 / $2.00');
+	assert.equal(view.short, '$0.37');
 	assert.equal(view.title, 'Spent $0.37 of the $2.00 cap. $1.63 left.');
 	assert.equal(view.level, 'ok');
 });
