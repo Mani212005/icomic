@@ -39,7 +39,7 @@ Adapters are selected via environment variables, defaulting to `fake`:
 - `ADAPTER_LANGUAGE`: `fake` (default) or `meta` (real `MetaLanguageAdapter`)
 - `ADAPTER_VISION`: `fake` (default) or `meta` (real `MetaVisionAdapter`)
 - `ADAPTER_IMAGE`: `fake` (default) or `meta` (real `MetaImageAdapter` targeting `muse-image-1.0`)
-- `ADAPTER_STORAGE`: `fake` (default) or `s3` (stub)
+- `ADAPTER_STORAGE`: `fake` (default, in memory), `local` (files on a volume at `LOCAL_STORAGE_DIR`, used by Compose) or `s3` (stub)
 - `ADAPTER_QUEUE`: `fake` (default) or `redis` (stub)
 - `ADAPTER_CLOCK`: `fake` (default) or `system`
 - `ADAPTER_MEDIA_FETCH`: `fake` (default, in-memory storage only) or `http` (allowlisted URL fetcher)

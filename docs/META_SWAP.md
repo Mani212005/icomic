@@ -36,7 +36,10 @@ The following environment variables configure the Python AI service and backgrou
 | `ADAPTER_LANGUAGE` | `fake` | `meta` | Selects the Meta language model adapter for script analysis, chapter outlining, and panel dialogue generation. |
 | `ADAPTER_VISION` | `fake` | `meta` | Selects the Meta vision model adapter for line art review and colour palette suggestion. |
 | `ADAPTER_IMAGE` | `fake` | `meta` | Selects the Meta image model adapter (`muse-image-1.0`) for character references, draft sketches, and final line art. |
-| `ADAPTER_STORAGE` | `fake` | `s3` (or `fake`) | Selects the object storage adapter for image assets and exported PDF documents. |
+| `ADAPTER_STORAGE` | `fake` (Compose: `local`) | `local` (or `fake`; `s3` is a stub) | Selects the object storage adapter for image assets and exported PDF documents. `local` keeps every object on the volume at `LOCAL_STORAGE_DIR`, so a restart loses nothing. |
+| `LOCAL_STORAGE_DIR` | none (Compose: `/var/lib/icomic/storage`) | a mounted directory | Required with `ADAPTER_STORAGE=local`. Conflicts with `ICOMIC_E2E_FAKE_STORAGE_DIR`. |
+| `PROVIDER_SPEND_CAP_USD` | off (Compose: `2`) | above 0, at most 2 | Lifetime provider spend cap in USD. Each call is reserved before it is sent and refused once it would pass the cap. Empty turns it off. See [PERSONAL_RUN.md](PERSONAL_RUN.md). |
+| `PROVIDER_COST_LEDGER_PATH` | none (Compose: `/var/lib/icomic/provider-costs.json`) | a file on a mounted volume | Required with a cap. Holds every call's usage durably and never a prompt. |
 | `ADAPTER_QUEUE` | `fake` | `redis` | Selects the job queue adapter for asynchronous background processing. |
 | `ADAPTER_CLOCK` | `fake` | `system` | Selects the real system wall-clock adapter. |
 | `ADAPTER_MEDIA_FETCH` | `fake` | `http` | Selects in-memory storage URL resolution or the allowlisted HTTP media fetch adapter. |
@@ -48,7 +51,6 @@ The following environment variables configure the Python AI service and backgrou
 | `META_API_BASE_URL` | `https://api.meta.ai/v1` (Meta only) | Optional override | Base URL for chat completions and Responses requests. |
 | `META_REASONING_EFFORT` | `low` (Meta only) | `minimal`, `low`, `medium`, `high`, `xhigh` | Text/vision reasoning effort, validated at construction; per-call `reasoning_effort` overrides it. `none` is rejected. |
 | `META_REASONING_RESERVE_TOKENS` | `1024` (Meta only) | non-negative integer | Generic adapter fallback; product stages explicitly select the answer/reserve/effort table in `docs/GENERATION_POLICY.md`. Manual checks use the larger of this value and their table reserve. |
-| `IMAGE_WORKER_CONCURRENCY` | `2` | `2` | Number of concurrent image generation worker processes. |
 
 The checked-in Compose files omit model and endpoint overrides so they use the adapter defaults defined in `ai/app/adapters/meta_http.py`. Services pass no model override unless explicitly configured at construction. Hermetic tests check Compose and env templates against those defaults and exercise service requests through mocked Meta transports. Language and vision use `/chat/completions`; image generation uses `/responses`.
 
@@ -97,9 +99,6 @@ ADAPTER_CLOCK=system
 
 # Authentication
 META_API_KEY=meta_live_sk_example_placeholder_never_commit
-
-# Queue and rate limit tuning
-IMAGE_WORKER_CONCURRENCY=2
 ```
 
 ## 3. Step-by-Step Swap Procedure
@@ -120,9 +119,9 @@ Follow these steps when swapping the system from fake adapters to live Meta adap
 - Add `META_API_KEY=<your-real-key>` and set `ADAPTER_LANGUAGE=meta`, `ADAPTER_VISION=meta`, and `ADAPTER_IMAGE=meta`.
 - Verify that `.env.local` is untracked and excluded by `.gitignore`.
 
-### Step 4: Configure Worker Concurrency
-- Set `IMAGE_WORKER_CONCURRENCY=2` in your environment.
-- Confirm that total image generation dispatch across all workers remains well below the 150 requests per minute team limit.
+### Step 4: Check the Spend Cap
+- Compose enables the personal spend cap by default (`PROVIDER_SPEND_CAP_USD=2`, the most it accepts). Lower it for a first run.
+- The AI service has one consumer thread, so dispatch stays far below the 150 requests per minute team limit.
 
 ### Step 5: Start the Stack with Production Configuration
 - Launch the local stack with the configured environment file:
@@ -168,9 +167,8 @@ Network timeouts and disconnects after a POST are also unknown outcomes and must
 ### 4.3 Rate Limiting and Worker Concurrency
 
 - Meta enforces a strict rate limit of 150 requests per minute per team for `muse-image-1.0`.
-- The worker pool must throttle dispatch through `IMAGE_WORKER_CONCURRENCY`.
-- At 2 concurrent workers with an average generation latency of 5 seconds per image, peak throughput is approximately 24 requests per minute, well within safe operational limits.
-- Background workers should employ an in-process or Redis-backed token bucket to prevent bursts during queue drain.
+- The single AI-service consumer thread throttles dispatch: at an average of 5 seconds per image, peak throughput is about 12 requests per minute, well within safe operational limits.
+- A single consumer cannot burst during queue drain, so no token bucket is needed.
 
 ### 4.4 Hashed User ID
 

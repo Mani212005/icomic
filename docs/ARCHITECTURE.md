@@ -16,7 +16,7 @@ icomic/
 │   │   ├── lib/
 │   │   │   ├── editor/         # Comic book editor components
 │   │   │   ├── colour/         # Colour editor + paint-bucket fill (client-side)
-│   │   │   └── api/            # Type-safe API client (generated from OpenAPI)
+│   │   │   └── api/            # Handwritten API client and types (JavaScript, not generated)
 │   │   └── app.html
 │   ├── package.json
 │   └── svelte.config.js
@@ -67,15 +67,14 @@ icomic/
 │   │   │   ├── line_art.py
 │   │   │   ├── colour.py
 │   │   │   └── moderation.py
-│   │   └── gen/                # Models generated or validated from contracts/openapi/
+│   │   └── gen/                # Models generated from contracts/openapi/ai-service.yaml
 │   ├── tests/
 │   │   ├── unit/               # Hermetic unit tests, DI with fake adapters
-│   │   ├── contract/           # Contract tests: adapter vs fake, Go-Python interface
-│   │   └── live/               # Optional live-API checks, never in CI
+│   │   └── contract/           # Contract tests: adapter vs fake, Go-Python interface
 │   ├── pyproject.toml
 │   └── requirements.txt
 ├── deploy/
-│   ├── docker-compose.yml      # Local dev stack (fake adapters, no real API)
+│   ├── docker-compose.yml      # Local stack (fakes by default, local-disk storage volume)
 │   ├── docker-compose.prod.yml # Production overrides (real adapters, secrets)
 │   └── migrations/             # PostgreSQL migration files (ordered, numbered)
 ├── docs/
@@ -427,13 +426,15 @@ For each port adapter, a contract test sends inputs to both the fake and the rea
 
 ### 6.5 Live Checks (Never in CI)
 
-A separate `ai/tests/live/` directory holds optional tests that call the real Meta API.
+Two manual entry points call the real Meta API: `scripts/manual/meta_live_check.py` (adapter
+smoke check) and `scripts/e2e/comic_e2e.py --live` (the full comic flow). Neither lives under
+`pytest`, and neither is referenced by CI.
 
-These tests:
-- Require `ADAPTER_IMAGE=meta` and a valid `META_API_KEY`.
-- Are excluded from `pytest` by default (`-m "not live"`).
-- Are never referenced in CI workflows.
-- Document which endpoint and model they exercise, and what response shape they assert.
+They:
+- Require `META_API_KEY`; the smoke check also needs `META_LIVE_CHECK=1` and the comic flow
+  needs `ICOMIC_E2E_LIVE=1`.
+- Enforce a hard budget and refuse a call that would pass it before it is sent.
+- Write a prompt-free record of every call, for review afterwards.
 
 ### 6.6 Delivery Process and CI
 
@@ -493,15 +494,18 @@ The following streams can begin in parallel after the contracts are finalised.
 ### 8.1 Running with Fakes (No API Key Required)
 
 ```bash
-docker compose up
+make dev   # docker compose -f deploy/docker-compose.yml up --build
 ```
 
 This starts:
-- PostgreSQL
+- PostgreSQL (migrations and seeds run first)
 - Redis
 - Go API (`ADAPTER_*=fake`)
-- Python AI service (`ADAPTER_*=fake`)
+- Python AI service (`ADAPTER_*=fake`, generated files on the `ai_data` volume)
 - Svelte dev server
+
+There is no `docker-compose.yml` at the repository root; run Compose from `deploy/` or pass `-f`.
+What a local run needs, what survives a restart and how to back up are in [PERSONAL_RUN.md](PERSONAL_RUN.md).
 
 The entire pipeline runs end-to-end with fake adapters. Generated images are fixed test PNGs. Language responses are deterministic stubs.
 
@@ -519,9 +523,12 @@ META_API_KEY=<key>
 Only the adapter implementations change; the service code does not change.
 For the complete step-by-step procedure, configuration variables, adapter requirements, verification checklist, and rollback steps, see [docs/META_SWAP.md](META_SWAP.md).
 
-### 8.3 Concurrency Setting
+### 8.3 Concurrency
 
-The image job queue concurrency is set via `IMAGE_WORKER_CONCURRENCY` (default: 2). At 2 workers with a realistic p95 generation latency of ~5 seconds per image, throughput is well below the 150 RPM team limit. Operators can increase this; the config comment must note the 150 RPM ceiling.
+The AI service runs one background consumer thread (`GenerationWorker`), so provider calls are
+sequential. At a realistic ~5 seconds per image that is about 12 images a minute, far below the
+150 RPM team limit, and there is no concurrency setting. (`IMAGE_WORKER_CONCURRENCY` appeared in
+earlier drafts of these docs; no code ever read it.)
 
 ---
 
