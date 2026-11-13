@@ -637,6 +637,24 @@ func (e ProjectLimitErrorCode) Valid() bool {
 	}
 }
 
+// Defines values for ReadinessResponseStatus.
+const (
+	NotReady ReadinessResponseStatus = "not_ready"
+	Ready    ReadinessResponseStatus = "ready"
+)
+
+// Valid indicates whether the value is a known member of the ReadinessResponseStatus enum.
+func (e ReadinessResponseStatus) Valid() bool {
+	switch e {
+	case NotReady:
+		return true
+	case Ready:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StoreColourImageRequestMediaType.
 const (
 	ImagePng  StoreColourImageRequestMediaType = "image/png"
@@ -1376,6 +1394,30 @@ type ProjectLimitError struct {
 
 // ProjectLimitErrorCode defines model for ProjectLimitError.Code.
 type ProjectLimitErrorCode string
+
+// ProviderSpendResponse defines model for ProviderSpendResponse.
+type ProviderSpendResponse struct {
+	Calls  *int     `json:"calls,omitempty"`
+	CapUsd *float64 `json:"cap_usd,omitempty"`
+
+	// Enabled False when no personal spend cap is configured.
+	Enabled      bool     `json:"enabled"`
+	RemainingUsd *float64 `json:"remaining_usd,omitempty"`
+
+	// SpentUsd Accounted provider spend, counting each unfinished or unconfirmed call at its full reservation.
+	SpentUsd       *float64 `json:"spent_usd,omitempty"`
+	UncertainCalls *int     `json:"uncertain_calls,omitempty"`
+}
+
+// ReadinessResponse defines model for ReadinessResponse.
+type ReadinessResponse struct {
+	// Checks One entry per dependency, ok or a short non-secret reason.
+	Checks map[string]string       `json:"checks"`
+	Status ReadinessResponseStatus `json:"status"`
+}
+
+// ReadinessResponseStatus defines model for ReadinessResponse.Status.
+type ReadinessResponseStatus string
 
 // StoreColourImageRequest defines model for StoreColourImageRequest.
 type StoreColourImageRequest struct {

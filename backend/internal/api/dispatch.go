@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -38,13 +40,36 @@ func (s *Server) failGeneration(ctx context.Context, job *domain.GenerationJob, 
 	defer s.finishDispatch(ctx, job.ID)
 	message := safeGenerationMessage(cause)
 	if uncertainProviderOutcome(cause) {
-		return s.JobService.UpdateJobStatus(ctx, job.ID, "uncertain", nil, &message)
+		err := s.JobService.UpdateJobStatus(ctx, job.ID, "uncertain", nil, &message)
+		logGenerationFailure(job, cause, "uncertain", err, nil)
+		return err
 	}
 	statusErr := s.JobService.UpdateJobStatus(ctx, job.ID, "failed", nil, &message)
 	_, refundErr := s.CreditService.Refund(ctx, credits.RefundRequest{
 		UserID: job.UserID, ProjectID: job.ProjectID, GenerationJobID: job.ID, Amount: amount,
 	})
+	logGenerationFailure(job, cause, "failed", statusErr, refundErr)
 	return errors.Join(statusErr, refundErr)
+}
+
+// logGenerationFailure writes one line per failed job, keyed by the same job id the AI
+// service logs. It carries ids and a stable code only: never prompts or provider bodies.
+// A failed status write or refund is the line that matters most, so it is always named.
+func logGenerationFailure(job *domain.GenerationJob, cause error, state string, statusErr, refundErr error) {
+	code := "internal"
+	var serviceErr *gen.AIServiceError
+	if errors.As(cause, &serviceErr) {
+		code = serviceErr.Code
+	}
+	line := fmt.Sprintf("generation failed job_id=%s project_id=%s type=%s state=%s code=%s",
+		job.ID, job.ProjectID, job.JobType, state, code)
+	if statusErr != nil {
+		line += fmt.Sprintf(" status_write_error=%q", statusErr.Error())
+	}
+	if refundErr != nil {
+		line += fmt.Sprintf(" refund_error=%q", refundErr.Error())
+	}
+	log.Print(line)
 }
 
 func safeGenerationMessage(err error) string {

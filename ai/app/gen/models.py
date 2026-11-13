@@ -82,6 +82,26 @@ class HealthResponse(BaseModel):
     status: str = Field(..., examples=["ok"])
 
 
+class ReadinessResponse(BaseModel):
+    status: Literal["ready", "not_ready"]
+    checks: dict[str, str] = Field(
+        ..., description="One entry per dependency, ok or a short non-secret reason."
+    )
+
+
+class ProviderSpendResponse(BaseModel):
+    enabled: bool = Field(..., description="False when no personal spend cap is configured.")
+    cap_usd: float | None = Field(None, ge=0.0)
+    spent_usd: float | None = Field(
+        None,
+        description="Accounted provider spend, counting each unfinished or unconfirmed call at its full reservation.",
+        ge=0.0,
+    )
+    remaining_usd: float | None = Field(None, ge=0.0)
+    calls: int | None = Field(None, ge=0)
+    uncertain_calls: int | None = Field(None, ge=0)
+
+
 class ErrorResponse(BaseModel):
     code: str = Field(..., examples=["INVALID_ARGUMENT"])
     message: str = Field(..., examples=["Script input cannot be empty"])

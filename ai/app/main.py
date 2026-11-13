@@ -3,6 +3,7 @@
 import base64
 import binascii
 import hashlib
+import logging
 import math
 import mimetypes
 import os
@@ -45,6 +46,8 @@ from .gen.models import (
     LetteringLayoutRequest,
     ModeratePromptRequest,
     ModeratePromptResponse,
+    ProviderSpendResponse,
+    ReadinessResponse,
     StoreColourImageRequest,
     StoreColourImageResponse,
     SuggestColourPaletteRequest,
@@ -71,6 +74,9 @@ from .services.panel import PanelService
 from .services.pdf import PdfAssemblyService
 from .services.script import ScriptService
 from .services.worker import QUEUE, GenerationWorker
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("icomic.ai")
 
 
 def create_app(adapters: AdapterSet | None = None) -> FastAPI:
@@ -217,6 +223,41 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     @app.get("/healthz", response_model=HealthResponse)
     def health_check():
         return HealthResponse(status="ok")
+
+    @app.get("/readyz", response_model=ReadinessResponse)
+    def readiness_check():
+        """Liveness says the process runs; readiness says its dependencies can do work."""
+        checks = {}
+        for name, adapter in (
+            ("storage", wired_adapters.storage),
+            ("queue", wired_adapters.queue),
+        ):
+            probe = getattr(adapter, "ready", None)
+            try:
+                if probe is not None:
+                    probe()
+                checks[name] = "ok"
+            except Exception as exc:  # noqa: BLE001 - any failure means not ready
+                logger.warning("readiness check failed: %s: %s", name, type(exc).__name__)
+                checks[name] = "unavailable"
+        body = ReadinessResponse(
+            status="ready" if all(v == "ok" for v in checks.values()) else "not_ready",
+            checks=checks,
+        )
+        if body.status != "ready":
+            return JSONResponse(status_code=503, content=body.model_dump(mode="json"))
+        return body
+
+    @app.get(
+        "/internal/v1/provider-spend",
+        response_model=ProviderSpendResponse,
+        response_model_exclude_none=True,
+    )
+    def provider_spend():
+        ledger = wired_adapters.cost_ledger
+        if ledger is None:
+            return ProviderSpendResponse(enabled=False)
+        return ProviderSpendResponse(**ledger.summary())
 
     @app.post("/internal/v1/analyze-script", response_model=AnalyzeScriptResponse)
     @queued("language", wired_adapters.language)

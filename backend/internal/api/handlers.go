@@ -10,6 +10,7 @@ import (
 	"image"
 	_ "image/png"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -165,9 +166,40 @@ func (s *Server) ModeratePromptHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// readinessTimeout bounds each dependency probe so a hung one cannot hang the endpoint.
+const readinessTimeout = 3 * time.Second
+
 // HealthCheck handles GET /healthz and GET /internal/health
 func (s *Server) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ReadinessCheck handles GET /readyz. Unlike /healthz (the process is up), it answers 503
+// while PostgreSQL or the AI service cannot do work, with a reason per dependency that
+// never carries connection details.
+func (s *Server) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
+	defer cancel()
+	checks := map[string]string{"database": "ok", "ai": "ok"}
+	if pinger, ok := s.Repo.(interface{ Ping(context.Context) error }); ok {
+		if err := pinger.Ping(ctx); err != nil {
+			log.Printf("readiness: database unavailable: %v", err)
+			checks["database"] = "unavailable"
+		}
+	}
+	if checker, ok := s.AIClient.(gen.ReadinessChecker); ok {
+		if err := checker.CheckReady(ctx); err != nil {
+			log.Printf("readiness: ai service unavailable: %v", err)
+			checks["ai"] = "unavailable"
+		}
+	}
+	status, code := "ready", http.StatusOK
+	for _, state := range checks {
+		if state != "ok" {
+			status, code = "not_ready", http.StatusServiceUnavailable
+		}
+	}
+	writeJSON(w, code, map[string]interface{}{"status": status, "checks": checks})
 }
 
 // -------------------------------------------------------------
@@ -2650,11 +2682,32 @@ func (s *Server) CreditUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	response := map[string]interface{}{
 		"user_id":       userID,
 		"balance":       balance,
 		"usage_history": history,
-	})
+	}
+	if spend := s.providerSpend(r.Context()); spend != nil {
+		response["provider_spend"] = spend
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// providerSpend reads the running provider spend against the personal cap. It is
+// best effort: when the AI service cannot answer, credit usage still loads without it.
+func (s *Server) providerSpend(ctx context.Context) *gen.ProviderSpendResponse {
+	reader, ok := s.AIClient.(gen.ProviderSpendReader)
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, readinessTimeout)
+	defer cancel()
+	spend, err := reader.ProviderSpend(ctx)
+	if err != nil {
+		log.Printf("provider spend unavailable: %v", err)
+		return nil
+	}
+	return spend
 }
 
 // -------------------------------------------------------------

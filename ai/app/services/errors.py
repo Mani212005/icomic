@@ -14,6 +14,7 @@ from ..adapters.meta_http import (
     MetaTransientError,
     MetaUnknownOutcomeError,
 )
+from ..provider_costs import ProviderSpendCapError
 from ..provider_output import ProviderOutputError
 
 
@@ -40,6 +41,13 @@ def classify_error(exc: Exception) -> SafeError:
     if isinstance(exc, ExportIncompleteError):
         # Written for the user and free of storage URLs, so it is safe to show verbatim.
         return SafeError("EXPORT_INCOMPLETE", str(exc), 409)
+    if isinstance(exc, ProviderSpendCapError):
+        return SafeError(
+            "SPEND_CAP_REACHED",
+            "The personal spend cap is reached, so no further paid call was sent. "
+            "Raise PROVIDER_SPEND_CAP_USD to continue.",
+            429,
+        )
     if isinstance(exc, MetaContentPolicyError):
         return SafeError(
             "CONTENT_POLICY_REJECTED",

@@ -41,9 +41,20 @@ class GenerationWorker:
         try:
             result, cost = self.handlers[envelope.payload["operation"]](envelope.payload["request"])
         except Exception as exc:
-            logger.exception("Generation consumer failed")
             uncertain = bool(getattr(exc, "outcome_unknown", False))
             error = classify_error(exc)
+            # One correlated line: ids and codes only, never prompts or provider bodies.
+            logger.error(
+                "generation failed job_id=%s operation=%s code=%s status=%s error=%s",
+                envelope.idempotency_key,
+                envelope.payload.get("operation"),
+                error.code,
+                "uncertain" if uncertain else "failed",
+                type(exc).__name__,
+            )
+            logger.debug(
+                "generation failure detail job_id=%s", envelope.idempotency_key, exc_info=True
+            )
             self.queue.finish(
                 envelope,
                 {
