@@ -1,4 +1,4 @@
-.PHONY: all test lint build check bench guard-hermetic test-contracts test-migrations test-backend test-backend-realdb test-ai test-frontend test-e2e e2e-comic generate-contract-models check-contract-models install-contract-codegen fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
+.PHONY: all test lint build check check-ci check-compose lint-workflows bench guard-hermetic test-contracts test-migrations test-backend test-backend-realdb test-ai test-frontend test-e2e e2e-comic generate-contract-models check-contract-models install-contract-codegen fmt-backend lint-backend lint-ai lint-frontend build-backend build-frontend dev clean migrate-up migrate-down migrate-seed
 
 OAPI_CODEGEN_VERSION := v2.6.0
 DATAMODEL_CODEGEN_VERSION := 0.89.0
@@ -18,6 +18,7 @@ guard-hermetic:
 	python3 scripts/check_readme_test.py
 	python3 scripts/check_hermetic.py
 	python3 scripts/check_generated_test.py
+	python3 scripts/check_compose_test.py
 
 install-contract-codegen:
 	go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION)
@@ -32,6 +33,16 @@ check-contract-models:
 	  $(OAPI_CODEGEN) -config backend/oapi-codegen.yaml -o "$$tmp/types.go" $(OPENAPI_SPEC) && \
 	  datamodel-codegen $(DATAMODEL_CODEGEN_ARGS) --type-overrides "$$(cat ai/datamodel-codegen-overrides.json)" --output "$$tmp/models.py" && \
 	  python3 scripts/check_generated.py --generated-dir "$$tmp"
+
+# Needs the docker compose plugin (no daemon). CI job: compose.
+check-compose:
+	python3 scripts/check_compose_test.py
+	python3 scripts/check_compose.py
+
+# Needs PyYAML (contracts/requirements.txt). CI job: contracts.
+lint-workflows:
+	python3 scripts/check_workflows_test.py
+	python3 scripts/check_workflows.py
 
 test-contracts:
 	uv run --with-requirements contracts/requirements.txt python3 contracts/validate_test.py
@@ -93,6 +104,10 @@ build-frontend:
 build: build-backend build-frontend
 
 check: lint test build
+
+# Everything CI runs, in one command: `check` plus the jobs it leaves out. See docs/CI.md.
+# Not covered locally: the service-images job (docker builds) and CI-only setup steps.
+check-ci: check check-contract-models check-compose lint-workflows test-backend-realdb test-e2e
 
 dev:
 	docker compose -f deploy/docker-compose.yml up --build
