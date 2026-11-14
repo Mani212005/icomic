@@ -297,6 +297,26 @@ export class ApiClient {
 		});
 	}
 
+	// Structural panel edits are chapter-scoped and atomic on the server: each stales the approvals of every
+	// page it changes. addPanel puts the panel on data.page_id (at data.position) or on a new last page.
+	async addPanel(chapterId, data) {
+		return this.request(`/api/v1/chapters/${chapterId}/panels/add`, {
+			method: 'POST',
+			body: JSON.stringify(data)
+		});
+	}
+
+	async movePanel(chapterId, panelId, pageId, position) {
+		return this.request(`/api/v1/chapters/${chapterId}/panels/move`, {
+			method: 'POST',
+			body: JSON.stringify({ panel_id: panelId, page_id: pageId, ...(position === undefined ? {} : { position }) })
+		});
+	}
+
+	async deletePanel(chapterId, panelId) {
+		return this.request(`/api/v1/chapters/${chapterId}/panels/${panelId}`, { method: 'DELETE' });
+	}
+
 	async updatePanel(id, data) {
 		const res = await this.request(`/api/v1/panels/${id}`, {
 			method: 'PATCH',

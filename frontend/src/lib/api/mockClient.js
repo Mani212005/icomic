@@ -7,6 +7,13 @@ function genId(prefix = 'id') {
 	return `${prefix}-${counter++}`;
 }
 
+// The demo seeds ids such as panel-1, which the counter would hand out again.
+function freshId(prefix, taken) {
+	let id = genId(prefix);
+	while (taken.has(id)) id = genId(prefix);
+	return id;
+}
+
 function apiError(message, code, status, details) {
 	return Object.assign(new Error(message), { code, status, details });
 }
@@ -475,6 +482,100 @@ export class MockApiClient {
 			return panel;
 		});
 		return created;
+	}
+
+	// The demo mirrors the server's panel structure rules: a page holds at most five panels, never ends up
+	// empty, only changed pages go stale, and panel and page numbers follow reading order.
+	chapterPages(chapterId) {
+		return Array.from(this.pages.values()).filter((p) => p.chapter_id === chapterId).sort((a, b) => a.page_number - b.page_number);
+	}
+
+	settleLayout(chapterId, changedIds, now) {
+		const pages = this.chapterPages(chapterId);
+		pages.forEach((page, index) => {
+			page.page_number = index + 1;
+			if (changedIds.has(page.id)) {
+				page.draft_approved_at = null;
+				page.line_art_approved_at = null;
+				page.painted_page_approved_at = null;
+				page.updated_at = now;
+			}
+		});
+		pages.flatMap((page) => page.panel_ids).forEach((panelId, index) => {
+			const panel = this.panels.get(panelId);
+			if (panel) this.panels.set(panelId, { ...panel, panel_number: index + 1 });
+		});
+	}
+
+	async addPanel(chapterId, data) {
+		if (!this.chapters.has(chapterId)) throw new Error(`Chapter ${chapterId} not found`);
+		if (!String(data.scene_description || '').trim()) throw new Error('A new panel needs a scene description');
+		const now = new Date().toISOString();
+		const pages = this.chapterPages(chapterId);
+		const target = data.page_id ? pages.find((page) => page.id === data.page_id) : null;
+		if (data.page_id && !target) throw new Error('page is not part of the chapter');
+		if (target && target.panel_ids.length >= 5) throw new Error('a page holds at most 5 panels');
+		const { page_id, position, ...fields } = data;
+		const panel = {
+			id: freshId('panel', this.panels), chapter_id: chapterId, panel_number: 0, status: 'ready',
+			dialogue: '', narration: '', character_actions: '', camera_angle: '', background: '', image_prompt: '',
+			...fields, created_at: now, updated_at: now
+		};
+		this.panels.set(panel.id, panel);
+		const changed = new Set();
+		if (target) {
+			const at = Number.isInteger(position) && position <= target.panel_ids.length ? position : target.panel_ids.length;
+			target.panel_ids.splice(at, 0, panel.id);
+			changed.add(target.id);
+		} else {
+			const page = { id: freshId('page', this.pages), lettering_mode: 'baked', chapter_id: chapterId, page_number: pages.length + 1, panel_ids: [panel.id], created_at: now, updated_at: now };
+			this.pages.set(page.id, page);
+		}
+		this.settleLayout(chapterId, changed, now);
+		return { panel: this.panels.get(panel.id), changed_page_ids: [...changed], removed_page_ids: [] };
+	}
+
+	async movePanel(chapterId, panelId, pageId, position) {
+		const pages = this.chapterPages(chapterId);
+		const source = pages.find((page) => page.panel_ids.includes(panelId));
+		const target = pages.find((page) => page.id === pageId);
+		if (!source || !target) throw new Error('panel or page is not part of the chapter');
+		const rest = target.panel_ids.filter((id) => id !== panelId);
+		if (source !== target && (source.panel_ids.length === 1 || rest.length >= 5)) {
+			throw new Error(source.panel_ids.length === 1 ? `page ${source.page_number} would be left without panels` : 'a page holds at most 5 panels');
+		}
+		const at = Number.isInteger(position) && position <= rest.length ? position : rest.length;
+		const next = [...rest.slice(0, at), panelId, ...rest.slice(at)];
+		const changed = new Set();
+		if (source !== target) {
+			source.panel_ids = source.panel_ids.filter((id) => id !== panelId);
+			changed.add(source.id);
+		}
+		if (source === target ? next.join() !== target.panel_ids.join() : true) changed.add(target.id);
+		target.panel_ids = next;
+		this.settleLayout(chapterId, changed, new Date().toISOString());
+		return { changed_page_ids: [...changed], removed_page_ids: [] };
+	}
+
+	async deletePanel(chapterId, panelId) {
+		const pages = this.chapterPages(chapterId);
+		const source = pages.find((page) => page.panel_ids.includes(panelId));
+		if (!source) throw new Error(`Panel ${panelId} not found`);
+		const removed = [];
+		const changed = new Set();
+		if (source.panel_ids.length === 1) {
+			if (source.draft_image_url || source.line_art_image_url || source.painted_page_image_url || source.colour_image_url) {
+				throw new Error('This is the last panel on a page that already has generated art. Move it to another page instead, or keep it.');
+			}
+			this.pages.delete(source.id);
+			removed.push(source.id);
+		} else {
+			source.panel_ids = source.panel_ids.filter((id) => id !== panelId);
+			changed.add(source.id);
+		}
+		this.panels.delete(panelId);
+		this.settleLayout(chapterId, changed, new Date().toISOString());
+		return { changed_page_ids: [...changed], removed_page_ids: removed };
 	}
 
 	async updatePanel(id, data) {

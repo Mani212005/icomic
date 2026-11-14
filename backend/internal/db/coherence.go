@@ -165,7 +165,8 @@ func (p *PostgresRepository) SavePanelEdit(ctx context.Context, pan *domain.Pane
 
 // ReassignPanels places panelIDs on a page, moving them off any sibling page, validated and applied as one
 // unit (SPEC 3.5.1). It returns the IDs of the pages whose allocation changed; their approvals are staled and
-// their panels touched so earlier art can no longer be reapproved as current.
+// their panels touched so earlier art can no longer be reapproved as current. Panels are renumbered in reading
+// order with the same transaction (panel_layout.go).
 func (m *InMemoryRepository) ReassignPanels(_ context.Context, pageID string, panelIDs []string, maxPerPage int, now time.Time) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -173,85 +174,33 @@ func (m *InMemoryRepository) ReassignPanels(_ context.Context, pageID string, pa
 	if !ok {
 		return nil, ErrNotFound
 	}
-	var pages []*domain.Page
-	for _, pg := range m.pages {
-		if pg.ChapterID == target.ChapterID {
-			pages = append(pages, pg)
-		}
-	}
-	chapterPanels := map[string]bool{}
-	for _, pan := range m.panels {
-		if pan.ChapterID == target.ChapterID {
-			chapterPanels[pan.ID] = true
-		}
-	}
-	plan, err := domain.PlanPanelReassignment(pages, chapterPanels, pageID, panelIDs, maxPerPage)
+	edit, err := m.editLayoutLocked(target.ChapterID, now, nil, nil, reassignment(pageID, panelIDs, maxPerPage))
 	if err != nil {
 		return nil, err
 	}
-	var changed []string
-	for id, ids := range plan {
-		pg := m.pages[id]
-		for _, panelID := range pg.PanelIDs {
-			m.panels[panelID].UpdatedAt = now
-		}
-		for _, panelID := range ids {
-			m.panels[panelID].UpdatedAt = now
-		}
-		pg.PanelIDs = ids
-		domain.StaleDraftOnPanelEdit(pg, now)
-		changed = append(changed, id)
-	}
-	return changed, nil
+	return edit.Changed, nil
 }
 
 func (p *PostgresRepository) ReassignPanels(ctx context.Context, pageID string, panelIDs []string, maxPerPage int, now time.Time) ([]string, error) {
-	now = now.UTC().Truncate(time.Microsecond)
-	tx, err := p.transactions.Begin(ctx)
+	target, err := p.GetPage(ctx, pageID)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	var chapterID string
-	if err := tx.QueryRowContext(ctx, `SELECT chapter_id FROM pages WHERE id=$1::uuid`, pageID).Scan(&chapterID); errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	} else if err != nil {
-		return nil, err
-	}
-	// Serialize allocation edits per chapter: the chapter row is the lock.
-	if _, err := tx.ExecContext(ctx, `SELECT id FROM chapters WHERE id=$1::uuid FOR UPDATE`, chapterID); err != nil {
-		return nil, err
-	}
-	pages, chapterPanels, err := loadAllocation(ctx, tx, chapterID)
+	edit, err := p.editLayout(ctx, target.ChapterID, now, nil, nil, reassignment(pageID, panelIDs, maxPerPage))
 	if err != nil {
 		return nil, err
 	}
-	plan, err := domain.PlanPanelReassignment(pages, chapterPanels, pageID, panelIDs, maxPerPage)
-	if err != nil {
-		return nil, err
-	}
-	var changed []string
-	for _, pg := range pages {
-		ids, ok := plan[pg.ID]
-		if !ok {
-			continue
-		}
-		touched := append(append([]string(nil), pg.PanelIDs...), ids...)
-		pidsBytes, _ := json.Marshal(ids)
-		if _, err := tx.ExecContext(ctx, `UPDATE pages SET panel_ids=$2, draft_approved_at=NULL, line_art_approved_at=NULL, painted_page_approved_at=NULL, updated_at=$3 WHERE id=$1::uuid`, pg.ID, pidsBytes, now); err != nil {
+	return edit.Changed, nil
+}
+
+func reassignment(pageID string, panelIDs []string, maxPerPage int) layoutPlanner {
+	return func(pages []*domain.Page, chapterPanels map[string]bool) (*domain.PanelLayoutEdit, error) {
+		plan, err := domain.PlanPanelReassignment(pages, chapterPanels, pageID, panelIDs, maxPerPage)
+		if err != nil {
 			return nil, err
 		}
-		for _, panelID := range touched {
-			if _, err := tx.ExecContext(ctx, `UPDATE panels SET updated_at=$2 WHERE id=$1::uuid`, panelID, now); err != nil {
-				return nil, err
-			}
-		}
-		changed = append(changed, pg.ID)
+		return domain.LayoutFromReassignment(pages, plan), nil
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return changed, nil
 }
 
 // loadAllocation reads a chapter's pages and panel IDs through the transaction, in page order.

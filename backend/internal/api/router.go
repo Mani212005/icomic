@@ -115,6 +115,9 @@ func (s *Server) NewRouter() http.Handler {
 	handle("POST /api/v1/chapters/{id}/panels", s.GeneratePanels)
 	handle("GET /api/v1/chapters/{id}/panels", s.ListPanels)
 	handle("PATCH /api/v1/panels/{id}", s.UpdatePanel)
+	handle("POST /api/v1/chapters/{id}/panels/add", s.AddPanel)
+	handle("POST /api/v1/chapters/{id}/panels/move", s.MovePanel)
+	handle("DELETE /api/v1/chapters/{id}/panels/{panel_id}", s.DeletePanel)
 
 	// Pages
 	handle("GET /api/v1/chapters/{id}/pages", s.ListPages)

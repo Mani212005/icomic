@@ -2,6 +2,7 @@
 	import { tick } from 'svelte';
 	import ErrorBanner from './ErrorBanner.svelte';
 	import { PANEL_FIELDS, emptyPanelForm } from './panelFields.js';
+	import { pageOfPanel, moveTarget } from './panelLayout.js';
 	import { stageList, quoteStages } from './stages.js';
 	import { Icon, BetaTag, revealCards } from '#lib/design/shell.js';
 	import { ApprovalTag, ApprovalAction, ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
@@ -9,6 +10,7 @@
 	const GENERATING = 'Generating…';
 	const INK_VARIANT = 'ink';
 	const PAINTED_VARIANT = 'painted';
+	const NEW_PAGE = 'new';
 
 	export let project;
 	export let apiClient;
@@ -442,6 +444,54 @@
 		}
 	}
 
+	// Structure edits (add, move, delete) are one request each; the server stales every page they change.
+	// They run one at a time, and the chapter is reloaded after each, even after a refusal, so the screen
+	// shows what is stored if another tab changed the layout meanwhile.
+	let layoutBusy = false;
+	let deletingPanelId = null;
+	let addingToChapterId = null;
+	let addPanelForm = emptyPanelForm();
+	let addPanelPageId = NEW_PAGE;
+	const chapterPages = (chapterId, allPages) => allPages.filter((page) => page.chapter_id === chapterId);
+	const hasPanels = (chapterId, allPanels) => allPanels.some((panel) => panel.chapter_id === chapterId);
+
+	async function editLayout(edit) {
+		jobError = null;
+		layoutBusy = true;
+		let done = false;
+		try {
+			await edit();
+			done = true;
+		} catch (err) {
+			jobError = formatApiError(err);
+		}
+		await reloadProjectData();
+		layoutBusy = false;
+		return done;
+	}
+
+	function stepPanel(panel, direction) {
+		const target = moveTarget(chapterPages(panel.chapter_id, pages), panel.id, direction);
+		if (target) editLayout(() => apiClient.movePanel(panel.chapter_id, panel.id, target.pageId, target.position));
+	}
+
+	async function deletePanel(panel) {
+		if (await editLayout(() => apiClient.deletePanel(panel.chapter_id, panel.id))) deletingPanelId = null;
+	}
+
+	function startAddPanel(chapter) {
+		const last = chapterPages(chapter.id, pages).at(-1);
+		addingToChapterId = chapter.id;
+		addPanelForm = emptyPanelForm();
+		addPanelPageId = last ? last.id : NEW_PAGE;
+	}
+
+	async function addPanel(chapterId) {
+		const fields = Object.fromEntries(PANEL_FIELDS.map(([key]) => [key, addPanelForm[key].trim()]).filter(([, value]) => value));
+		const payload = addPanelPageId === NEW_PAGE ? fields : { ...fields, page_id: addPanelPageId };
+		if (await editLayout(() => apiClient.addPanel(chapterId, payload))) addingToChapterId = null;
+	}
+
 	function startEditPanel(panel) {
 		editingPanelId = panel.id;
 		editPanelForm = Object.fromEntries(PANEL_FIELDS.map(([key]) => [key, panel[key] || '']));
@@ -796,46 +846,100 @@
 				<button class="primary-btn" on:click={generatePanels} disabled={isJobActive || !allChaptersApproved}>Panels</button>
 			{/if}
 			{#if panels.length === 0}<div class="stage-empty"><Icon name="panels" size={48} /></div>{/if}
-			<div class="panels-list">
-				{#each panels as panel}
-					<div class="panel-card">
-						<div class="panel-header-row">
-							<span class="panel-num">Chapter {panel.chapter_number}, Panel {panel.panel_number}</span>
+			{#each chapters.filter((chapter) => hasPanels(chapter.id, panels)) as chapter (chapter.id)}
+				{@const chapterPanels = panels.filter((panel) => panel.chapter_id === chapter.id)}
+				{@const pagesOfChapter = chapterPages(chapter.id, pages)}
+				<div class="panels-list">
+					{#each chapterPanels as panel (panel.id)}
+						{@const page = pageOfPanel(pagesOfChapter, panel.id)}
+						<div class="panel-card">
+							<div class="panel-header-row">
+								<span class="panel-num">Chapter {panel.chapter_number}, Panel {panel.panel_number}{#if page} <span class="page-chip">Page {page.page_number}</span>{/if}</span>
+								{#if editingPanelId === panel.id}
+									<div class="panel-edit-btns">
+										<button class="primary-btn small" on:click={() => saveEditPanel(panel.id)}>Save</button>
+										<button class="secondary-btn small" on:click={cancelEditPanel}>Cancel</button>
+									</div>
+								{:else}
+									<div class="panel-tools">
+										<button class="edit-icon-btn" aria-label="Move panel {panel.panel_number} up" title="Move up" disabled={layoutBusy || !moveTarget(pagesOfChapter, panel.id, 'up')} on:click={() => stepPanel(panel, 'up')}><span class="turn-up"><Icon name="arrow" size={18} /></span></button>
+										<button class="edit-icon-btn" aria-label="Move panel {panel.panel_number} down" title="Move down" disabled={layoutBusy || !moveTarget(pagesOfChapter, panel.id, 'down')} on:click={() => stepPanel(panel, 'down')}><span class="turn-down"><Icon name="arrow" size={18} /></span></button>
+										<button class="edit-icon-btn" on:click={() => startEditPanel(panel)} ><Icon name="edit" size={18} /> Edit</button>
+										<button class="edit-icon-btn" aria-label="Delete panel {panel.panel_number}" disabled={layoutBusy} on:click={() => (deletingPanelId = panel.id)}><Icon name="delete" size={18} /> Delete</button>
+									</div>
+								{/if}
+							</div>
+
+							{#if deletingPanelId === panel.id}
+								<div class="panel-confirm" role="alertdialog" aria-label="Delete panel {panel.panel_number}">
+									<p><Icon name="warning" size={18} /> Delete panel {panel.panel_number}? The pages that hold it need their drafts and approvals again.</p>
+									<div class="edit-actions">
+										<button class="primary-btn small" disabled={layoutBusy} on:click={() => deletePanel(panel)}>Delete panel</button>
+										<button class="secondary-btn small" disabled={layoutBusy} on:click={() => (deletingPanelId = null)}>Keep panel</button>
+									</div>
+								</div>
+							{/if}
+
 							{#if editingPanelId === panel.id}
-								<div class="panel-edit-btns">
-									<button class="primary-btn small" on:click={() => saveEditPanel(panel.id)}>Save</button>
-									<button class="secondary-btn small" on:click={cancelEditPanel}>Cancel</button>
+								<div class="panel-edit-form">
+									{#each PANEL_FIELDS as [key, label, multiline]}
+										<label>{label}:
+											{#if multiline}
+												<textarea rows="2" bind:value={editPanelForm[key]}></textarea>
+											{:else}
+												<input type="text" bind:value={editPanelForm[key]} />
+											{/if}
+										</label>
+									{/each}
 								</div>
 							{:else}
-								<button class="edit-icon-btn" on:click={() => startEditPanel(panel)} ><Icon name="edit" size={18} /> Edit</button>
+								<div class="panel-content">
+									{#each PANEL_FIELDS as [key, label]}
+										<p class:prompt-text={key === 'image_prompt'}>
+											<strong>{label}:</strong>
+											<span class:narration={key === 'narration'}>{key === 'dialogue' ? `"${panel[key]}"` : panel[key]}</span>
+										</p>
+									{/each}
+								</div>
 							{/if}
 						</div>
+					{/each}
 
-						{#if editingPanelId === panel.id}
+					{#if addingToChapterId === chapter.id}
+						<div class="panel-card panel-add" role="group" aria-label="Add a panel to chapter {chapter.chapter_number}">
+							<div class="panel-header-row"><span class="panel-num">New panel, chapter {chapter.chapter_number}</span></div>
 							<div class="panel-edit-form">
+								<label>Place on:
+									<select bind:value={addPanelPageId}>
+										{#each pagesOfChapter as pageOption (pageOption.id)}
+											<option value={pageOption.id}>Page {pageOption.page_number}, after its {pageOption.panel_ids?.length ?? 0} panels</option>
+										{/each}
+										<option value={NEW_PAGE}>A new page at the end</option>
+									</select>
+								</label>
 								{#each PANEL_FIELDS as [key, label, multiline]}
 									<label>{label}:
 										{#if multiline}
-											<textarea rows="2" bind:value={editPanelForm[key]}></textarea>
+											<textarea rows="2" bind:value={addPanelForm[key]}></textarea>
 										{:else}
-											<input type="text" bind:value={editPanelForm[key]} />
+											<input type="text" bind:value={addPanelForm[key]} />
 										{/if}
 									</label>
 								{/each}
+								<small>A scene is needed so the draft has something to draw. Other fields can stay empty.</small>
+								<div class="edit-actions">
+									<button class="primary-btn small" disabled={layoutBusy || !addPanelForm.scene_description.trim()} on:click={() => addPanel(chapter.id)}>Add panel</button>
+									<button class="secondary-btn small" disabled={layoutBusy} on:click={() => (addingToChapterId = null)}>Cancel</button>
+								</div>
 							</div>
-						{:else}
-							<div class="panel-content">
-								{#each PANEL_FIELDS as [key, label]}
-									<p class:prompt-text={key === 'image_prompt'}>
-										<strong>{label}:</strong>
-										<span class:narration={key === 'narration'}>{key === 'dialogue' ? `"${panel[key]}"` : panel[key]}</span>
-									</p>
-								{/each}
-							</div>
-						{/if}
-					</div>
-				{/each}
-			</div>
+						</div>
+					{:else}
+						<button class="secondary-btn small add-panel-btn" disabled={layoutBusy} on:click={() => startAddPanel(chapter)}>
+							<Icon name="plus" size={18} /> Add panel{chapters.length > 1 ? ` to chapter ${chapter.chapter_number}` : ''}
+						</button>
+					{/if}
+				</div>
+			{/each}
 
 			<div class="section-actions">
 				<button class="primary-btn" on:click={() => (activeStage = STAGES.DRAFT)} >

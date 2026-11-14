@@ -125,6 +125,27 @@ func (r *failingWriteRepository) ReassignPanels(ctx context.Context, pageID stri
 	return r.Repository.ReassignPanels(ctx, pageID, panelIDs, maxPerPage, now)
 }
 
+func (r *failingWriteRepository) AddPanel(ctx context.Context, chapterID string, pan *domain.Panel, newPage *domain.Page, targetPageID string, position, maxPerPage int, now time.Time) (*domain.PanelLayoutEdit, error) {
+	if r.fail("AddPanel") {
+		return nil, errors.New("injected database write failure")
+	}
+	return r.Repository.AddPanel(ctx, chapterID, pan, newPage, targetPageID, position, maxPerPage, now)
+}
+
+func (r *failingWriteRepository) MovePanel(ctx context.Context, chapterID, panelID, targetPageID string, position, maxPerPage int, now time.Time) (*domain.PanelLayoutEdit, error) {
+	if r.fail("MovePanel") {
+		return nil, errors.New("injected database write failure")
+	}
+	return r.Repository.MovePanel(ctx, chapterID, panelID, targetPageID, position, maxPerPage, now)
+}
+
+func (r *failingWriteRepository) DeletePanel(ctx context.Context, chapterID, panelID string, now time.Time) (*domain.PanelLayoutEdit, error) {
+	if r.fail("DeletePanel") {
+		return nil, errors.New("injected database write failure")
+	}
+	return r.Repository.DeletePanel(ctx, chapterID, panelID, now)
+}
+
 func (r *failingWriteRepository) ReplaceChapterOutline(ctx context.Context, projectID string, chapters []*domain.Chapter) error {
 	if r.fail("ReplaceChapterOutline") {
 		return errors.New("injected database write failure")
@@ -186,6 +207,9 @@ func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 		{"panel generation", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels", "ReplaceChapterPanels"},
 		{"panel edit", "PATCH", "/panels/a8a24397-3780-5a99-acea-8ab882a2ef5b", "SavePanelEdit"},
 		{"page edit", "PATCH", "/pages/a5669606-8764-5c90-b282-bad323a49baa", "ReassignPanels"},
+		{"panel add", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels/add", "AddPanel"},
+		{"panel move", "POST", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels/move", "MovePanel"},
+		{"panel delete", "DELETE", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels/a8a24397-3780-5a99-acea-8ab882a2ef5b", "DeletePanel"},
 		{"draft generation", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft", "UpdatePage"},
 		{"draft approval", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft/approve", "ApproveStage"},
 		{"line art generation", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art?variant=ink", "UpdatePage"},
@@ -225,6 +249,14 @@ func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 			body := `{}`
 			if tc.name == "panel edit" {
 				body = `{"dialogue":"Updated dialogue"}`
+			}
+			switch tc.name {
+			case "panel add":
+				body = `{"scene_description":"A gull"}`
+			case "panel move":
+				body = `{"panel_id":"a8a24397-3780-5a99-acea-8ab882a2ef5b","page_id":"a5669606-8764-5c90-b282-bad323a49baa"}`
+			case "panel delete":
+				body = ``
 			}
 			if tc.name == "page edit" {
 				body = `{"panel_ids":["a8a24397-3780-5a99-acea-8ab882a2ef5b"]}`

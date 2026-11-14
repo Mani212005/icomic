@@ -259,6 +259,10 @@ func (s *Server) publicFields(pattern string) map[string]string {
 		return map[string]string{"scene_description": "text", "dialogue": "text", "narration": "text", "character_actions": "text", "camera_angle": "text", "background": "text", "image_prompt": "text"}
 	case "PATCH /api/v1/pages/{id}":
 		return map[string]string{"panel_ids": "ids"}
+	case "POST /api/v1/chapters/{id}/panels/add":
+		return map[string]string{"page_id": "id", "position": "index", "scene_description": "text", "dialogue": "text", "narration": "text", "character_actions": "text", "camera_angle": "text", "background": "text", "image_prompt": "text"}
+	case "POST /api/v1/chapters/{id}/panels/move":
+		return map[string]string{"panel_id": "id", "page_id": "id", "position": "index"}
 	case "POST /api/v1/pages/{id}/line-art":
 		return map[string]string{"variant": "text", "route": "text"}
 	case "POST /api/v1/pages/{id}/painted-page":
@@ -355,6 +359,20 @@ func (s *Server) validateField(name, kind string, raw json.RawMessage) error {
 			if len(v) > s.Limits.TextBytes || strings.ContainsRune(v, 0) {
 				return invalid()
 			}
+		}
+	case "id":
+		var value string
+		if json.Unmarshal(raw, &value) != nil {
+			return invalid()
+		}
+		if id, err := uuid.Parse(value); err != nil || id == uuid.Nil || len(value) != 36 {
+			return invalid()
+		}
+	case "index":
+		// A position in a page's panel list; a page holds a handful, so this only rejects nonsense.
+		var n int
+		if json.Unmarshal(raw, &n) != nil || n < 0 || n > 1000 {
+			return invalid()
 		}
 	case "ids":
 		var values []string

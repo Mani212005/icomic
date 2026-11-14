@@ -84,6 +84,14 @@ type Repository interface {
 	// ReassignPanels validates and applies a panel move or reorder atomically (domain.PlanPanelReassignment)
 	// and returns the changed page IDs. Errors wrap domain.ErrInvalidPanelAllocation.
 	ReassignPanels(ctx context.Context, pageID string, panelIDs []string, maxPerPage int, now time.Time) ([]string, error)
+	// AddPanel, MovePanel and DeletePanel are structural panel edits. Each plans over the chapter's stored pages and
+	// applies the result atomically: the pages it changes are staled, their panels touched, and pages and panels
+	// renumbered in reading order. Errors wrap domain.ErrInvalidPanelAllocation, ErrNotFound or, when deleting a
+	// page's last panel would delete generated art, ErrArtExists. AddPanel puts the panel alone on newPage when
+	// targetPageID is empty.
+	AddPanel(ctx context.Context, chapterID string, pan *domain.Panel, newPage *domain.Page, targetPageID string, position, maxPerPage int, now time.Time) (*domain.PanelLayoutEdit, error)
+	MovePanel(ctx context.Context, chapterID, panelID, targetPageID string, position, maxPerPage int, now time.Time) (*domain.PanelLayoutEdit, error)
+	DeletePanel(ctx context.Context, chapterID, panelID string, now time.Time) (*domain.PanelLayoutEdit, error)
 	// ReplaceChapterPanels swaps a chapter's panels and pages for a regenerated set atomically; ErrArtExists
 	// when generated page art would be deleted.
 	ReplaceChapterPanels(ctx context.Context, chapterID string, panels []*domain.Panel, pages []*domain.Page) error

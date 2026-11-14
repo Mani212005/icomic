@@ -228,6 +228,11 @@ The system provides endpoints to inspect and adjust page allocations:
 - The user can retrieve chapter pages and their assigned panels (`GET /api/v1/chapters/:id/pages`).
 - The user can move panels between pages or reorder panels before initiating draft generation (`PATCH /api/v1/pages/:id`).
   The request carries the page's complete ordered `panel_ids`; naming a panel that sits on another page moves it. Every panel of a chapter stays on exactly one page, unknown, foreign or repeated IDs, over-full pages and emptied pages are rejected, and the move is applied atomically. Changing a page's allocation stales its draft, line art and painted approvals.
+- The user can add and delete panels and move one panel at a time, all scoped to the chapter. Each is one atomic edit that stales the draft, line art and painted approvals of every page it changes, and numbers pages and panels again in reading order, so panel numbers always run 1 to N page by page.
+  - `POST /api/v1/chapters/:id/panels/add` stores a new panel with a required `scene_description` at `position` on `page_id`, or alone on a new last page when `page_id` is left out. A page holds at most the configured maximum.
+  - `POST /api/v1/chapters/:id/panels/move` places `panel_id` at `position` on `page_id`, which reorders it within its page or moves it to another. It follows the same rules as `PATCH /api/v1/pages/:id`.
+  - `DELETE /api/v1/chapters/:id/panels/:panel_id` removes the panel. A page whose last panel goes is removed with it, unless that page holds generated art: the request is then refused with HTTP 409 and nothing is deleted, because it would delete paid work.
+  - The editor asks for confirmation before deleting a panel.
 
 ### 3.6 Draft Sketch Stage
 
