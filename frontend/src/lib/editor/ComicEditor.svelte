@@ -2,6 +2,7 @@
 	import { tick, onMount, onDestroy } from 'svelte';
 	import ErrorBanner from './ErrorBanner.svelte';
 	import SaveStatus from './SaveStatus.svelte';
+	import ScriptImport from './ScriptImport.svelte';
 	import { Autosaver, SAVE } from './autosave.js';
 	import { PANEL_FIELDS, emptyPanelForm } from './panelFields.js';
 	import { pageOfPanel, moveTarget } from './panelLayout.js';
@@ -362,6 +363,13 @@
 				return receipt;
 			}
 		});
+	}
+
+	// An imported file replaces the script as written and is saved at once, not after the typing pause.
+	async function importScript(text) {
+		project.original_script = text;
+		await tick();
+		await scriptSaver?.flush().catch(() => {});
 	}
 
 	function regenerateCharacterReference(charId) {
@@ -728,6 +736,7 @@
 					rows="8"
 					bind:value={project.original_script}
 				></textarea>
+				<ScriptImport current={project.original_script || ''} disabled={isJobActive} onImport={importScript} />
 			</div>
 
 			<div class="section-actions">

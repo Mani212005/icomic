@@ -113,6 +113,8 @@ Supported input:
 - TXT file
 - PDF file
 
+The editor imports a TXT or Markdown file through a file picker, on the Script stage and in the new project dialog. The text is read in the browser and kept exactly as written (only a byte order mark is dropped), so the stored original script is the file's own text, and it goes through the same save and validation as typed text. A file over the script byte limit (`MAX_SCRIPT_BYTES`, 512 KiB by default, the same limit the API applies to `original_script`) or word limit, an empty file, one that is not UTF-8 text or contains binary data, or any other type is refused with a message and nothing changes. Importing over existing text asks first. PDF import is not implemented: it would need a PDF text parser, and a scanned PDF would need OCR, which the product does not run, so a PDF is refused with advice to paste the text or save it as TXT or Markdown.
+
 The system must:
 
 - Validate the script.

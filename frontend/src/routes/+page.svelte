@@ -1,6 +1,7 @@
 <script>
 	import '#lib/design/theme.css';
 	import ComicEditor from '#lib/editor/ComicEditor.svelte';
+	import ScriptImport from '#lib/editor/ScriptImport.svelte';
 	import { Icon, focusDialog, AppHeader, AppFooter, Hamburger, Sidebar, StageNav, SpendPill, stageList } from '#lib/design/shell.js';
 	import { formatApiError, publishSpend, spendStore, spendView } from '#lib/api/index.js';
 	import { AGE_TERMS_ADVISORY } from '#lib/config/policies.js';
@@ -113,13 +114,14 @@
 
 	async function handleCreateProject() {
 		const title = newProjectForm.title.trim();
-		const script = newProjectForm.script.trim();
+		// The script is stored as written, so an imported file keeps its own spacing.
+		const script = newProjectForm.script;
 
 		if (!title) {
 			createError = 'Enter title.';
 			return;
 		}
-		if (!script) {
+		if (!script.trim()) {
 			createError = 'Add script.';
 			return;
 		}
@@ -401,6 +403,7 @@
 							bind:value={newProjectForm.script}
 							required
 						></textarea>
+						<ScriptImport current={newProjectForm.script} disabled={isCreatingProject} inputId="new-proj-script-file" onImport={(text) => (newProjectForm.script = text)} />
 					</div>
 
 					<footer class="modal-footer">
