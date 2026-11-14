@@ -60,6 +60,7 @@ def test_complete_comic_lifecycle_e2e(api_client: httpx.Client) -> None:
     assert analyze_res.status_code == 202, f"Script analysis failed: {analyze_res.text}"
     analyze_data = analyze_res.json()
     assert "character_profiles" in analyze_data, "Expected character profiles in analysis response"
+    assert isinstance(analyze_data.get("warnings"), list), "Expected a warnings list in analysis response"
 
     # -------------------------------------------------------------------------
     # 4. Approve Characters
@@ -86,6 +87,12 @@ def test_complete_comic_lifecycle_e2e(api_client: httpx.Client) -> None:
     assert chapters_res.status_code == 200, f"Generate chapters failed: {chapters_res.text}"
     chapters = chapters_res.json().get("chapters", [])
     assert len(chapters) > 0, "Expected at least one chapter generated"
+    for chapter in chapters:
+        assert chapter["important_events"], "Expected the outline's events to be kept"
+        assert chapter["character_names"], "Expected the outline's cast to be kept"
+        assert chapter["ending"], "Expected the outline's ending to be kept"
+    listed = api_client.get(f"/api/v1/projects/{project_id}/chapters").json()["chapters"]
+    assert [c["important_events"] for c in listed] == [c["important_events"] for c in chapters]
 
     for chapter in chapters:
         chap_id = chapter["id"]

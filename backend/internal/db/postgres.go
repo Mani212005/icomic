@@ -265,6 +265,36 @@ func (p *PostgresRepository) DeleteProject(ctx context.Context, id string) error
 }
 
 // Chapters
+// scanChapter reads one chapters row selected as: id, project_id, chapter_number, title, summary,
+// important_events, character_names, ending, status, updated_at.
+func scanChapter(row interface{ Scan(...any) error }) (*domain.Chapter, error) {
+	var c domain.Chapter
+	var events, names []byte
+	if err := row.Scan(&c.ID, &c.ProjectID, &c.ChapterNumber, &c.Title, &c.Summary, &events, &names, &c.Ending, &c.Status, &c.UpdatedAt); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(events, &c.ImportantEvents); err != nil {
+		return nil, fmt.Errorf("decode chapter important events: %w", err)
+	}
+	if err := json.Unmarshal(names, &c.CharacterNames); err != nil {
+		return nil, fmt.Errorf("decode chapter character names: %w", err)
+	}
+	c.EnsureOutlineLists()
+	return &c, nil
+}
+
+// chapterListArgs encodes a chapter's two lists for their JSONB columns; a nil list is stored as [].
+func chapterListArgs(c *domain.Chapter) (events, names []byte, err error) {
+	c.EnsureOutlineLists()
+	if events, err = json.Marshal(c.ImportantEvents); err != nil {
+		return nil, nil, err
+	}
+	if names, err = json.Marshal(c.CharacterNames); err != nil {
+		return nil, nil, err
+	}
+	return events, names, nil
+}
+
 func (p *PostgresRepository) CreateChapter(ctx context.Context, c *domain.Chapter) error {
 	if c.ID == "" {
 		c.ID = uuid.NewString()
@@ -273,24 +303,25 @@ func (p *PostgresRepository) CreateChapter(ctx context.Context, c *domain.Chapte
 	if c.UpdatedAt.IsZero() {
 		c.UpdatedAt = now
 	}
-	query := `INSERT INTO chapters (id, project_id, chapter_number, title, summary, status, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	_, err := p.db.ExecContext(ctx, query, c.ID, c.ProjectID, c.ChapterNumber, c.Title, c.Summary, c.Status, c.UpdatedAt)
+	events, names, err := chapterListArgs(c)
+	if err != nil {
+		return err
+	}
+	query := `INSERT INTO chapters (id, project_id, chapter_number, title, summary, important_events, character_names, ending, status, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	_, err = p.db.ExecContext(ctx, query, c.ID, c.ProjectID, c.ChapterNumber, c.Title, c.Summary, events, names, c.Ending, c.Status, c.UpdatedAt)
 	return err
 }
 
 func (p *PostgresRepository) GetChapter(ctx context.Context, id string) (*domain.Chapter, error) {
-	query := `SELECT id, project_id, chapter_number, title, summary, status, updated_at FROM chapters WHERE id = $1`
-	var c domain.Chapter
-	err := p.db.QueryRowContext(ctx, query, id).Scan(&c.ID, &c.ProjectID, &c.ChapterNumber, &c.Title, &c.Summary, &c.Status, &c.UpdatedAt)
+	c, err := scanChapter(p.db.QueryRowContext(ctx, `SELECT id, project_id, chapter_number, title, summary, important_events, character_names, ending, status, updated_at FROM chapters WHERE id = $1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return &c, err
+	return c, err
 }
 
 func (p *PostgresRepository) ListChapters(ctx context.Context, projectID string) ([]*domain.Chapter, error) {
-	query := `SELECT id, project_id, chapter_number, title, summary, status, updated_at FROM chapters WHERE project_id = $1 ORDER BY chapter_number ASC`
-	rows, err := p.db.QueryContext(ctx, query, projectID)
+	rows, err := p.db.QueryContext(ctx, `SELECT id, project_id, chapter_number, title, summary, important_events, character_names, ending, status, updated_at FROM chapters WHERE project_id = $1 ORDER BY chapter_number ASC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -298,11 +329,11 @@ func (p *PostgresRepository) ListChapters(ctx context.Context, projectID string)
 
 	var res []*domain.Chapter
 	for rows.Next() {
-		var c domain.Chapter
-		if err := rows.Scan(&c.ID, &c.ProjectID, &c.ChapterNumber, &c.Title, &c.Summary, &c.Status, &c.UpdatedAt); err != nil {
+		c, err := scanChapter(rows)
+		if err != nil {
 			return nil, err
 		}
-		res = append(res, &c)
+		res = append(res, c)
 	}
 	return res, rows.Err()
 }
@@ -310,8 +341,12 @@ func (p *PostgresRepository) ListChapters(ctx context.Context, projectID string)
 func (p *PostgresRepository) UpdateChapter(ctx context.Context, c *domain.Chapter) error {
 	now := time.Now().UTC()
 	c.UpdatedAt = now
-	query := `UPDATE chapters SET chapter_number = $2, title = $3, summary = $4, status = $5, updated_at = $6 WHERE id = $1`
-	res, err := p.db.ExecContext(ctx, query, c.ID, c.ChapterNumber, c.Title, c.Summary, c.Status, c.UpdatedAt)
+	events, names, err := chapterListArgs(c)
+	if err != nil {
+		return err
+	}
+	query := `UPDATE chapters SET chapter_number = $2, title = $3, summary = $4, important_events = $5, character_names = $6, ending = $7, status = $8, updated_at = $9 WHERE id = $1`
+	res, err := p.db.ExecContext(ctx, query, c.ID, c.ChapterNumber, c.Title, c.Summary, events, names, c.Ending, c.Status, c.UpdatedAt)
 	if err != nil {
 		return err
 	}

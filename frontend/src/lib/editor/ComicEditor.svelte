@@ -1,10 +1,12 @@
 <script>
 	import { tick } from 'svelte';
 	import ErrorBanner from './ErrorBanner.svelte';
+	import { PANEL_FIELDS, emptyPanelForm } from './panelFields.js';
 	import { stageList, quoteStages } from './stages.js';
 	import { Icon, BetaTag, revealCards } from '#lib/design/shell.js';
-	import { ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
-	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote, publishSpend, INK_OVERLAY_NOTE, isOverlayPage } from '#lib/api/types.js';
+	import { ApprovalTag, ApprovalAction, ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
+	import { STAGES, APPROVAL, approvalState, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote, publishSpend, INK_OVERLAY_NOTE, isOverlayPage } from '#lib/api/types.js';
+	const GENERATING = 'Generating…';
 	const INK_VARIANT = 'ink';
 	const PAINTED_VARIANT = 'painted';
 
@@ -81,12 +83,12 @@
 	let editCharForm = { name: '', description: '', appearance: '', clothing: '' };
 
 	let editingChapId = null;
-	let editChapTitle = '';
-	let editChapSummary = '';
+	let editChapForm = { title: '', summary: '', events: '', cast: '', ending: '' };
 
 	let editingPanelId = null;
-	let editPanelDialogue = '';
-	let editPanelScene = '';
+	let editPanelForm = emptyPanelForm();
+	// What the last analysis said about the script, shown on the Characters stage it leads to.
+	let analysisWarnings = [];
 
 	function normalizePalette(rawPalette) {
 		if (Array.isArray(rawPalette)) return rawPalette;
@@ -154,19 +156,29 @@
 	$: effectiveScript = project ? (project.original_script || project.script || '') : '';
 	$: scriptWordCount = effectiveScript ? effectiveScript.trim().split(/\s+/).filter(Boolean).length : 0;
 
-	$: anyCharacterStale = characters.some((c) => isApprovalStale(c.approved_at, c.updated_at));
-	$: allCharactersApproved = characters.length > 0 && characters.every((c) => hasValidApproval(c.approved_at, c.updated_at));
+	// A stage is stale when anything in it was approved and has changed since; approved when every item
+	// has a current approval; otherwise pending. Items never approved are pending, not stale.
+	const stageState = (items, approvedAt) => {
+		if (items.some((item) => isApprovalStale(approvedAt(item), item.updated_at))) return APPROVAL.STALE;
+		const done = items.length > 0 && items.every((item) => hasValidApproval(approvedAt(item), item.updated_at));
+		return done ? APPROVAL.APPROVED : APPROVAL.PENDING;
+	};
+	$: characterStage = stageState(characters, (c) => c.approved_at);
+	$: anyCharacterStale = characterStage === APPROVAL.STALE;
+	$: allCharactersApproved = characterStage === APPROVAL.APPROVED;
 
-	$: anyChapterStale = chapters.some((c) => isApprovalStale(c.approved_at, c.updated_at));
-	$: allChaptersApproved =
-		chapters.length > 0 &&
-		chapters.every((c) => hasValidApproval(c.approved_at || (c.status === 'approved' ? c.updated_at : null), c.updated_at));
+	// An outline carries its approval in `status`: the server sets it on approval and sets it back to
+	// pending when the outline text is edited, so a chapter is either approved or still pending.
+	const isChapterApproved = (chapter) => chapter.status === 'approved';
+	$: allChaptersApproved = chapters.length > 0 && chapters.every(isChapterApproved);
 
-	$: anyDraftStale = pages.some((p) => isApprovalStale(p.draft_approved_at, p.updated_at));
-	$: allDraftsApproved = pages.length > 0 && pages.every((p) => hasValidApproval(p.draft_approved_at, p.updated_at));
+	$: draftStage = stageState(pages, (p) => p.draft_approved_at);
+	$: anyDraftStale = draftStage === APPROVAL.STALE;
+	$: allDraftsApproved = draftStage === APPROVAL.APPROVED;
 
-	$: anyLineArtStale = pages.some((p) => isApprovalStale(finishApprovalAt(p), p.updated_at));
-	$: allLineArtApproved = pages.length > 0 && pages.every((p) => hasValidApproval(finishApprovalAt(p), p.updated_at));
+	$: finishStage = stageState(pages, finishApprovalAt);
+	$: anyLineArtStale = finishStage === APPROVAL.STALE;
+	$: allLineArtApproved = finishStage === APPROVAL.APPROVED;
 	// Ink is baked-lettering only, so say so up front: overlay pages offer Painted only and
 	// never fail with a 409 at click time.
 	$: overlayPages = pages.filter(isOverlayPage);
@@ -193,6 +205,7 @@
 		lastProjectId = project.id;
 		letteringSessions = new Map();
 		exportCompleted = false;
+		analysisWarnings = [];
 		reloadProjectData();
 		runner.setProject(project.id);
 	}
@@ -274,6 +287,7 @@
 			return;
 		}
 		jobError = null;
+		analysisWarnings = [];
 		await runner.run({
 			kind: JOB_KIND.SCRIPT,
 			label: 'Script',
@@ -286,7 +300,9 @@
 					original_script: scriptText,
 					script: scriptText
 				});
-				return apiClient.analyzeScript(project.id, scriptText);
+				const receipt = await apiClient.analyzeScript(project.id, scriptText);
+				analysisWarnings = Array.isArray(receipt?.warnings) ? receipt.warnings : [];
+				return receipt;
 			}
 		});
 	}
@@ -332,8 +348,8 @@
 			await apiClient.updateCharacter(charId, {
 				name: editCharForm.name,
 				description: editCharForm.description,
-				appearance: editCharForm.appearance,
-				clothing: editCharForm.clothing,
+				// The server merges these into the stored attributes, so age, hair, reference role and
+				// anything else the form does not show are kept.
 				visual_attributes: {
 					appearance: editCharForm.appearance,
 					clothing: editCharForm.clothing
@@ -350,7 +366,7 @@
 		jobError = null;
 		isJobActive = true;
 		activeJobType = stageList.find((stage) => stage.id === activeStage).label.slice(3);
-		currentJobStatus = 'Generating…';
+		currentJobStatus = GENERATING;
 		try {
 			await apiClient.createChapters(project.id, { chapter_count: project.chapter_count });
 			await reloadProjectData();
@@ -365,7 +381,7 @@
 		jobError = null;
 		isJobActive = true;
 		activeJobType = stageList.find((stage) => stage.id === activeStage).label.slice(3);
-		currentJobStatus = 'Generating…';
+		currentJobStatus = GENERATING;
 		try {
 			for (const chapter of chapters) {
 				const existing = await apiClient.getPanels(chapter.id);
@@ -391,10 +407,18 @@
 		}
 	}
 
+	const toLines = (items) => (Array.isArray(items) ? items : []).join('\n');
+	const fromLines = (text) => text.split('\n').map((line) => line.trim()).filter(Boolean);
+
 	function startEditChap(chap) {
 		editingChapId = chap.id;
-		editChapTitle = chap.title || '';
-		editChapSummary = chap.summary || '';
+		editChapForm = {
+			title: chap.title || '',
+			summary: chap.summary || '',
+			events: toLines(chap.important_events),
+			cast: toLines(chap.character_names),
+			ending: chap.ending || ''
+		};
 	}
 
 	function cancelEditChap() {
@@ -405,8 +429,11 @@
 		jobError = null;
 		try {
 			await apiClient.updateChapter(chapId, {
-				title: editChapTitle,
-				summary: editChapSummary
+				title: editChapForm.title,
+				summary: editChapForm.summary,
+				important_events: fromLines(editChapForm.events),
+				character_names: fromLines(editChapForm.cast),
+				ending: editChapForm.ending
 			});
 			editingChapId = null;
 			await reloadProjectData();
@@ -417,8 +444,7 @@
 
 	function startEditPanel(panel) {
 		editingPanelId = panel.id;
-		editPanelDialogue = panel.dialogue || '';
-		editPanelScene = panel.scene_description || '';
+		editPanelForm = Object.fromEntries(PANEL_FIELDS.map(([key]) => [key, panel[key] || '']));
 	}
 
 	function cancelEditPanel() {
@@ -428,10 +454,13 @@
 	async function saveEditPanel(panelId) {
 		jobError = null;
 		try {
-			await apiClient.updatePanel(panelId, {
-				dialogue: editPanelDialogue,
-				scene_description: editPanelScene
-			});
+			// Only fields that changed are sent: any save marks the pages holding the panel as edited,
+			// so a save with nothing changed must not undo their approvals.
+			const stored = panels.find((panel) => panel.id === panelId) || {};
+			const changes = Object.fromEntries(
+				PANEL_FIELDS.filter(([key]) => editPanelForm[key] !== (stored[key] || '')).map(([key]) => [key, editPanelForm[key]])
+			);
+			if (Object.keys(changes).length > 0) await apiClient.updatePanel(panelId, changes);
 			editingPanelId = null;
 			await reloadProjectData();
 		} catch (err) {
@@ -444,7 +473,7 @@
 		return runner.run({
 			kind: JOB_KIND.PAGE,
 			label: 'Draft',
-			status: 'Generating…',
+			status: GENERATING,
 			entityId: pageId,
 			start: (idempotencyKey) => apiClient.generateDraft(pageId, { idempotencyKey })
 		});
@@ -466,7 +495,7 @@
 		return runner.run({
 			kind: JOB_KIND.PAGE,
 			label: variant === INK_VARIANT ? 'Ink' : 'Paint',
-			status: 'Generating…',
+			status: GENERATING,
 			entityId: pageId,
 			start: (idempotencyKey) => apiClient.generateLineArt(pageId, variant, { idempotencyKey })
 		});
@@ -509,6 +538,10 @@
 		});
 	}
 </script>
+
+{#snippet staleBanner()}
+	<div class="stale-stage-banner"><Icon name="warning" size={18} /> Changed since approval. Approve again.</div>
+{/snippet}
 
 <div class="comic-editor-container" use:revealCards>
 
@@ -573,7 +606,7 @@
 				<textarea
 					id="script-textarea"
 					rows="8"
-					bind:value={project.script}
+					bind:value={project.original_script}
 				></textarea>
 			</div>
 
@@ -594,20 +627,19 @@
 			<header class="section-header">
 				<h2>Characters</h2>
 				<div class="header-tags">
-					{#if anyCharacterStale}
-						<span class="approval-tag stale"><Icon name="warning" size={18} /> Stale</span>
-					{:else}
-						<span class="approval-tag" class:approved={allCharactersApproved}>
-							{#if allCharactersApproved}<Icon name="check" size={14} />{/if}{allCharactersApproved ? 'Approved' : 'Pending'}
-						</span>
-					{/if}
+					<ApprovalTag state={characterStage} />
 				</div>
 			</header>
 
 			{#if anyCharacterStale}
-				<div class="stale-stage-banner">
-					<Icon name="warning" size={18} />
-				</div>
+				{@render staleBanner()}
+			{/if}
+			{#if analysisWarnings.length > 0}
+				<ul class="analysis-warnings" aria-label="Notes">
+					{#each analysisWarnings as warning}
+						<li><Icon name="warning" size={18} /> {warning}</li>
+					{/each}
+				</ul>
 			{/if}
 
 			{#if characters.length === 0}<div class="stage-empty"><Icon name="characters" size={48} /></div>{/if}
@@ -656,20 +688,11 @@
 								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('character_reference', costQuotes)})
 							</button>
 
-							{#if isApprovalStale(char.approved_at, char.updated_at)}
-								<div class="stale-action-box">
-									<span class="stale-warning-text"><Icon name="warning" size={18} /> Edited</span>
-									<button class="reapprove-btn" on:click={() => approveCharacter(char.id)}>
-										Approve
-									</button>
-								</div>
-							{:else if char.approved_at}
-								<span class="status-approved"><Icon name="check" size={18} /> Approved</span>
-							{:else}
-								<button class="approve-btn" on:click={() => approveCharacter(char.id)}>
-									{char.visual_attributes?.reference_role === 'extra' && !char.reference_image_url ? 'Approve profile' : 'Approve'}
-								</button>
-							{/if}
+							<ApprovalAction
+								state={approvalState(char.approved_at, char.updated_at)}
+								label={char.visual_attributes?.reference_role === 'extra' && !char.reference_image_url ? 'Approve profile' : 'Approve'}
+								onApprove={() => approveCharacter(char.id)}
+							/>
 						</div>
 					</div>
 				{/each}
@@ -691,21 +714,9 @@
 			<header class="section-header">
 				<h2>Outline</h2>
 				<div class="header-tags">
-					{#if anyChapterStale}
-						<span class="approval-tag stale"><Icon name="warning" size={18} /> Stale</span>
-					{:else}
-						<span class="approval-tag" class:approved={allChaptersApproved}>
-							{#if allChaptersApproved}<Icon name="check" size={14} />{/if}{allChaptersApproved ? 'Approved' : 'Pending'}
-						</span>
-					{/if}
+					<ApprovalTag state={allChaptersApproved ? APPROVAL.APPROVED : APPROVAL.PENDING} />
 				</div>
 			</header>
-
-			{#if anyChapterStale}
-				<div class="stale-stage-banner">
-					<Icon name="warning" size={18} />
-				</div>
-			{/if}
 
 			{#if chapters.length === 0}
 				<div class="stage-empty"><Icon name="chapters" size={48} /></div>
@@ -713,11 +724,11 @@
 			{/if}
 			<div class="chapters-list">
 				{#each chapters as chap}
-					<div class="chapter-card" class:card-stale={isApprovalStale(chap.approved_at, chap.updated_at)}>
+					<div class="chapter-card">
 						<div class="chap-header">
 							{#if editingChapId === chap.id}
 								<div class="chap-edit-row">
-									<input type="text" bind:value={editChapTitle} />
+									<input type="text" bind:value={editChapForm.title} />
 									<button class="primary-btn small" on:click={() => saveEditChap(chap.id)}>Save</button>
 									<button class="secondary-btn small" on:click={cancelEditChap}>Cancel</button>
 								</div>
@@ -727,25 +738,37 @@
 							{/if}
 
 							<div class="chap-approval-box">
-								{#if isApprovalStale(chap.approved_at, chap.updated_at)}
-									<span class="stale-warning-text"><Icon name="warning" size={18} /> Edited</span>
-									<button class="reapprove-btn" on:click={() => approveChapter(chap.id)}>
-										Approve
-									</button>
-								{:else if chap.approved_at || chap.status === 'approved'}
-									<span class="status-approved"><Icon name="check" size={18} /> Approved</span>
-								{:else}
-									<button class="approve-btn" on:click={() => approveChapter(chap.id)}>
-										Approve
-									</button>
-								{/if}
+								<ApprovalAction
+									state={isChapterApproved(chap) ? APPROVAL.APPROVED : APPROVAL.PENDING}
+									onApprove={() => approveChapter(chap.id)}
+								/>
 							</div>
 						</div>
 
 						{#if editingChapId === chap.id}
-							<textarea rows="3" bind:value={editChapSummary}></textarea>
+							<div class="chap-edit-form">
+								<label>Summary: <textarea rows="3" bind:value={editChapForm.summary}></textarea></label>
+								<label>Ending: <input type="text" bind:value={editChapForm.ending} /></label>
+								<label>Events: <textarea rows="4" bind:value={editChapForm.events}></textarea></label>
+								<label>Cast: <textarea rows="2" bind:value={editChapForm.cast}></textarea></label>
+								<small>One per line</small>
+							</div>
 						{:else}
 							<p class="chap-summary">{chap.summary}</p>
+							<div class="chap-detail">
+								{#if chap.important_events?.length}
+									<p><strong>Events:</strong></p>
+									<ul>
+										{#each chap.important_events as event}<li>{event}</li>{/each}
+									</ul>
+								{/if}
+								{#if chap.character_names?.length}
+									<p><strong>Cast:</strong> {chap.character_names.join(', ')}</p>
+								{/if}
+								{#if chap.ending}
+									<p><strong>Ending:</strong> {chap.ending}</p>
+								{/if}
+							</div>
 						{/if}
 					</div>
 				{/each}
@@ -790,15 +813,24 @@
 
 						{#if editingPanelId === panel.id}
 							<div class="panel-edit-form">
-								<label>Scene: <textarea rows="2" bind:value={editPanelScene}></textarea></label>
-								<label>Dialogue: <input type="text" bind:value={editPanelDialogue} /></label>
+								{#each PANEL_FIELDS as [key, label, multiline]}
+									<label>{label}:
+										{#if multiline}
+											<textarea rows="2" bind:value={editPanelForm[key]}></textarea>
+										{:else}
+											<input type="text" bind:value={editPanelForm[key]} />
+										{/if}
+									</label>
+								{/each}
 							</div>
 						{:else}
 							<div class="panel-content">
-								<p><strong>Scene:</strong> {panel.scene_description}</p>
-								<p><strong>Dialogue:</strong> "{panel.dialogue}"</p>
-								<p><strong>Narration:</strong> <em>{panel.narration}</em></p>
-								<p class="prompt-text"><strong>Prompt:</strong> {panel.image_prompt}</p>
+								{#each PANEL_FIELDS as [key, label]}
+									<p class:prompt-text={key === 'image_prompt'}>
+										<strong>{label}:</strong>
+										<span class:narration={key === 'narration'}>{key === 'dialogue' ? `"${panel[key]}"` : panel[key]}</span>
+									</p>
+								{/each}
 							</div>
 						{/if}
 					</div>
@@ -817,20 +849,12 @@
 			<header class="section-header">
 				<h2>Drafts</h2>
 				<div class="header-tags">
-					{#if anyDraftStale}
-						<span class="approval-tag stale"><Icon name="warning" size={18} /> Stale</span>
-					{:else}
-						<span class="approval-tag" class:approved={allDraftsApproved}>
-							{#if allDraftsApproved}<Icon name="check" size={14} />{/if}{allDraftsApproved ? 'Approved' : 'Pending'}
-						</span>
-					{/if}
+					<ApprovalTag state={draftStage} />
 				</div>
 			</header>
 
 			{#if anyDraftStale}
-				<div class="stale-stage-banner">
-					<Icon name="warning" size={18} />
-				</div>
+				{@render staleBanner()}
 			{/if}
 
 
@@ -860,20 +884,7 @@
 								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('draft_sketch', costQuotes)})
 							</button>
 
-							{#if isApprovalStale(page.draft_approved_at, page.updated_at)}
-								<div class="stale-action-box">
-									<span class="stale-warning-text"><Icon name="warning" size={18} /> Edited</span>
-									<button class="reapprove-btn" on:click={() => approveDraft(page.id)}>
-										Approve
-									</button>
-								</div>
-							{:else if page.draft_approved_at}
-								<span class="status-approved"><Icon name="check" size={18} /> Approved</span>
-							{:else}
-								<button class="approve-btn" on:click={() => approveDraft(page.id)}>
-									Approve
-								</button>
-							{/if}
+							<ApprovalAction state={approvalState(page.draft_approved_at, page.updated_at)} onApprove={() => approveDraft(page.id)} />
 						</div>
 					</div>
 				{/each}
@@ -908,20 +919,12 @@
 					</select>
 				</label>
 				<div class="header-tags">
-					{#if anyLineArtStale}
-						<span class="approval-tag stale"><Icon name="warning" size={18} /> Stale</span>
-					{:else}
-						<span class="approval-tag" class:approved={allLineArtApproved}>
-							{#if allLineArtApproved}<Icon name="check" size={14} />{/if}{allLineArtApproved ? 'Approved' : 'Pending'}
-						</span>
-					{/if}
+					<ApprovalTag state={finishStage} />
 				</div>
 			</header>
 
 			{#if anyLineArtStale}
-				<div class="stale-stage-banner">
-					<Icon name="warning" size={18} /> Re-approve.
-				</div>
+				{@render staleBanner()}
 			{/if}
 			{#if inkBlockedByOverlay}
 				<div class="stale-stage-banner" role="status">
@@ -960,20 +963,13 @@
 								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('final_line_art', costQuotes)})
 							</button>
 
-							{#if isApprovalStale(finishApprovalAt(page), page.updated_at)}
-								<div class="stale-action-box">
-									<span class="stale-warning-text"><Icon name="warning" size={18} /> Edited</span>
-									<button class="reapprove-btn" disabled={inkBlocked(page, finishVariant)} on:click={() => approveLineArt(page.id)}>
-										Re-approve
-									</button>
-								</div>
-							{:else if hasValidApproval(finishApprovalAt(page), page.updated_at)}
-								<span class="status-approved"><Icon name="check" size={18} /> Approved</span>
-							{:else}
-								<button class="approve-btn" disabled={inkBlocked(page, finishVariant)} title={inkBlocked(page, finishVariant) ? INK_OVERLAY_NOTE : undefined} on:click={() => approveLineArt(page.id)}>
-									Approve
-								</button>
-							{/if}
+							<ApprovalAction
+								state={approvalState(finishApprovalAt(page), page.updated_at)}
+								staleLabel="Re-approve"
+								disabled={inkBlocked(page, finishVariant)}
+								title={inkBlocked(page, finishVariant) ? INK_OVERLAY_NOTE : undefined}
+								onApprove={() => approveLineArt(page.id)}
+							/>
 						</div>
 					</div>
 				{/each}

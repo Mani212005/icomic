@@ -1,11 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MockApiClient } from '../src/lib/api/mockClient.js';
-import { isApprovalStale, hasValidApproval } from '../src/lib/api/types.js';
+import { APPROVAL, approvalState, isApprovalStale, hasValidApproval } from '../src/lib/api/types.js';
+
+test('a never-approved entity is pending: not stale, and still not approved', () => {
+	const updated = '2026-11-02T10:00:00Z';
+	for (const never of [null, undefined, '']) {
+		assert.equal(approvalState(never, updated), APPROVAL.PENDING);
+		assert.equal(isApprovalStale(never, updated), false, 'nothing was approved, so nothing is out of date');
+		assert.equal(hasValidApproval(never, updated), false, 'a missing approval never unlocks a stage');
+	}
+	assert.equal(hasValidApproval(null, null), false);
+	assert.equal(isApprovalStale(null, null), false);
+
+	assert.equal(approvalState('2026-11-02T10:05:00Z', updated), APPROVAL.APPROVED);
+	assert.equal(approvalState('2026-11-02T09:00:00Z', updated), APPROVAL.STALE, 'approved, then edited');
+	assert.equal(approvalState('2026-11-02T10:00:00Z', updated), APPROVAL.STALE, 'approval must be strictly newer');
+	assert.equal(approvalState('2026-11-02T10:05:00Z', null), APPROVAL.STALE, 'an approval that cannot be dated is not shown current');
+});
 
 test('isApprovalStale and hasValidApproval handle edge cases correctly', () => {
 
-	assert.equal(isApprovalStale(null, '2026-11-02T10:00:00Z'), true, 'missing approval is not fresh');
+	assert.equal(isApprovalStale(null, '2026-11-02T10:00:00Z'), false, 'missing approval is pending, not stale');
 	assert.equal(hasValidApproval(null, '2026-11-02T10:00:00Z'), false, 'null approval is not valid');
 
 	const t1 = '2026-11-02T10:00:00Z';

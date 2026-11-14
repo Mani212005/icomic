@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -479,9 +480,9 @@ func (s *Server) UpdateCharacter(w http.ResponseWriter, r *http.Request) {
 	if body.Description != nil {
 		ch.Description = *body.Description
 	}
-	if body.VisualAttributes != nil {
-		ch.VisualAttributes = body.VisualAttributes
-	}
+	// A patch changes only the attributes it names (RFC 7386): the editor sends the keys it edits and
+	// the stored age, hair, reference role and any others survive. A null value removes a key.
+	ch.VisualAttributes = mergeVisualAttributes(ch.VisualAttributes, body.VisualAttributes)
 
 	// Editing character makes approval stale (SPEC 3.2, 3.5, ARCHITECTURE 5.3)
 	ch.UpdatedAt = nextCharacterActivity(ch)
@@ -771,10 +772,16 @@ func (s *Server) AnalyzeScript(w http.ResponseWriter, r *http.Request) {
 	actualCost := s.aiActualCost(r.Context(), job.ID)
 	_ = s.JobService.UpdateJobStatus(r.Context(), job.ID, "done", &actualCost, nil)
 
+	warnings := slices.Clone(aiResp.Warnings)
+	if warning := chapterCountWarning(aiResp.WordCount, proj.ChapterCount); warning != "" {
+		warnings = append(warnings, warning)
+	}
+
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"job_id":             job.ID,
 		"character_profiles": chars,
 		"chapter_count":      proj.ChapterCount,
+		"warnings":           nonNilStrings(warnings),
 	})
 }
 
@@ -925,12 +932,15 @@ func (s *Server) GenerateChapters(w http.ResponseWriter, r *http.Request) {
 		}
 		numbers[cItem.ChapterNumber] = true
 		createdChapters = append(createdChapters, &domain.Chapter{
-			ID:            uuid.NewString(),
-			ProjectID:     proj.ID,
-			ChapterNumber: cItem.ChapterNumber,
-			Title:         cItem.Title,
-			Summary:       cItem.Summary,
-			Status:        "pending",
+			ID:              uuid.NewString(),
+			ProjectID:       proj.ID,
+			ChapterNumber:   cItem.ChapterNumber,
+			Title:           cItem.Title,
+			Summary:         cItem.Summary,
+			ImportantEvents: nonNilStrings(cItem.ImportantEvents),
+			CharacterNames:  nonNilStrings(cItem.CharacterNames),
+			Ending:          cItem.Ending,
+			Status:          "pending",
 		})
 	}
 	if err := s.Repo.ReplaceChapterOutline(r.Context(), proj.ID, createdChapters); err != nil {
@@ -989,23 +999,44 @@ func (s *Server) UpdateChapter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Title   *string `json:"title"`
-		Summary *string `json:"summary"`
-		Status  *string `json:"status"`
+		Title           *string   `json:"title"`
+		Summary         *string   `json:"summary"`
+		ImportantEvents *[]string `json:"important_events"`
+		CharacterNames  *[]string `json:"character_names"`
+		Ending          *string   `json:"ending"`
+		Status          *string   `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
 
+	edited := false
 	if body.Title != nil {
+		edited = edited || c.Title != *body.Title
 		c.Title = *body.Title
 	}
 	if body.Summary != nil {
+		edited = edited || c.Summary != *body.Summary
 		c.Summary = *body.Summary
+	}
+	if body.ImportantEvents != nil {
+		edited = edited || !slices.Equal(c.ImportantEvents, *body.ImportantEvents)
+		c.ImportantEvents = nonNilStrings(*body.ImportantEvents)
+	}
+	if body.CharacterNames != nil {
+		edited = edited || !slices.Equal(c.CharacterNames, *body.CharacterNames)
+		c.CharacterNames = nonNilStrings(*body.CharacterNames)
+	}
+	if body.Ending != nil {
+		edited = edited || c.Ending != *body.Ending
+		c.Ending = *body.Ending
 	}
 	if body.Status != nil {
 		c.Status = *body.Status
+	} else if edited && c.Status == "approved" {
+		// The approval covered the text that just changed, so the outline needs approving again.
+		c.Status = "pending"
 	}
 
 	c.UpdatedAt = time.Now().UTC()
@@ -1125,7 +1156,7 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 	hashedUID := domain.HashUserID(userID)
 
 	// Pre-moderation
-	blocked, reason, err := s.checkPromptModeration(r, chapterScript+" "+c.Summary+" "+c.Title, hashedUID)
+	blocked, reason, err := s.checkPromptModeration(r, chapterScript+" "+c.Summary+" "+c.Title+" "+strings.Join(c.ImportantEvents, " ")+" "+c.Ending, hashedUID)
 	if err != nil {
 		writeGenerationError(w, err)
 		return
@@ -1166,16 +1197,19 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(context.WithoutCancel(r.Context()))
 	panelResp, err := dispatchGeneration(s, r.Context(), job, func(ctx context.Context) (*gen.GeneratePanelTextResponse, error) {
 		return s.AIClient.GeneratePanelText(ctx, gen.GeneratePanelTextRequest{
-			JobID:          job.ID,
-			HashedUserID:   hashedUID,
-			ProjectID:      proj.ID,
-			ChapterID:      c.ID,
-			ChapterNumber:  c.ChapterNumber,
-			ChapterTitle:   c.Title,
-			ChapterSummary: c.Summary,
-			ChapterScript:  &chapterScript,
-			PanelCount:     &panelCount,
-			Characters:     charNames,
+			JobID:           job.ID,
+			HashedUserID:    hashedUID,
+			ProjectID:       proj.ID,
+			ChapterID:       c.ID,
+			ChapterNumber:   c.ChapterNumber,
+			ChapterTitle:    c.Title,
+			ChapterSummary:  c.Summary,
+			ChapterScript:   &chapterScript,
+			PanelCount:      &panelCount,
+			Characters:      charNames,
+			ImportantEvents: &c.ImportantEvents,
+			CharacterNames:  &c.CharacterNames,
+			Ending:          &c.Ending,
 		})
 	})
 	if err != nil {

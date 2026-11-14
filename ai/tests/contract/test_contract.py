@@ -170,6 +170,30 @@ def test_generate_panel_text_contract():
     assert model.panels[0].image_prompt != ""
 
 
+def test_generate_panel_text_accepts_the_approved_outline_detail():
+    payload = {
+        "job_id": "55555555-5555-5555-5555-555555555556",
+        "hashed_user_id": "user-hash-abc",
+        "project_id": "22222222-2222-2222-2222-222222222222",
+        "chapter_id": "66666666-6666-6666-6666-666666666666",
+        "chapter_number": 1,
+        "chapter_title": "The Awakening",
+        "chapter_summary": "The ancient portal powers on.",
+        "characters": ["Dr. Sarah"],
+        "important_events": ["The portal hums", "A door opens"],
+        "character_names": ["Dr. Sarah"],
+        "ending": "She steps through",
+    }
+    response = client.post("/internal/v1/generate-panel-text", json=payload)
+    assert response.status_code == 200
+    assert len(GeneratePanelTextResponse(**response.json()).panels) == 4
+    response = client.post(
+        "/internal/v1/generate-panel-text", json={**payload, "important_events": "one"}
+    )
+    assert response.status_code == 400
+    assert "important_events" in response.text
+
+
 def test_generate_draft_sketch_contract():
     app.state.storage_adapter.put("char1.png", image_bytes("reference"), "image/png")
     payload = {

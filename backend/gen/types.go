@@ -981,12 +981,21 @@ type GeneratePanelTextRequest struct {
 	ChapterNumber int    `json:"chapter_number"`
 
 	// ChapterScript Complete source text for this chapter, without truncation.
-	ChapterScript  *string  `json:"chapter_script,omitempty"`
-	ChapterSummary string   `json:"chapter_summary"`
-	ChapterTitle   string   `json:"chapter_title"`
-	Characters     []string `json:"characters"`
-	HashedUserID   string   `json:"hashed_user_id"`
-	JobID          string   `json:"job_id"`
+	ChapterScript  *string `json:"chapter_script,omitempty"`
+	ChapterSummary string  `json:"chapter_summary"`
+	ChapterTitle   string  `json:"chapter_title"`
+
+	// CharacterNames Characters the approved outline places in this chapter.
+	CharacterNames *[]string `json:"character_names,omitempty"`
+	Characters     []string  `json:"characters"`
+
+	// Ending How the approved outline says this chapter ends.
+	Ending       *string `json:"ending,omitempty"`
+	HashedUserID string  `json:"hashed_user_id"`
+
+	// ImportantEvents Story events the approved outline says this chapter must show, in order.
+	ImportantEvents *[]string `json:"important_events,omitempty"`
+	JobID           string    `json:"job_id"`
 
 	// PanelCount Total chapter panels; generated in batches of at most five.
 	PanelCount *int   `json:"panel_count,omitempty"`

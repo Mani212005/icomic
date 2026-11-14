@@ -317,8 +317,7 @@ func (m *InMemoryRepository) ReplaceChapterOutline(_ context.Context, projectID 
 		if c.UpdatedAt.IsZero() {
 			c.UpdatedAt = time.Now().UTC()
 		}
-		cpy := *c
-		m.chapters[c.ID] = &cpy
+		m.chapters[c.ID] = cloneChapter(c)
 	}
 	return nil
 }
@@ -367,8 +366,12 @@ func (p *PostgresRepository) ReplaceChapterOutline(ctx context.Context, projectI
 		if c.UpdatedAt.IsZero() {
 			c.UpdatedAt = time.Now().UTC()
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO chapters (id, project_id, chapter_number, title, summary, status, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			c.ID, c.ProjectID, c.ChapterNumber, c.Title, c.Summary, c.Status, c.UpdatedAt); err != nil {
+		events, names, err := chapterListArgs(c)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO chapters (id, project_id, chapter_number, title, summary, important_events, character_names, ending, status, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			c.ID, c.ProjectID, c.ChapterNumber, c.Title, c.Summary, events, names, c.Ending, c.Status, c.UpdatedAt); err != nil {
 			return err
 		}
 	}

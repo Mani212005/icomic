@@ -184,6 +184,9 @@ export class MockApiClient {
 			chapter_number: 1,
 			title: 'The Lighthouse Bird',
 			summary: 'Nia finds a tiny brass bird in a storm; its light guides a lost boat home, and she frees it at sunrise.',
+			important_events: ['Nia finds the brass bird', 'The bird lights a lost boat home', 'Nia frees the bird at sunrise'],
+			character_names: ['Nia'],
+			ending: 'The bird flies into the sunrise.',
 			approved_at: approvedAt,
 			status: 'approved',
 			created_at: now,
@@ -201,6 +204,9 @@ export class MockApiClient {
 			id: `panel-${index + 1}`,
 			chapter_id: chap1.id,
 			panel_number: index + 1,
+			character_actions: 'Nia reacts to the light.',
+			camera_angle: 'Eye level',
+			background: 'The lighthouse in a storm.',
 			...beat,
 			created_at: now,
 			updated_at: now
@@ -327,7 +333,7 @@ export class MockApiClient {
 		p.original_script = scriptText;
 		p.updated_at = new Date().toISOString();
 		const job = this.createJob(projectId, 'script_analysis', 'script');
-		return { job, project_id: projectId };
+		return { job, project_id: projectId, warnings: [] };
 	}
 
 	async getCharacters(projectId) {
@@ -343,9 +349,16 @@ export class MockApiClient {
 			now = new Date(new Date(char.approved_at).getTime() + 1000).toISOString();
 		}
 
+		// Like the server: visual_attributes is merged key by key (null removes a key), never replaced.
+		const attributes = { ...(char.visual_attributes || {}) };
+		for (const [key, value] of Object.entries(data.visual_attributes || {})) {
+			if (value === null) delete attributes[key];
+			else attributes[key] = value;
+		}
 		const updated = {
 			...char,
 			...data,
+			visual_attributes: attributes,
 			updated_at: now
 		};
 		this.characters.set(id, updated);
@@ -390,6 +403,9 @@ export class MockApiClient {
 				chapter_number: i,
 				title: `Chapter ${i}`,
 				summary: `Summary of events in chapter ${i}`,
+				important_events: [`Event A in chapter ${i}`, `Event B in chapter ${i}`],
+				character_names: [],
+				ending: `Chapter ${i} ends on a cliffhanger`,
 				approved_at: null,
 				status: 'draft',
 				created_at: now,
@@ -414,6 +430,13 @@ export class MockApiClient {
 			now = new Date(new Date(chap.approved_at).getTime() + 1000).toISOString();
 		}
 		const updated = { ...chap, ...data, updated_at: now };
+		// Like the server: changing the outline text of an approved chapter makes it pending again.
+		const textFields = ['title', 'summary', 'important_events', 'character_names', 'ending'];
+		const edited = textFields.some((key) => key in data && JSON.stringify(data[key]) !== JSON.stringify(chap[key]));
+		if (edited && chap.status === 'approved' && !('status' in data)) {
+			updated.status = 'pending';
+			updated.approved_at = null;
+		}
 		this.chapters.set(id, updated);
 		return updated;
 	}

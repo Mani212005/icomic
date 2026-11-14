@@ -199,11 +199,22 @@ small { font-size: 12px; color: var(--muted); }
 .chap-edit-row { flex: 1; }
 .chap-edit-row input { flex: 1; }
 .chapter-card textarea { width: 100%; }
+.chap-edit-form { display: flex; flex-direction: column; gap: 10px; }
+.chap-edit-form label { display: flex; flex-direction: column; gap: 5px; }
+.chap-edit-form textarea, .chap-edit-form input { width: 100%; }
+.chap-edit-form small { color: var(--muted); font-size: 12px; }
+.char-edit-form :is(input, textarea), .panel-edit-form :is(input, textarea), .chap-edit-form :is(input, textarea) { font-weight: 400; letter-spacing: normal; }
+.chap-detail { display: grid; gap: 6px; margin-top: 14px; font-size: 14px; color: var(--muted); }
+.chap-detail strong { color: var(--ink); }
+.chap-detail ul { margin: 0; padding-left: 20px; }
+.analysis-warnings { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; }
+.analysis-warnings li { display: flex; gap: 12px; padding: 12px 16px; border: 1px solid #D6C19B; border-left-width: 4px; border-radius: 4px 7px 3px 5px; color: var(--warning); background: var(--warning-soft); font-size: 13px; }
 .panel-header-row { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--rule); }
 .panel-num { font-size: 12px; font-weight: 650; color: var(--ink); }
 .panel-content { display: grid; gap: 12px; }
 .panel-content p { font-size: 14px; color: var(--muted); }
 .panel-content strong { color: var(--ink); }
+.panel-content .narration { font-style: italic; }
 .panel-content p:nth-child(2) { font-family: Georgia, serif; font-size: 19px; color: var(--ink); }
 .prompt-text { border-top: 1px dashed var(--line); padding-top: 14px; font-size: 12px !important; }
 .page-grid { display: grid; align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 24px; }

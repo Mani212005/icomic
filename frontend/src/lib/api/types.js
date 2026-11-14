@@ -78,15 +78,27 @@ export function formatCostQuote(quote) {
 	return `${quote.price_verified ? 'Estimate' : 'Unverified estimate'}: ${amount}`;
 }
 
-export function isApprovalStale(approvedAt, updatedAt) {
+// An approval is in one of three states. Never approved is `pending`: nothing was approved, so
+// nothing can have gone out of date. `approved` means the approval is newer than the last change.
+// `stale` means something was approved and has been edited (or regenerated) since.
+export const APPROVAL = { PENDING: 'pending', APPROVED: 'approved', STALE: 'stale' };
+
+export function approvalState(approvedAt, updatedAt) {
+	if (approvedAt === null || approvedAt === undefined || approvedAt === '') return APPROVAL.PENDING;
 	const approvedTime = timestampMicros(approvedAt);
 	const updatedTime = timestampMicros(updatedAt);
-	if (approvedTime === null || updatedTime === null) return true;
-	return approvedTime <= updatedTime;
+	// An approval that cannot be dated against the last change cannot be shown to be current.
+	if (approvedTime === null || updatedTime === null) return APPROVAL.STALE;
+	return approvedTime <= updatedTime ? APPROVAL.STALE : APPROVAL.APPROVED;
+}
+
+// True only for an approval that existed and was invalidated; use `hasValidApproval` to gate a stage.
+export function isApprovalStale(approvedAt, updatedAt) {
+	return approvalState(approvedAt, updatedAt) === APPROVAL.STALE;
 }
 
 export function hasValidApproval(approvedAt, updatedAt) {
-	return !isApprovalStale(approvedAt, updatedAt);
+	return approvalState(approvedAt, updatedAt) === APPROVAL.APPROVED;
 }
 
 // The artwork the server exports for a page: the most recently approved of its line art,

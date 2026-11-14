@@ -254,7 +254,7 @@ func (s *Server) publicFields(pattern string) map[string]string {
 	case "POST /api/v1/projects/{id}/chapters":
 		return map[string]string{"chapter_count": "positiveChapters", "art_style": "artStyle"}
 	case "PATCH /api/v1/chapters/{id}":
-		return map[string]string{"title": "title", "summary": "text", "status": "chapterStatus"}
+		return map[string]string{"title": "title", "summary": "text", "important_events": "textList", "character_names": "textList", "ending": "text", "status": "chapterStatus"}
 	case "PATCH /api/v1/panels/{id}":
 		return map[string]string{"scene_description": "text", "dialogue": "text", "narration": "text", "character_actions": "text", "camera_angle": "text", "background": "text", "image_prompt": "text"}
 	case "PATCH /api/v1/pages/{id}":
@@ -281,6 +281,9 @@ func (s *Server) publicFields(pattern string) map[string]string {
 		return nil
 	}
 }
+
+// maxOutlineListItems bounds a chapter's event and character lists, which the editor sends whole.
+const maxOutlineListItems = 100
 
 func (s *Server) validateField(name, kind string, raw json.RawMessage) error {
 	invalid := func() error { return fmt.Errorf("Invalid %s", name) }
@@ -340,6 +343,16 @@ func (s *Server) validateField(name, kind string, raw json.RawMessage) error {
 				}
 			}
 			if !s.validObject(value, 0) {
+				return invalid()
+			}
+		}
+	case "textList":
+		var values []string
+		if json.Unmarshal(raw, &values) != nil || len(values) > maxOutlineListItems {
+			return invalid()
+		}
+		for _, v := range values {
+			if len(v) > s.Limits.TextBytes || strings.ContainsRune(v, 0) {
 				return invalid()
 			}
 		}

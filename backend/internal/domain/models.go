@@ -51,13 +51,28 @@ type Project struct {
 
 // Chapter represents a chapter within a project (SPEC 9).
 type Chapter struct {
-	ID            string    `json:"id"`
-	ProjectID     string    `json:"project_id"`
-	ChapterNumber int       `json:"chapter_number"`
-	Title         string    `json:"title"`
-	Summary       string    `json:"summary"`
-	Status        string    `json:"status"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            string `json:"id"`
+	ProjectID     string `json:"project_id"`
+	ChapterNumber int    `json:"chapter_number"`
+	Title         string `json:"title"`
+	Summary       string `json:"summary"`
+	// ImportantEvents, CharacterNames and Ending are the rest of the model's outline for the chapter.
+	// They are editable and feed panel generation alongside the summary.
+	ImportantEvents []string  `json:"important_events"`
+	CharacterNames  []string  `json:"character_names"`
+	Ending          string    `json:"ending"`
+	Status          string    `json:"status"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// EnsureOutlineLists replaces unset lists with empty ones so the API returns [] rather than null.
+func (c *Chapter) EnsureOutlineLists() {
+	if c.ImportantEvents == nil {
+		c.ImportantEvents = []string{}
+	}
+	if c.CharacterNames == nil {
+		c.CharacterNames = []string{}
+	}
 }
 
 // Character represents an extracted character profile and reference image (SPEC 9).

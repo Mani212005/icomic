@@ -1,5 +1,8 @@
 package domain
 
+// PanelsPerPage is the normal page size; the AI service paginates panels with the same constant.
+const PanelsPerPage = 5
+
 // TargetPanelCount scales the story without a chapter or project panel ceiling.
 // 3,000-6,000 words receive 50-60 panels; larger stories continue at 100 words/panel.
 func TargetPanelCount(words int) int {

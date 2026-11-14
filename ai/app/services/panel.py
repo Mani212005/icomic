@@ -188,6 +188,9 @@ class PanelService:
         panel_count: int = 4,
         chapter_script: str = "",
         overlay_lettering: bool = False,
+        important_events: list[str] | None = None,
+        character_names: list[str] | None = None,
+        ending: str = "",
     ) -> list[PanelTextItem]:
         if panel_count < 1:
             raise ValueError("Panel count must be at least 1.")
@@ -212,6 +215,9 @@ class PanelService:
                         "chapter_number": chapter_number,
                         "chapter_title": chapter_title,
                         "approved_outline": chapter_summary,
+                        "outline_events": important_events or [],
+                        "outline_characters": character_names or [],
+                        "outline_ending": ending,
                         "page_number": page_index + 1,
                         "panel_count": count,
                         "characters": characters,
