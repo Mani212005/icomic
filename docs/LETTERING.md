@@ -10,8 +10,10 @@ and edits the resulting vector layer. PDF export draws that same stored vector l
 
 ## Enablement and legacy safety
 
-`LETTERING_OVERLAY_ENABLED=true` on the Go API is the **single opt-in setting**.
-It defaults to false, including in Compose, and remains opt-in after all four stages.
+`LETTERING_OVERLAY_ENABLED=true` on the Go API is the **single setting**. The deploy
+Compose stack sets it to true by default for both services, so a local run letters pages as
+editable overlays. Without Compose the code default is still false, and
+`LETTERING_OVERLAY_ENABLED=false` in the environment turns the stack's default off.
 When enabled, newly created projects and their newly allocated pages record
 `lettering_mode: overlay`. Everything else is `baked`. Mode is fixed at creation,
 not inferred from prompts or image content. Turning the setting on does not upgrade
@@ -24,7 +26,8 @@ baked: requesting ink for an overlay page returns 409 rather than consuming a
 text-free draft through the legacy lettering prompt. GET on legacy/ink pages
 returns baked with no layer; PATCH returns 409. There is no client mode toggle.
 Exports draw eligible overlay layouts over the unchanged image. Baked/ink pages
-keep their existing comic content streams. The flag remains off by default.
+keep their existing comic content streams. The code default stays off so services started
+without Compose, and the hermetic suites, keep the baked behaviour.
 
 ## Composition and text-free rendering
 

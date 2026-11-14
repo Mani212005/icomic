@@ -96,6 +96,10 @@ class RedisQueueAdapter(QueuePort):
 
         self.client = redis.from_url(url)
 
+    def ready(self) -> None:
+        """Raise unless Redis answers, so readiness reflects the real queue."""
+        self.client.ping()
+
     def _prefix(self, queue: str) -> str:
         return f"icomic:{{{queue}}}:"
 

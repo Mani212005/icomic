@@ -1260,6 +1260,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.overlay_lettering:
         os.environ["LETTERING_OVERLAY_ENABLED"] = "true"
+    else:
+        # Compose now defaults overlay lettering on; this runner's baked-lettering flow stays opt-out.
+        os.environ.setdefault("LETTERING_OVERLAY_ENABLED", "false")
     live = bool(args.live)
     if (
         not math.isfinite(args.prior_spend_usd)

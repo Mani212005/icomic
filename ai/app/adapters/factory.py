@@ -23,6 +23,7 @@ from .queue.fake import FakeQueueAdapter
 from .queue.port import QueuePort
 from .queue.redis import RedisQueueAdapter
 from .storage.fake import FakeStorageAdapter
+from .storage.local import LocalStorageAdapter
 from .storage.port import StoragePort
 from .storage.s3 import S3Adapter
 from .vision.fake import FakeVisionAdapter
@@ -127,9 +128,22 @@ def get_storage_adapter(selection: str | None = None) -> StoragePort:
         return FakeStorageAdapter(
             base_url=base_url, directory=Path(directory) if directory else None
         )
+    if name == "local":
+        directory = os.getenv("LOCAL_STORAGE_DIR", "").strip()
+        if not directory:
+            raise ValueError(
+                "ADAPTER_STORAGE=local requires LOCAL_STORAGE_DIR, the directory of the "
+                "mounted volume that keeps generated images"
+            )
+        if os.getenv("ICOMIC_E2E_FAKE_STORAGE_DIR"):
+            raise ValueError(
+                "ADAPTER_STORAGE=local conflicts with ICOMIC_E2E_FAKE_STORAGE_DIR; "
+                "set ADAPTER_STORAGE=fake to keep using the checkpoint directory"
+            )
+        return LocalStorageAdapter(directory, base_url=os.getenv("STORAGE_BASE_URL"))
     if name == "s3":
         return S3Adapter()
-    raise ValueError(f"Unknown storage adapter: {name}. Supported: 'fake', 's3'.")
+    raise ValueError(f"Unknown storage adapter: {name}. Supported: 'fake', 'local', 's3'.")
 
 
 def get_queue_adapter(selection: str | None = None) -> QueuePort:
@@ -150,23 +164,37 @@ def get_clock_adapter(selection: str | None = None) -> ClockPort:
     raise ValueError(f"Unknown clock adapter: {name}. Supported: 'fake', 'system'.")
 
 
-def build_adapters_from_env() -> AdapterSet:
-    """Build AdapterSet with configuration selected via ADAPTER_* env vars."""
-    storage = get_storage_adapter()
-    diagnostics_path = os.getenv("ICOMIC_E2E_DIAGNOSTICS_DIR")
-    diagnostics = ProviderDiagnostics(Path(diagnostics_path)) if diagnostics_path else None
-    cost_ledger = None
+def build_cost_ledger_from_env() -> ProviderCostLedger | None:
+    """Select the provider cost ledger: a capped E2E run, a personal spend cap, or none."""
     if os.getenv("ICOMIC_E2E_LIVE") == "1":
         run_id = os.getenv("ICOMIC_E2E_RUN_ID", "")
         if not re.fullmatch(r"[0-9a-f]{32}", run_id):
             raise ValueError("Capped E2E requires a unique ICOMIC_E2E_RUN_ID")
-        cost_ledger = ProviderCostLedger(
+        return ProviderCostLedger(
             cap=os.getenv("ICOMIC_E2E_COST_CAP_USD", "0"),
             prior=os.getenv("ICOMIC_E2E_PRIOR_SPEND_USD", "0"),
             reserve=os.getenv("ICOMIC_E2E_THIRD_CHECK_RESERVE_USD", "0"),
             path=Path("/var/lib/icomic-e2e") / f"provider-costs-{run_id}.json",
             run_id=run_id,
         )
+    cap = os.getenv("PROVIDER_SPEND_CAP_USD", "").strip()
+    if not cap:
+        return None
+    path = os.getenv("PROVIDER_COST_LEDGER_PATH", "").strip()
+    if not path:
+        raise ValueError(
+            "PROVIDER_SPEND_CAP_USD requires PROVIDER_COST_LEDGER_PATH, a file on a mounted "
+            "volume, so spend survives restarts"
+        )
+    return ProviderCostLedger(cap=cap, path=Path(path), run_id="personal", pinned=False)
+
+
+def build_adapters_from_env() -> AdapterSet:
+    """Build AdapterSet with configuration selected via ADAPTER_* env vars."""
+    storage = get_storage_adapter()
+    diagnostics_path = os.getenv("ICOMIC_E2E_DIAGNOSTICS_DIR")
+    diagnostics = ProviderDiagnostics(Path(diagnostics_path)) if diagnostics_path else None
+    cost_ledger = build_cost_ledger_from_env()
     return AdapterSet(
         language=get_language_adapter(cost_ledger=cost_ledger, diagnostics=diagnostics),
         vision=get_vision_adapter(cost_ledger=cost_ledger, diagnostics=diagnostics),

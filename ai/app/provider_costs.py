@@ -1,4 +1,9 @@
-"""Durable, prompt-free accounting at the provider HTTP boundary for capped E2E runs."""
+"""Durable, prompt-free accounting at the provider HTTP boundary.
+
+The same ledger backs two modes. A capped E2E run pins its budget to one run. A personal
+run (``PROVIDER_SPEND_CAP_USD``) keeps one lifetime ledger on a volume, where the cap
+comes from configuration and may be changed between restarts.
+"""
 
 import fcntl
 import json
@@ -26,6 +31,10 @@ class ProviderBudgetError(ValueError):
     pass
 
 
+class ProviderSpendCapError(ProviderBudgetError):
+    """The configured cap would be exceeded, so the call was refused before transmission."""
+
+
 class ProviderAccountingError(RuntimeError):
     pass
 
@@ -51,7 +60,11 @@ class ProviderCostLedger:
     request measurements (byte sizes, image hashes/dimensions and elapsed time).
     """
 
-    def __init__(self, cap, prior=0, reserve=0, path: Path | None = None, run_id="test"):
+    def __init__(
+        self, cap, prior=0, reserve=0, path: Path | None = None, run_id="test", pinned=True
+    ):
+        # pinned=False lets a saved ledger be reopened under a different cap, keeping its calls.
+        self.pinned = pinned
         self.cap, self.prior, self.reserve = (Decimal(str(n)) for n in (cap, prior, reserve))
         if not all(n.is_finite() for n in (self.cap, self.prior, self.reserve)):
             raise ProviderBudgetError("Cost configuration must be finite")
@@ -84,16 +97,14 @@ class ProviderCostLedger:
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 if self.path.exists():
                     saved = json.loads(self.path.read_text())
-                    for name in (
-                        "run_id",
-                        "hard_cap_usd",
-                        "prior_spend_usd",
-                        "third_check_reserve_usd",
-                    ):
+                    budget = ("hard_cap_usd", "prior_spend_usd", "third_check_reserve_usd")
+                    for name in ("run_id", *(budget if self.pinned else ())):
                         if saved[name] != self.state[name]:
                             raise ProviderBudgetError(
                                 "Existing cost ledger belongs to a different run or budget"
                             )
+                    for name in () if self.pinned else budget:
+                        saved[name] = self.state[name]
                     self.state = saved
                 try:
                     yield
@@ -155,6 +166,20 @@ class ProviderCostLedger:
         with self._locked():
             return self._report()
 
+    def summary(self):
+        """Running total and cap remaining, with no per-call detail."""
+        report = self.report()
+        spent = Decimal(str(report["cumulative_accounted_spend_usd"]))
+        remaining = max(self.cap - self.reserve - spent, Decimal(0))
+        return {
+            "enabled": True,
+            "cap_usd": float(self.cap),
+            "spent_usd": float(spent),
+            "remaining_usd": float(remaining),
+            "calls": len(report["calls"]),
+            "uncertain_calls": report["uncertain_calls"],
+        }
+
     def before_call(self, stage, payload, *, input_tokens=None, request_metadata=None):
         if stage == "image":
             if payload.get("model") != "muse-image-1.0":
@@ -184,7 +209,9 @@ class ProviderCostLedger:
         with self._locked():
             accounted = Decimal(str(self._report()["accounted_spend_usd"]))
             if self.prior + accounted + self.reserve + estimate > self.cap:
-                raise ProviderBudgetError("Provider cost guard refused a call before transmission")
+                raise ProviderSpendCapError(
+                    "Provider cost guard refused a call before transmission"
+                )
             operation, job_id = provider_operation.get()
             index = len(self.state["calls"])
             self.state["calls"].append(

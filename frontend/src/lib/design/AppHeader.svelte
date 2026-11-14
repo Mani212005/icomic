@@ -53,6 +53,7 @@
 	@media (max-width: 700px) {
 		.bar { padding: 0 14px 0 12px; gap: 10px; }
 		.brand { gap: 8px; }
+		.trailing { gap: 4px; }
 		.brand-mark { width: 36px; height: 36px; border-radius: 10px 7px 9px 6px; }
 		.brand-wordmark { width: 92px; height: 36px; }
 	}

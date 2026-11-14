@@ -42,6 +42,7 @@ jobs:
           python scripts/check_hermetic_test.py
           python scripts/check_readme_test.py
           python scripts/check_generated_test.py
+          python scripts/check_compose_test.py
 
       - name: Run Hermetic Guard Repository Verification
         run: python scripts/check_hermetic.py
@@ -66,6 +67,23 @@ jobs:
 
       - name: Validate OpenAPI spec and JSON schemas
         run: python contracts/validate_test.py
+
+      - name: Lint workflows
+        run: make lint-workflows
+
+  compose:
+    name: Compose Config & Personal-Run Invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Render every Compose file and check its invariants
+        run: make check-compose
 
   contract-models:
     name: OpenAPI Generated Model Drift Check
@@ -300,8 +318,10 @@ jobs:
     name: CI Success
     runs-on: ubuntu-latest
     needs:
+      - service-images
       - hermetic-guard
       - contracts
+      - compose
       - contract-models
       - database
       - backend

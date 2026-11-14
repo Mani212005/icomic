@@ -1,8 +1,8 @@
 <script>
 	import '#lib/design/theme.css';
 	import ComicEditor from '#lib/editor/ComicEditor.svelte';
-	import { Icon, focusDialog, AppHeader, AppFooter, Hamburger, Sidebar, StageNav, stageList } from '#lib/design/shell.js';
-	import { formatApiError } from '#lib/api/index.js';
+	import { Icon, focusDialog, AppHeader, AppFooter, Hamburger, Sidebar, StageNav, SpendPill, stageList } from '#lib/design/shell.js';
+	import { formatApiError, publishSpend, spendStore, spendView } from '#lib/api/index.js';
 	import { AGE_TERMS_ADVISORY } from '#lib/config/policies.js';
 	import { sharedClient, projectAccess, LOGIN_LIMIT_URL } from '#lib/account/session.js';
 	import { goto } from '$app/navigation';
@@ -57,6 +57,7 @@
 
 		try {
 			account = await apiClient.getAccount();
+			if (account) apiClient.getCreditUsage().then(publishSpend, () => publishSpend(null));
 			const res = account ? await apiClient.listProjects() : [];
 			const list = Array.isArray(res) ? res : (res && res.projects ? res.projects : []);
 			projects = list;
@@ -196,6 +197,7 @@
 				<div class="status-pill advisory-pill" title={AGE_TERMS_ADVISORY}>
 					<Icon name="lock" size={14} /><span class="pill-text">18+ Advisory</span>
 				</div>
+				<SpendPill view={spendView($spendStore)} />
 			</div>
 		</svelte:fragment>
 

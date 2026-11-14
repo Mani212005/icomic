@@ -84,6 +84,7 @@ func (s *Server) NewRouter() http.Handler {
 	// Health
 	mux.HandleFunc("GET /healthz", s.HealthCheck)
 	mux.HandleFunc("GET /internal/health", s.HealthCheck)
+	mux.HandleFunc("GET /readyz", s.ReadinessCheck)
 
 	// Media (owner-authorized: scoped short-lived link or authenticated owner)
 	mux.HandleFunc("GET /media/{path...}", s.ServeMedia)

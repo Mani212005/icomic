@@ -32,6 +32,17 @@ type AIService interface {
 	GetJobStatus(ctx context.Context, jobID string) (*JobStatusResponse, error)
 }
 
+// ProviderSpendReader is an optional capability of an AIService: the running provider
+// spend against the personal spend cap. Fakes that do not need it simply omit it.
+type ProviderSpendReader interface {
+	ProviderSpend(ctx context.Context) (*ProviderSpendResponse, error)
+}
+
+// ReadinessChecker is an optional capability of an AIService: whether it can do work now.
+type ReadinessChecker interface {
+	CheckReady(ctx context.Context) error
+}
+
 // AIServiceClient defines an HTTP client to communicate with the Python AI service.
 type AIServiceClient struct {
 	BaseURL    string
@@ -230,8 +241,47 @@ func (c *AIServiceClient) GetJobStatus(ctx context.Context, jobID string) (*JobS
 	return &statusResp, nil
 }
 
+// getJSON performs a short GET and decodes a JSON body; non-2xx answers become service errors.
+func (c *AIServiceClient) getJSON(ctx context.Context, path string, out interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("get %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("get %s: status %d", path, resp.StatusCode)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(out); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
+// ProviderSpend reads the AI service's running spend against the personal cap.
+func (c *AIServiceClient) ProviderSpend(ctx context.Context) (*ProviderSpendResponse, error) {
+	var out ProviderSpendResponse
+	if err := c.getJSON(ctx, "/internal/v1/provider-spend", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CheckReady fails unless the AI service answers /readyz with 200.
+func (c *AIServiceClient) CheckReady(ctx context.Context) error {
+	return c.getJSON(ctx, "/readyz", nil)
+}
+
 // Ensure *AIServiceClient implements AIService
 var _ AIService = (*AIServiceClient)(nil)
+var _ ProviderSpendReader = (*AIServiceClient)(nil)
+var _ ReadinessChecker = (*AIServiceClient)(nil)
 
 // FakeAIServiceClient provides deterministic fake responses for hermetic unit tests.
 type FakeAIServiceClient struct {
@@ -249,10 +299,31 @@ type FakeAIServiceClient struct {
 	FinishPageImageFunc            func(ctx context.Context, req FinishPageImageRequest) (*FinishPageImageResponse, error)
 	AssemblePdfFunc                func(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
 	GetJobStatusFunc               func(ctx context.Context, jobID string) (*JobStatusResponse, error)
+	ProviderSpendFunc              func(ctx context.Context) (*ProviderSpendResponse, error)
+	CheckReadyFunc                 func(ctx context.Context) error
 }
 
 // Ensure *FakeAIServiceClient implements AIService
 var _ AIService = (*FakeAIServiceClient)(nil)
+
+var _ ProviderSpendReader = (*FakeAIServiceClient)(nil)
+var _ ReadinessChecker = (*FakeAIServiceClient)(nil)
+
+// ProviderSpend reports no configured cap unless a test supplies ProviderSpendFunc.
+func (f *FakeAIServiceClient) ProviderSpend(ctx context.Context) (*ProviderSpendResponse, error) {
+	if f.ProviderSpendFunc != nil {
+		return f.ProviderSpendFunc(ctx)
+	}
+	return &ProviderSpendResponse{Enabled: false}, nil
+}
+
+// CheckReady is ready unless a test supplies CheckReadyFunc.
+func (f *FakeAIServiceClient) CheckReady(ctx context.Context) error {
+	if f.CheckReadyFunc != nil {
+		return f.CheckReadyFunc(ctx)
+	}
+	return nil
+}
 
 func NewFakeAIServiceClient() *FakeAIServiceClient {
 	return &FakeAIServiceClient{}

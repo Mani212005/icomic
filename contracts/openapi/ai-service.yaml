@@ -38,6 +38,37 @@ paths:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
 
+  /readyz:
+    get:
+      summary: Readiness check, distinct from liveness
+      description: Reports whether the service can do work now, including its storage and queue dependencies. Answers 503 with the same body while a dependency is down.
+      operationId: checkReadiness
+      responses:
+        '200':
+          description: Every dependency is usable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: At least one dependency is not usable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  /internal/v1/provider-spend:
+    get:
+      summary: Running provider spend against the personal spend cap
+      operationId: getProviderSpend
+      responses:
+        '200':
+          description: Spend so far and cap remaining, or enabled=false when no cap is configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderSpendResponse'
+
   /internal/v1/analyze-script:
     post:
       summary: Analyze script and generate character profiles and chapter breakdown
@@ -658,6 +689,49 @@ components:
         status:
           type: string
           example: ok
+
+    ReadinessResponse:
+      type: object
+      required:
+        - status
+        - checks
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          description: One entry per dependency, ok or a short non-secret reason.
+          additionalProperties:
+            type: string
+
+    ProviderSpendResponse:
+      type: object
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+          description: False when no personal spend cap is configured.
+        cap_usd:
+          type: number
+          format: double
+          minimum: 0
+        spent_usd:
+          type: number
+          format: double
+          minimum: 0
+          description: Accounted provider spend, counting each unfinished or unconfirmed call at its full reservation.
+        remaining_usd:
+          type: number
+          format: double
+          minimum: 0
+        calls:
+          type: integer
+          minimum: 0
+        uncertain_calls:
+          type: integer
+          minimum: 0
 
     ErrorResponse:
       type: object

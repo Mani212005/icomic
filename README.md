@@ -49,10 +49,13 @@ Run the end-to-end comic flow against the fake adapters. This uses the local Com
 make e2e-comic
 ```
 
+To run the whole stack on your machine, see [docs/PERSONAL_RUN.md](docs/PERSONAL_RUN.md): what it needs, the spend cap, what survives a restart and how to back up.
+
 For CI checks and toolchain details, see [docs/CI.md](docs/CI.md).
 
 ## Architecture and project docs
 
+- [Running it on your machine](docs/PERSONAL_RUN.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Product specification](docs/SPEC.md)
 - [Meta adapter configuration and deferred live swap](docs/META_SWAP.md)

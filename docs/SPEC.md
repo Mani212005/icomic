@@ -1046,7 +1046,8 @@ The backend must validate every request.
 
 The backend must enforce strict ownership and authorization checks:
 - Project, chapter, character, page, and panel endpoints require that the resource belongs to a project owned by the authenticated user.
-- Credit usage (`GET /api/v1/me/credit-usage`) returns credit usage for the authenticated session user only.
+- Credit usage (`GET /api/v1/me/credit-usage`) returns credit usage for the authenticated session user only. It also carries `provider_spend` (`enabled`, `cap_usd`, `spent_usd`, `remaining_usd`, `calls`, `uncertain_calls`): the provider spend against the personal spend cap, which is not per user. It is omitted when the AI service cannot answer and reads `enabled: false` when no cap is set.
+- `GET /readyz` on the Go API and on the AI service reports whether dependencies can do work (503 while one cannot), distinct from the `GET /healthz` liveness check.
 - Generation job endpoints (`GET /api/v1/generation-jobs/:id` and `POST /api/v1/generation-jobs/:id/cancel`) must verify that the requested job belongs to the authenticated user.
 - Export endpoints (`GET /api/v1/exports/:id` and `GET /api/v1/exports/:id/download`) must verify that the export belongs to a project owned by the authenticated user.
 

@@ -38,6 +38,11 @@ func NewPostgresRepository(connStr string) (*PostgresRepository, error) {
 	return NewPostgresRepositoryWithDB(db), nil
 }
 
+// Ping reports whether PostgreSQL answers, for the readiness endpoint.
+func (p *PostgresRepository) Ping(ctx context.Context) error {
+	return p.db.PingContext(ctx)
+}
+
 func (p *PostgresRepository) Close() error {
 	return p.db.Close()
 }

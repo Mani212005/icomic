@@ -50,7 +50,7 @@ or provider control is introduced; longer instructions may affect moderated text
 usage. Reference hashes in the prompt identify inputs and are not persisted output
 metadata or provenance verification.
 
-## Stage 2 overlay mode (disabled by default)
+## Stage 2 overlay mode (on in Compose, off in the code default)
 
 New projects/pages allocated with `LETTERING_OVERLAY_ENABLED=true` persist overlay
 eligibility and a versioned lettering document. Existing projects/pages and ink

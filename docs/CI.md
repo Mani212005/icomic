@@ -20,8 +20,10 @@ The primary CI pipeline is defined in `.github/workflows/ci.yml`. It runs on pus
 
 | Job ID | Job Name | Responsibility |
 | --- | --- | --- |
+| `service-images` | Backend & AI Service Images | Builds the backend image and verifies the complete server package, then builds the AI service image. Needs a Docker daemon, so `make check-ci` does not run it. |
 | `hermetic-guard` | Hermetic Guard | Scans codebase and workflows to ensure zero live API markers, zero real Meta hosts, zero `META_API_KEY` reads in code/tests, and no database dependencies outside the tagged PostgreSQL job; tests the generated-model drift comparator. |
-| `contracts` | Contracts & Schemas Validation | Validates OpenAPI 3.1 specifications and JSON schemas against test suites. |
+| `contracts` | Contracts & Schemas Validation | Validates OpenAPI 3.1 specifications and JSON schemas against test suites, then lints the workflows (`make lint-workflows`). |
+| `compose` | Compose Config & Personal-Run Invariants | Renders every Compose file with `docker compose config` and checks that generated files and the spend ledger sit on a named volume, overlay lettering and the spend cap default on, health checks probe `/readyz`, and the isolated E2E overlay claims no fixed name or host port (`make check-compose`). |
 | `contract-models` | OpenAPI Generated Model Drift Check | Regenerates Go and Python contract models with pinned generator versions and fails if checked-in output differs. |
 | `database` | Database Migrations & Schema Validation | Runs hermetic PostgreSQL migration structural validation without live database dependencies. |
 | `backend` | Go Backend Checks & Tests | Runs Go format verification (`gofmt`), static analysis (`go vet`), unit and contract tests with race detection (`go test -race`), and binary compilation (`go build`). |
@@ -29,7 +31,30 @@ The primary CI pipeline is defined in `.github/workflows/ci.yml`. It runs on pus
 | `ai-service` | Python AI Service Checks & Tests | Syncs locked dependencies via `uv`, runs Ruff linting and format checks, and executes pytest boundary contract tests. |
 | `frontend` | Svelte Frontend Checks & Tests | Installs npm dependencies via `npm ci`, runs Svelte type and syntax checking (`svelte-check`), executes unit tests, and compiles the production bundle (`vite build`). |
 | `e2e` | End-to-End API Integration Suite | Starts real Python AI service on fakes and real Go API server on ephemeral ports, testing full project lifecycle from dev sign-in to downloaded PDF verification, plus negative paths (stale approvals, kill switch, quota exhaustion, prompt moderation). |
-| `ci-success` | CI Success | Aggregate job that evaluates the completion status of all required component jobs. |
+| `ci-success` | CI Success | Aggregate job that evaluates the completion status of all required component jobs. The workflow lint fails if a job is missing from its `needs`. |
+
+## `make check` versus CI
+
+`make check` is the quick local gate. It does **not** run everything CI runs. `make check-ci` runs `check` plus the jobs it leaves out.
+
+| CI job | `make check` | `make check-ci` | Target |
+| --- | --- | --- | --- |
+| `hermetic-guard` | yes | yes | `guard-hermetic` (inside `test`) |
+| `contracts` | yes | yes | `test-contracts` (inside `lint`) |
+| `database` | yes | yes | `test-migrations` (inside `lint`) |
+| `backend` | yes | yes | `lint-backend`, `test-backend`, `build-backend` |
+| `ai-service` | yes | yes | `lint-ai`, `test-ai` |
+| `frontend` | yes | yes | `lint-frontend`, `test-frontend`, `build-frontend` |
+| `contracts`, workflow lint step | no | yes | `lint-workflows` |
+| `contract-models` | no | yes | `check-contract-models` (needs `make install-contract-codegen`) |
+| `compose` | no | yes | `check-compose` |
+| `backend-realdb` | no | yes | `test-backend-realdb` (starts a PostgreSQL container) |
+| `e2e` | no | yes | `test-e2e` |
+| `service-images` | no | no | CI only: `python3 scripts/check_backend_container.py` and `docker build --file ai/Dockerfile ai` |
+
+There is no browser-driven test in CI. The colour and lettering editors have manual fixtures
+under `frontend/static/test-fixtures/`, and the changed browser flow is checked by hand
+against an isolated stack (`make e2e-comic` with `--keep-stack`).
 
 ## Running Checks Locally
 
@@ -208,13 +233,21 @@ The e2e suite tests:
   - Daily per-user image generation quota exhaustion (HTTP 429)
   - Content pre-moderation blocking prohibited prompts (HTTP 400 or blocked: true)
 
-### 9. Workflow YAML Validation
+### 9. Workflow and Compose Validation
 
-Validate GitHub Actions workflow syntax locally with `actionlint`:
+Lint the workflows offline (needs PyYAML from `contracts/requirements.txt`). It fails on a job that needs an unknown job, a job missing from the `ci-success` gate, a floating action reference, missing `permissions`, or a `make` target the Makefile does not define:
 
 ```bash
-actionlint .github/workflows/ci.yml .github/workflows/lint-openapi.yml
+make lint-workflows
 ```
+
+Render every Compose file and check the personal-run invariants (needs the Docker Compose plugin, not a running daemon):
+
+```bash
+make check-compose
+```
+
+`actionlint` is a stricter optional check on top: `actionlint .github/workflows/*.yml`.
 
 ### 10. One-Command Comic E2E Run
 

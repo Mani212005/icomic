@@ -1,4 +1,6 @@
 
+export { publishSpend, spendStore, spendView } from './spend.js';
+
 export const JOB_TYPES = {
 	SCRIPT_ANALYSIS: 'script_analysis',
 	CHAPTER_OUTLINE: 'chapter_outline',
@@ -98,6 +100,16 @@ export function formatApiError(err) {
 			type: 'quota_exceeded',
 			title: err.code === 'book_budget_reached' ? 'Book budget reached' : 'Daily limit reached',
 			message: err.code === 'book_budget_reached' ? 'Book image budget used.' : 'Try again tomorrow.',
+			action: '',
+			status: 429
+		};
+	}
+
+	if (err.code === 'SPEND_CAP_REACHED') {
+		return {
+			type: 'quota_exceeded',
+			title: 'Spend cap reached',
+			message: rawMsg,
 			action: '',
 			status: 429
 		};
