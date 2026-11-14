@@ -241,21 +241,34 @@ func TestExportRejectsUnsupportedSelections(t *testing.T) {
 	}
 }
 
-func TestPNGExportRefusesOverlayLetteredPagesInsteadOfShippingThemWithoutText(t *testing.T) {
-	fake, handler, repo, projectID, pageID := approvedPaintedProject(t)
-	assembled := false
-	fake.AssemblePdfFunc = func(context.Context, gen.AssemblePdfRequest) (*gen.AssemblePdfResponse, error) {
-		assembled = true
-		return nil, nil
-	}
-	pg, _ := repo.GetPage(context.Background(), pageID)
-	pg.LetteringMode = "overlay"
-	if err := repo.CreatePage(context.Background(), pg); err != nil {
-		t.Fatal(err)
-	}
-	rec := postExport(handler, projectID, `{"format":"png"}`)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "overlay_lettering_png") || assembled {
-		t.Fatalf("overlay PNG export: %d %s (assembled: %v)", rec.Code, rec.Body.String(), assembled)
+func TestPNGExportForwardsStoredOverlayLetteringLikeThePDF(t *testing.T) {
+	for _, format := range []string{"pdf", "png"} {
+		t.Run(format, func(t *testing.T) {
+			fake, handler, repo, projectID, pageID := approvedPaintedProject(t)
+			pg, _ := repo.GetPage(context.Background(), pageID)
+			pg.LetteringMode = "overlay"
+			pg.Lettering = json.RawMessage(`{"version":"page-lettering-v1","input":{"version":"lettering-v1","art_mode":"text_free","page_id":"stored","page_aspect":0.6666666666666666,"panels":[]},"overrides":{},"zone_overrides":{},"layout":{"version":"lettering-layout-v1","page_id":"stored","bubbles":[],"issues":[]}}`)
+			if err := repo.CreatePage(context.Background(), pg); err != nil {
+				t.Fatal(err)
+			}
+			var sent gen.AssemblePdfRequest
+			fake.AssemblePdfFunc = func(_ context.Context, req gen.AssemblePdfRequest) (*gen.AssemblePdfResponse, error) {
+				sent = req
+				warnings := []gen.PdfLetteringWarning{{PageNumber: 1, Code: gen.StaleLettering, Message: "Review stale lettering"}}
+				return &gen.AssemblePdfResponse{JobID: req.JobID, PdfURL: "http://storage/out", ProvenanceMetadataPreserved: true, Warnings: &warnings}, nil
+			}
+			rec := postExport(handler, projectID, `{"format":"`+format+`"}`)
+			if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"code":"stale_lettering"`) {
+				t.Fatalf("overlay %s export: %d %s", format, rec.Code, rec.Body.String())
+			}
+			if len(sent.Pages) != 1 {
+				t.Fatalf("assembled %d pages", len(sent.Pages))
+			}
+			item := sent.Pages[0]
+			if item.LetteringMode == nil || *item.LetteringMode != gen.PageExportItemLetteringModeOverlay || item.Lettering == nil || item.Lettering.Input.PageID != "stored" || item.LetteringStale == nil || !*item.LetteringStale {
+				t.Fatalf("stored layer and stale source must be forwarded: %+v", item)
+			}
+		})
 	}
 }
 

@@ -1,7 +1,8 @@
 <script>
 	import Icon from '#lib/design/Icon.svelte';
+	import LetteringLayer from '../lettering/LetteringLayer.svelte';
 	import { pollJob } from '#lib/api/jobPolling.js';
-	import { EXPORT_FORMATS, PAGE_SIZES, formatApiError } from '#lib/api/types.js';
+	import { EXPORT_FORMATS, PAGE_SIZES, EXPORT_PREVIEW_NOTES as NOTES, exportArtworkUrl, exportDrawsLettering, formatApiError } from '#lib/api/types.js';
 
 	export let projectId = '';
 	export let apiClient;
@@ -16,6 +17,25 @@
 	let currentExport = null;
 	let downloadId = '';
 	let isDownloading = false;
+	// Stored lettering of the pages the export draws it on: page id -> layout, or null when it failed to load.
+	let letterings = {};
+	let brokenImages = {};
+	$: pages.forEach(loadLettering);
+	$: flaggedPages = new Set(exportWarnings.map((warning) => warning.page_number));
+
+	async function loadLettering(page) {
+		if (!exportDrawsLettering(page) || page.id in letterings || !apiClient?.getLettering) return;
+		letterings[page.id] = undefined;
+		try {
+			letterings[page.id] = (await apiClient.getLettering(page.id)).lettering?.layout;
+		} catch {
+			letterings[page.id] = null;
+		}
+	}
+	function markBroken(event) {
+		brokenImages[event.currentTarget.dataset.url] = true;
+	}
+	const issueFlags = (layout) => [...new Set(layout.issues.map((issue) => issue.flag.replace(/_/g, ' ')))];
 	$: downloadKind = format === EXPORT_FORMATS.PNG ? 'ZIP' : format.toUpperCase();
 
 	async function handleExport() {
@@ -107,15 +127,25 @@
 			{#if pages.length === 0}
 				<div class="empty-pages"><Icon name="panels" size={40} />None.</div>
 			{:else}
-				{#each pages as page, i}
-					<div class="page-card">
-						<div class="page-preview-box">
-							<span class="page-num">Page {i + 1}</span>
-							<span class="page-status"><Icon name={page.colour_approved_at ? 'colour' : page.line_art_approved_at ? 'line_art' : 'draft'} size={16} />
-								{page.colour_approved_at ? 'Coloured' : page.line_art_approved_at ? 'Lines' : 'Draft'}
-							</span>
+				{#each pages as page, i (page.id)}
+					{@const url = exportArtworkUrl(page)}
+					{@const layout = letterings[page.id]}
+					<figure class="export-page">
+						<div class="export-art">
+							{#if url && !brokenImages[url]}
+								<img src={url} alt={`Page ${i + 1}`} on:error={markBroken} data-url={url} draggable="false" />
+								{#if layout}<LetteringLayer {layout} idPrefix={`export-${page.id}`} />{/if}
+							{:else}
+								<div class="export-art-missing"><Icon name="warning" size={20} label={NOTES.noArtwork} /></div>
+							{/if}
 						</div>
-					</div>
+						<figcaption>
+							Page {i + 1}
+							{#if layout === null}<Icon name="warning" size={14} label={NOTES.letteringFailed} />{/if}
+							{#if layout && issueFlags(layout).length}<Icon name="warning" size={14} label={NOTES.review(issueFlags(layout))} />{/if}
+							{#if flaggedPages.has(i + 1)}<Icon name="warning" size={14} label={NOTES.flagged} />{/if}
+						</figcaption>
+					</figure>
 				{/each}
 			{/if}
 		</div>

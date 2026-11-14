@@ -9,7 +9,9 @@ from typing import Any
 from PIL import Image
 
 from ..adapters.meta_http import detect_image_media_type
+from ..gen.models import LetteringLayout
 from .images import IMAGE_EXTENSIONS
+from .lettering.raster import draw_lettering
 
 # Fixed timestamps keep the archive reproducible for the same inputs.
 _ZIP_EPOCH = (2020, 1, 1, 0, 0, 0)
@@ -20,15 +22,23 @@ DISCLOSURE = (
 )
 
 
-def _png(data: bytes) -> tuple[bytes, int, int]:
-    """The page as PNG: PNG sources are kept byte-identical, other formats are converted."""
+def _png(data: bytes, lettering: LetteringLayout | None = None) -> tuple[bytes, int, int]:
+    """The page as PNG: PNG sources are kept byte-identical, other formats are converted.
+
+    Stored overlay lettering is drawn over the artwork, so a lettered page is always re-encoded.
+    """
     with Image.open(BytesIO(data)) as source:
         source.load()
         width, height = source.size
-        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        if lettering is None and data.startswith(b"\x89PNG\r\n\x1a\n"):
             return data, width, height
+        page = (
+            draw_lettering(source, lettering)
+            if lettering
+            else source.convert("RGBA" if "A" in source.getbands() else "RGB")
+        )
         converted = BytesIO()
-        source.convert("RGBA" if "A" in source.getbands() else "RGB").save(converted, format="PNG")
+        page.save(converted, format="PNG")
         return converted.getvalue(), width, height
 
 
@@ -42,12 +52,16 @@ def build_png_zip(
     include_ai_disclosure: bool,
     pages_data: list[dict[str, Any]],
     sources_preserved: bool,
+    layouts: list[LetteringLayout | None] | None = None,
 ) -> bytes:
+    """``layouts`` holds, per page, the stored lettering to draw (None: nothing to draw)."""
+    layouts = layouts or [None] * len(pages_data)
     files: list[tuple[str, bytes]] = []
     manifest_pages = []
     for index, page in enumerate(pages_data, start=1):
         stem = f"page-{index:03d}"
-        png, width, height = _png(page["image_bytes"])
+        layout = layouts[index - 1]
+        png, width, height = _png(page["image_bytes"], layout)
         entry: dict[str, Any] = {
             "page_number": page["page_number"],
             "file": f"pages/{stem}.png",
@@ -70,6 +84,9 @@ def build_png_zip(
         if original and original not in (png, source):
             entry["original_file"] = f"sources/{stem}-original.{_extension(original)}"
             files.append((entry["original_file"], original))
+        if page.get("lettering_mode") == "overlay":
+            # A withheld page carries the unlettered artwork; the export response warns about it.
+            entry["lettering"] = "drawn" if layout else "withheld"
         entry["provenance"] = page["provenance_metadata"]
         manifest_pages.append(entry)
 

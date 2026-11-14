@@ -3,17 +3,20 @@
 import json
 import re
 import subprocess
+import zipfile
 import zlib
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 import pytest
 from PIL import Image
 
-from app.gen.models import LetteringDocument
+from app.adapters.storage.fake import FakeStorageAdapter
+from app.gen.models import LetteringDocument, PageExportItem
 from app.services.lettering import layout_page
 from app.services.lettering.pdf import PdfLettering, bubble_path
-from app.services.pdf import PdfWriter
+from app.services.pdf import PdfAssemblyService, PdfWriter
 from tests.image_fixtures import placeholder_png
 
 FIXTURES = Path(__file__).parents[1] / "fixtures/lettering"
@@ -312,7 +315,8 @@ def test_live_3_text_free_art_relayouts_and_exports_offline():
 
 @pytest.mark.parametrize("name", ["speech-tail", "narration", "thought", "unicode-devanagari"])
 def test_pdf_render_matches_serialized_layout_raster(name, tmp_path):
-    # Independent raster consumes stored glyph outlines and shape union; it never shapes.
+    # The PNG export's rasterizer (stored glyph outlines and shape union, never shaping) must
+    # match what poppler renders from the PDF's vector text.
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
@@ -371,3 +375,113 @@ def test_pdf_render_matches_serialized_layout_raster(name, tmp_path):
     )
     assert error.mean() < 14
     assert (error > 80).mean() < 0.07
+
+
+def png_zip(*pages):
+    """Export pages (dicts as built by ``page``) as a PNG ZIP; returns files, manifest, warnings."""
+    storage = FakeStorageAdapter()
+    items = [
+        PageExportItem(
+            page_number=number,
+            image_url=storage.put(f"pages/{number}.png", p["image_bytes"], "image/png"),
+            lettering_mode=p["lettering_mode"],
+            lettering=p.get("lettering"),
+            lettering_stale=p.get("lettering_stale", False),
+        )
+        for number, p in enumerate(pages, start=1)
+    ]
+    url, _, count, warnings = PdfAssemblyService(storage).assemble_png_zip(
+        "png-lettering", "Lettering", True, items
+    )
+    assert count == len(pages)
+    with zipfile.ZipFile(BytesIO(storage.get(url))) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    return files, json.loads(files["manifest.json"]), warnings
+
+
+def lettering_bounds(layout, size, pad=8):
+    """Pixel box around every bubble body, tail and thought-tail circle of a stored layout."""
+    xs, ys = [], []
+    for bubble in layout["bubbles"]:
+        for shape in [bubble["shape"], *bubble["thought_tail"]]:
+            box = shape["bounds"]
+            xs += [box["x"], box["x"] + box["width"]]
+            ys += [box["y"], box["y"] + box["height"]]
+        xs += [point["x"] for point in bubble["tail"]]
+        ys += [point["y"] for point in bubble["tail"]]
+    return (
+        max(0, int(min(xs) * size[0]) - pad),
+        max(0, int(min(ys) * size[1]) - pad),
+        min(size[0], int(max(xs) * size[0]) + pad),
+        min(size[1], int(max(ys) * size[1]) + pad),
+    )
+
+
+@pytest.mark.parametrize("name", ["speech-tail", "narration", "thought", "unicode-devanagari"])
+def test_png_zip_draws_stored_lettering_and_touches_only_the_bubbles(name):
+    p = page(name)
+    files, manifest, warnings = png_zip(p)
+    assert not warnings
+    entry = manifest["pages"][0]
+    assert entry["lettering"] == "drawn"
+    # The provider file stays untouched beside the lettered page.
+    assert files[entry["source_file"]] == p["image_bytes"]
+    assert entry["source_file"].startswith("sources/") and entry["converted_from_source"]
+    source = np.asarray(Image.open(BytesIO(p["image_bytes"])).convert("RGB"), dtype=int)
+    with Image.open(BytesIO(files["pages/page-001.png"])) as exported:
+        assert exported.format == "PNG" and exported.size == (600, 849)
+        lettered = np.asarray(exported.convert("RGB"), dtype=int)
+    left, top, right, bottom = lettering_bounds(p["lettering"]["layout"], (600, 849))
+    outside = np.ones(source.shape[:2], dtype=bool)
+    outside[top:bottom, left:right] = False
+    assert (lettered[outside] == source[outside]).all()  # artwork elsewhere is pixel-identical
+    inside = np.abs(lettered - source)[top:bottom, left:right]
+    assert (inside.sum(axis=2) > 200).sum() > 500  # bubble fill, outline and glyph ink are drawn
+    assert (lettered[top:bottom, left:right] < 40).all(axis=2).sum() > 50  # black outline and text
+
+
+def test_png_zip_lettering_is_deterministic():
+    first, _, _ = png_zip(page())
+    second, _, _ = png_zip(page())
+    assert first["pages/page-001.png"] == second["pages/page-001.png"]
+
+
+@pytest.mark.parametrize("mutation", ["stale", "missing", "review"])
+def test_png_zip_withholds_stale_or_flagged_lettering_with_the_pdf_warning(mutation):
+    p = page()
+    if mutation == "stale":
+        p["lettering_stale"] = True
+    elif mutation == "missing":
+        p.pop("lettering")
+    else:
+        p["lettering"]["layout"]["issues"] = [
+            {"panel_id": "panel-1", "utterance_id": "u-1", "flag": "overflow"}
+        ]
+    files, manifest, warnings = png_zip(p)
+    _, pdf_writer = build([p])
+    assert [w.code for w in warnings] == [w.code for w in pdf_writer.warnings]
+    assert warnings[0].page_number == 1
+    entry = manifest["pages"][0]
+    assert entry["lettering"] == "withheld"
+    # Nothing is drawn, and the PNG is the provider's file itself.
+    assert files["pages/page-001.png"] == p["image_bytes"]
+    assert entry["source_file"] == entry["file"]
+
+
+def test_png_zip_draws_safe_bubbles_and_warns_when_no_calm_zone_withheld_a_line():
+    p = page()
+    p["lettering"]["layout"]["issues"] = [
+        {"panel_id": "panel-1", "utterance_id": "withheld", "flag": "no_calm_zone"}
+    ]
+    files, manifest, warnings = png_zip(p)
+    assert [w.code for w in warnings] == ["lettering_review_required"]
+    assert manifest["pages"][0]["lettering"] == "drawn"
+    assert files["pages/page-001.png"] != p["image_bytes"]
+
+
+def test_png_zip_leaves_baked_pages_byte_identical_beside_lettered_ones():
+    baked = {"page_number": 2, "image_bytes": placeholder_png(600, 849), "lettering_mode": "baked"}
+    files, manifest, warnings = png_zip(page(), baked)
+    assert not warnings
+    assert files["pages/page-002.png"] == baked["image_bytes"]
+    assert "lettering" not in manifest["pages"][1] and manifest["pages"][0]["lettering"] == "drawn"

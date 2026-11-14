@@ -241,10 +241,6 @@ func (s *Server) ExportProject(w http.ResponseWriter, r *http.Request) {
 			stale := false
 			if pg.LetteringMode == "overlay" && pg.LineArtImageURL == "" {
 				mode = gen.PageExportItemLetteringModeOverlay
-				if format == exportFormatPNGZip {
-					problem("overlay_lettering_png", "has overlay lettering, which is only drawn in PDF export. Export a PDF instead.")
-					continue
-				}
 				layer, err = letteringState(pg)
 				if err != nil {
 					stale = true

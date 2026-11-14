@@ -4,8 +4,9 @@
 	import { stageList, quoteStages } from './stages.js';
 	import { Icon, BetaTag, revealCards } from '#lib/design/shell.js';
 	import { ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
-	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote, publishSpend } from '#lib/api/types.js';
+	import { STAGES, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote, publishSpend, INK_OVERLAY_NOTE, isOverlayPage } from '#lib/api/types.js';
 	const INK_VARIANT = 'ink';
+	const PAINTED_VARIANT = 'painted';
 
 	export let project;
 	export let apiClient;
@@ -34,7 +35,7 @@
 		return letteringSessions.get(page.id);
 	}
 	let palette = [];
-	let finishVariant = 'painted';
+	let finishVariant = PAINTED_VARIANT;
 	let rawPreviewByPage = {};
 	let palettesByPage = {};
 	let failedImages = new Set();
@@ -166,6 +167,16 @@
 
 	$: anyLineArtStale = pages.some((p) => isApprovalStale(finishApprovalAt(p), p.updated_at));
 	$: allLineArtApproved = pages.length > 0 && pages.every((p) => hasValidApproval(finishApprovalAt(p), p.updated_at));
+	// Ink is baked-lettering only, so say so up front: overlay pages offer Painted only and
+	// never fail with a 409 at click time.
+	$: overlayPages = pages.filter(isOverlayPage);
+	$: allOverlay = pages.length > 0 && overlayPages.length === pages.length;
+	$: if (allOverlay && finishVariant === INK_VARIANT) finishVariant = PAINTED_VARIANT;
+	$: inkBlockedByOverlay = finishVariant === INK_VARIANT && overlayPages.length > 0;
+	// The variant is a parameter so templates re-evaluate when it changes.
+	function inkBlocked(page, variant) {
+		return variant === INK_VARIANT && isOverlayPage(page);
+	}
 	function finishApprovalAt(page) {
 		if (finishVariant === INK_VARIANT) return page.line_art_approved_at;
 		return page.painted_page_image_url ? page.painted_page_approved_at : page.line_art_approved_at;
@@ -893,7 +904,7 @@
 				<label class="finish-variant">
 					<select bind:value={finishVariant} aria-label="Variant">
 						<option value="painted">Painted</option>
-						<option value="ink">Ink</option>
+						<option value="ink" disabled={allOverlay} title={allOverlay ? INK_OVERLAY_NOTE : undefined}>Ink</option>
 					</select>
 				</label>
 				<div class="header-tags">
@@ -910,6 +921,11 @@
 			{#if anyLineArtStale}
 				<div class="stale-stage-banner">
 					<Icon name="warning" size={18} /> Re-approve.
+				</div>
+			{/if}
+			{#if inkBlockedByOverlay}
+				<div class="stale-stage-banner" role="status">
+					<Icon name="info" size={18} /> {INK_OVERLAY_NOTE}
 				</div>
 			{/if}
 
@@ -940,21 +956,21 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-							<button class="secondary-btn" aria-label="Regenerate" disabled={isJobActive} on:click={() => generateLineArt(page.id)}>
+							<button class="secondary-btn" aria-label="Regenerate" disabled={isJobActive || inkBlocked(page, finishVariant)} title={inkBlocked(page, finishVariant) ? INK_OVERLAY_NOTE : undefined} on:click={() => generateLineArt(page.id)}>
 								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('final_line_art', costQuotes)})
 							</button>
 
 							{#if isApprovalStale(finishApprovalAt(page), page.updated_at)}
 								<div class="stale-action-box">
 									<span class="stale-warning-text"><Icon name="warning" size={18} /> Edited</span>
-									<button class="reapprove-btn" on:click={() => approveLineArt(page.id)}>
+									<button class="reapprove-btn" disabled={inkBlocked(page, finishVariant)} on:click={() => approveLineArt(page.id)}>
 										Re-approve
 									</button>
 								</div>
 							{:else if hasValidApproval(finishApprovalAt(page), page.updated_at)}
 								<span class="status-approved"><Icon name="check" size={18} /> Approved</span>
 							{:else}
-								<button class="approve-btn" on:click={() => approveLineArt(page.id)}>
+								<button class="approve-btn" disabled={inkBlocked(page, finishVariant)} title={inkBlocked(page, finishVariant) ? INK_OVERLAY_NOTE : undefined} on:click={() => approveLineArt(page.id)}>
 									Approve
 								</button>
 							{/if}

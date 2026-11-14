@@ -89,6 +89,38 @@ export function hasValidApproval(approvedAt, updatedAt) {
 	return !isApprovalStale(approvedAt, updatedAt);
 }
 
+// The artwork the server exports for a page: the most recently approved of its line art,
+// uploaded colour and painted page, ignoring approvals that a later edit made stale.
+// Mirrors `approvedArtwork` in backend/internal/api/export.go.
+export function exportArtworkUrl(page) {
+	const candidates = [
+		[page.line_art_image_url, page.line_art_approved_at],
+		[page.colour_image_url, page.colour_approved_at],
+		[page.painted_page_image_url, page.painted_page_approved_at]
+	].filter(([url, approvedAt]) => url && hasValidApproval(approvedAt, page.updated_at));
+	candidates.sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]));
+	return candidates[0]?.[0] || '';
+}
+
+export function isOverlayPage(page) {
+	return page.lettering_mode === 'overlay';
+}
+
+// Overlay lettering is drawn into the export only for pages without line art (painted pages).
+export function exportDrawsLettering(page) {
+	return isOverlayPage(page) && !page.line_art_image_url;
+}
+
+// Ink stays baked-lettering only: the server answers 409 for overlay pages.
+export const INK_OVERLAY_NOTE = 'Ink is not available for overlay-lettered pages. Use Painted.';
+
+export const EXPORT_PREVIEW_NOTES = {
+	noArtwork: 'No approved artwork',
+	letteringFailed: 'Lettering did not load',
+	review: (flags) => `Review: ${flags.join(', ')}`,
+	flagged: 'Flagged in the last export'
+};
+
 export function formatApiError(err) {
 	if (!err) return null;
 	const status = err.status || (err.response && err.response.status) || 0;
