@@ -58,15 +58,15 @@ button, input, textarea, select { font: inherit; color: inherit; }
 button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 button, a { touch-action: manipulation; }
 button { cursor: pointer; }
-button, .download-link {
+button, .download-link, .file-button {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 42px; padding: 9px 15px; border: 1px solid var(--line);
   border-radius: 5px 7px 4px 6px; background: var(--sheet); color: var(--ink);
   font-size: 13px; line-height: 1.4; font-weight: 600; text-decoration: none;
   transition: background-color 160ms, box-shadow 160ms, transform 160ms;
 }
-button:hover:not(:disabled), .download-link:hover { background: var(--sage); box-shadow: 0 2px 0 var(--ink); transform: translateY(-1px); }
-button:active:not(:disabled), .download-link:active { transform: translateY(1px); box-shadow: none; }
+button:hover:not(:disabled), .download-link:hover, .file-button:hover:not(.disabled) { background: var(--sage); box-shadow: 0 2px 0 var(--ink); transform: translateY(-1px); }
+button:active:not(:disabled), .download-link:active, .file-button:active:not(.disabled) { transform: translateY(1px); box-shadow: none; }
 button:disabled { color: var(--muted); background: #F8F4EE; border-color: var(--line); cursor: not-allowed; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
 input, select, textarea {
@@ -161,7 +161,7 @@ small { font-size: 12px; color: var(--muted); }
 .approve-btn, .download-link { color: var(--ink); background: var(--sage); border-color: var(--ink); }
 .approve-btn:hover:not(:disabled), .download-link:hover { background: #F8F4EE; }
 .reapprove-btn { color: var(--ink); background: var(--warning-soft); border-color: var(--ink); }
-.small, .edit-icon-btn, .small-btn { min-height: 36px; padding: 6px 10px; font-size: 12px; }
+.small, .edit-icon-btn, .small-btn, .file-button.small { min-height: 36px; padding: 6px 10px; font-size: 12px; }
 .edit-icon-btn { background: transparent; border-color: var(--line); }
 .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 24px; }
 .character-card {
@@ -448,7 +448,7 @@ h1, h2, h3 { overflow-wrap: anywhere; text-wrap: pretty; }
 .save-status.save-failed { color: var(--warning); font-weight: 650; }
 .script-import { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .file-input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.file-button { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.file-button { cursor: pointer; }
 .file-input:focus-visible + .file-button { outline: 2px solid var(--ink); outline-offset: 2px; }
 .file-button.disabled { opacity: .45; cursor: not-allowed; }
 .import-note { font-size: 12px; color: var(--muted); }
