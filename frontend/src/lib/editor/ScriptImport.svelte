@@ -44,15 +44,15 @@
 	</label>
 
 	{#if waiting}
-		<div class="import-confirm" role="alertdialog" aria-label="Replace the script">
-			<p><Icon name="warning" size={18} /> Replace the current script with {waiting.name} ({waiting.words.toLocaleString('en-US')} words)?</p>
+		<div class="import-confirm" role="alertdialog" aria-label="Confirm replace">
+			<p><Icon name="warning" size={18} /> Replace the script with {waiting.name}?</p>
 			<div class="edit-actions">
-				<button type="button" class="primary-btn small" on:click={() => accept(waiting)}>Replace script</button>
-				<button type="button" class="secondary-btn small" on:click={() => (waiting = null)}>Keep current script</button>
+				<button type="button" class="primary-btn small" on:click={() => accept(waiting)}>Replace</button>
+				<button type="button" class="secondary-btn small" on:click={() => (waiting = null)}>Keep</button>
 			</div>
 		</div>
 	{:else if imported}
-		<span class="import-note" role="status">Imported {imported.name}, {imported.words.toLocaleString('en-US')} words.</span>
+		<span class="import-note" role="status">Imported {imported.name}.</span>
 	{/if}
 	{#if problem}
 		<p class="import-problem" role="alert"><Icon name="warning" size={18} /> {problem}</p>

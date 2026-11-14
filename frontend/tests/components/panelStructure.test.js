@@ -82,14 +82,14 @@ it('asks before deleting a panel and deletes only on confirmation', async () => 
 	const { apiClient, calls } = backend();
 	const view = await open(apiClient);
 	await fireEvent.click(await view.findByRole('button', { name: 'Delete panel 2' }));
-	expect(view.getByRole('alertdialog', { name: 'Delete panel 2' }).textContent).toContain('need their drafts and approvals again');
+	expect(view.getByRole('alertdialog', { name: 'Confirm delete' }).textContent).toContain('Its pages need approval again');
 	expect(calls).toEqual([]);
-	await fireEvent.click(view.getByRole('button', { name: 'Keep panel' }));
+	await fireEvent.click(view.getByRole('button', { name: 'Keep' }));
 	expect(view.queryByRole('alertdialog')).toBeNull();
 	expect(calls).toEqual([]);
 
 	await fireEvent.click(view.getByRole('button', { name: 'Delete panel 2' }));
-	await fireEvent.click(view.getByRole('button', { name: 'Delete panel' }));
+	await fireEvent.click(view.getByRole('button', { name: 'Delete' }));
 	await vi.waitFor(() => expect(calls).toEqual([['delete', 'chap-1', 'panel-2']]));
 	await vi.waitFor(() => expect(view.queryByRole('alertdialog')).toBeNull());
 });
@@ -102,17 +102,17 @@ it('adds a panel to a chosen page and needs a scene first', async () => {
 	expect(add.disabled).toBe(true);
 	await fireEvent.input(view.getByLabelText(/^Scene:/), { target: { value: '  A gull lands  ' } });
 	await fireEvent.input(view.getByLabelText(/^Dialogue:/), { target: { value: 'Gull: Hello' } });
-	expect(view.getByLabelText(/^Place on:/).value).toBe('page-2');
+	expect(view.getByLabelText(/^Page:/).value).toBe('page-2');
 	await fireEvent.click(add);
 	await vi.waitFor(() => expect(calls).toEqual([['add', 'chap-1', { scene_description: 'A gull lands', dialogue: 'Gull: Hello', page_id: 'page-2' }]]));
-	await vi.waitFor(() => expect(view.queryByLabelText(/^Place on:/)).toBeNull());
+	await vi.waitFor(() => expect(view.queryByLabelText(/^Page:/)).toBeNull());
 });
 
 it('adds a panel on a new page by leaving out the page', async () => {
 	const { apiClient, calls } = backend();
 	const view = await open(apiClient);
 	await fireEvent.click(await view.findByRole('button', { name: /Add panel/ }));
-	await choose(view.getByLabelText(/^Place on:/), 'new');
+	await choose(view.getByLabelText(/^Page:/), 'new');
 	await fireEvent.input(view.getByLabelText(/^Scene:/), { target: { value: 'The lighthouse' } });
 	await fireEvent.click(view.getByRole('button', { name: 'Add panel' }));
 	await vi.waitFor(() => expect(calls).toEqual([['add', 'chap-1', { scene_description: 'The lighthouse' }]]));
@@ -128,12 +128,12 @@ it('shows a refusal, keeps the form and the panel, and reloads what is stored', 
 	const view = await open(apiClient);
 	await fireEvent.click(await view.findByRole('button', { name: 'Delete panel 3' }));
 	const before = loads;
-	await fireEvent.click(view.getByRole('button', { name: 'Delete panel' }));
+	await fireEvent.click(view.getByRole('button', { name: 'Delete' }));
 	await view.findByText(/generated art/);
 	expect(loads).toBeGreaterThan(before);
 	expect(view.getByRole('alertdialog')).toBeTruthy();
 
-	await press(view, 'Keep panel');
+	await press(view, 'Keep');
 	await press(view, /Add panel/);
 	await fireEvent.input(view.getByLabelText(/^Scene:/), { target: { value: 'One more' } });
 	await fireEvent.click(view.getByRole('button', { name: 'Add panel' }));

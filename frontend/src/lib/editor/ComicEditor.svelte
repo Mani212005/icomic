@@ -941,8 +941,8 @@
 									</div>
 								{:else}
 									<div class="panel-tools">
-										<button class="edit-icon-btn" aria-label="Move panel {panel.panel_number} up" title="Move up" disabled={layoutBusy || !moveTarget(pagesOfChapter, panel.id, 'up')} on:click={() => stepPanel(panel, 'up')}><span class="turn-up"><Icon name="arrow" size={18} /></span></button>
-										<button class="edit-icon-btn" aria-label="Move panel {panel.panel_number} down" title="Move down" disabled={layoutBusy || !moveTarget(pagesOfChapter, panel.id, 'down')} on:click={() => stepPanel(panel, 'down')}><span class="turn-down"><Icon name="arrow" size={18} /></span></button>
+										<button class="edit-icon-btn" aria-label="Move panel {panel.panel_number} up" disabled={layoutBusy || !moveTarget(pagesOfChapter, panel.id, 'up')} on:click={() => stepPanel(panel, 'up')}><span class="turn-up"><Icon name="arrow" size={18} /></span></button>
+										<button class="edit-icon-btn" aria-label="Move panel {panel.panel_number} down" disabled={layoutBusy || !moveTarget(pagesOfChapter, panel.id, 'down')} on:click={() => stepPanel(panel, 'down')}><span class="turn-down"><Icon name="arrow" size={18} /></span></button>
 										<button class="edit-icon-btn" on:click={() => startEditPanel(panel)} ><Icon name="edit" size={18} /> Edit</button>
 										<button class="edit-icon-btn" aria-label="Delete panel {panel.panel_number}" disabled={layoutBusy} on:click={() => (deletingPanelId = panel.id)}><Icon name="delete" size={18} /> Delete</button>
 									</div>
@@ -950,11 +950,11 @@
 							</div>
 
 							{#if deletingPanelId === panel.id}
-								<div class="panel-confirm" role="alertdialog" aria-label="Delete panel {panel.panel_number}">
-									<p><Icon name="warning" size={18} /> Delete panel {panel.panel_number}? The pages that hold it need their drafts and approvals again.</p>
+								<div class="panel-confirm" role="alertdialog" aria-label="Confirm delete">
+									<p><Icon name="warning" size={18} /> Delete panel {panel.panel_number}? Its pages need approval again.</p>
 									<div class="edit-actions">
-										<button class="primary-btn small" disabled={layoutBusy} on:click={() => deletePanel(panel)}>Delete panel</button>
-										<button class="secondary-btn small" disabled={layoutBusy} on:click={() => (deletingPanelId = null)}>Keep panel</button>
+										<button class="primary-btn small" disabled={layoutBusy} on:click={() => deletePanel(panel)}>Delete</button>
+										<button class="secondary-btn small" disabled={layoutBusy} on:click={() => (deletingPanelId = null)}>Keep</button>
 									</div>
 								</div>
 							{/if}
@@ -985,15 +985,15 @@
 					{/each}
 
 					{#if addingToChapterId === chapter.id}
-						<div class="panel-card panel-add" role="group" aria-label="Add a panel to chapter {chapter.chapter_number}">
-							<div class="panel-header-row"><span class="panel-num">New panel, chapter {chapter.chapter_number}</span></div>
+						<div class="panel-card panel-add" role="group" aria-label="New panel">
+							<div class="panel-header-row"><span class="panel-num">New panel</span></div>
 							<div class="panel-edit-form">
-								<label>Place on:
+								<label>Page:
 									<select bind:value={addPanelPageId}>
 										{#each pagesOfChapter as pageOption (pageOption.id)}
-											<option value={pageOption.id}>Page {pageOption.page_number}, after its {pageOption.panel_ids?.length ?? 0} panels</option>
+											<option value={pageOption.id}>Page {pageOption.page_number}</option>
 										{/each}
-										<option value={NEW_PAGE}>A new page at the end</option>
+										<option value={NEW_PAGE}>New page</option>
 									</select>
 								</label>
 								{#each PANEL_FIELDS as [key, label, multiline]}
@@ -1005,8 +1005,7 @@
 										{/if}
 									</label>
 								{/each}
-								<small>A scene is needed so the draft has something to draw. Other fields can stay empty.</small>
-								<div class="edit-actions">
+																<div class="edit-actions">
 									<button class="primary-btn small" disabled={layoutBusy || !addPanelForm.scene_description.trim()} on:click={() => addPanel(chapter.id)}>Add panel</button>
 									<button class="secondary-btn small" disabled={layoutBusy} on:click={() => (addingToChapterId = null)}>Cancel</button>
 								</div>
@@ -1014,7 +1013,7 @@
 						</div>
 					{:else}
 						<button class="secondary-btn small add-panel-btn" disabled={layoutBusy} on:click={() => startAddPanel(chapter)}>
-							<Icon name="plus" size={18} /> Add panel{chapters.length > 1 ? ` to chapter ${chapter.chapter_number}` : ''}
+							<Icon name="plus" size={18} /> Add panel{chapters.length > 1 ? ` (chapter ${chapter.chapter_number})` : ''}
 						</button>
 					{/if}
 				</div>

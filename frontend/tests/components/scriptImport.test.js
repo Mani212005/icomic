@@ -30,7 +30,7 @@ it('imports a Markdown file into the script exactly as written and saves it at o
 	const view = open(apiClient, { ...PROJECT, original_script: '' });
 	const markdown = '# The bird\r\n\r\nNia finds a *brass* bird.\r\n';
 	await pick(view, new File([markdown], 'bird.md', { type: 'text/markdown' }));
-	await view.findByText('Imported bird.md, 8 words.');
+	await view.findByText('Imported bird.md.');
 	expect(view.getByLabelText('Script').value).toBe(markdown);
 	await vi.waitFor(() => expect(apiClient.updateProject).toHaveBeenCalledTimes(1));
 	expect(apiClient.updateProject.mock.calls[0][1].original_script).toBe(markdown);
@@ -41,17 +41,17 @@ it('asks before replacing a script that already has text, and keeps it when decl
 	const apiClient = backend();
 	const view = open(apiClient);
 	await pick(view, new File(['A different story.'], 'other.txt', { type: 'text/plain' }));
-	const confirm = await view.findByRole('alertdialog', { name: 'Replace the script' });
-	expect(confirm.textContent).toContain('other.txt (3 words)');
+	const confirm = await view.findByRole('alertdialog', { name: 'Confirm replace' });
+	expect(confirm.textContent).toContain('other.txt');
 	expect(view.getByLabelText('Script').value).toBe(PROJECT.original_script);
 	expect(apiClient.updateProject).not.toHaveBeenCalled();
 
-	await fireEvent.click(view.getByRole('button', { name: 'Keep current script' }));
+	await fireEvent.click(view.getByRole('button', { name: 'Keep' }));
 	expect(view.queryByRole('alertdialog')).toBeNull();
 	expect(view.getByLabelText('Script').value).toBe(PROJECT.original_script);
 
 	await pick(view, new File(['A different story.'], 'other.txt', { type: 'text/plain' }));
-	await fireEvent.click(await view.findByRole('button', { name: 'Replace script' }));
+	await fireEvent.click(await view.findByRole('button', { name: 'Replace' }));
 	expect(view.getByLabelText('Script').value).toBe('A different story.');
 	await vi.waitFor(() => expect(apiClient.updateProject.mock.calls.at(-1)[1].original_script).toBe('A different story.'));
 });
