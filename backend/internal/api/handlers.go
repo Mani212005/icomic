@@ -1264,10 +1264,7 @@ func (s *Server) GeneratePanels(w http.ResponseWriter, r *http.Request) {
 			PanelIDs:   pids[i:end],
 			UpdatedAt:  now,
 		}
-		pg.LetteringMode = "baked"
-		if s.LetteringOverlayEnabled && proj.LetteringMode == "overlay" {
-			pg.LetteringMode = "overlay"
-		}
+		pg.LetteringMode = s.newPageLetteringMode(proj)
 		pages = append(pages, pg)
 		pageNum++
 	}

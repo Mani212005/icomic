@@ -113,13 +113,15 @@ Supported input:
 - TXT file
 - PDF file
 
+The editor imports a TXT or Markdown file through a file picker, on the Script stage and in the new project dialog. The text is read in the browser and kept exactly as written (only a byte order mark is dropped), so the stored original script is the file's own text, and it goes through the same save and validation as typed text. A file over the script byte limit (`MAX_SCRIPT_BYTES`, 512 KiB by default, the same limit the API applies to `original_script`) or word limit, an empty file, one that is not UTF-8 text or contains binary data, or any other type is refused with a message and nothing changes. Importing over existing text asks first. PDF import is not implemented: it would need a PDF text parser, and a scanned PDF would need OCR, which the product does not run, so a PDF is refused with advice to paste the text or save it as TXT or Markdown.
+
 The system must:
 
 - Validate the script.
 - Reject empty input.
 - Display the script word count.
 - Allow the user to edit the script.
-- Save the script to the project.
+- Save the script to the project. The editor saves the Script stage's title, style, chapter count and script on its own after a pause in typing (about one second), and shows Unsaved changes, Saving, Saved, or Not saved with the reason and a Retry. Character, outline and panel edit forms autosave the same way; their Save button saves at once and closes the form. Saves are sent one at a time in edit order, so a slow earlier save cannot overwrite a newer edit and its answer never marks newer edits as saved. Leaving the page with unsaved or failed edits asks for confirmation.
 
 The system must preserve the original script.
 
@@ -228,6 +230,11 @@ The system provides endpoints to inspect and adjust page allocations:
 - The user can retrieve chapter pages and their assigned panels (`GET /api/v1/chapters/:id/pages`).
 - The user can move panels between pages or reorder panels before initiating draft generation (`PATCH /api/v1/pages/:id`).
   The request carries the page's complete ordered `panel_ids`; naming a panel that sits on another page moves it. Every panel of a chapter stays on exactly one page, unknown, foreign or repeated IDs, over-full pages and emptied pages are rejected, and the move is applied atomically. Changing a page's allocation stales its draft, line art and painted approvals.
+- The user can add and delete panels and move one panel at a time, all scoped to the chapter. Each is one atomic edit that stales the draft, line art and painted approvals of every page it changes, and numbers pages and panels again in reading order, so panel numbers always run 1 to N page by page.
+  - `POST /api/v1/chapters/:id/panels/add` stores a new panel with a required `scene_description` at `position` on `page_id`, or alone on a new last page when `page_id` is left out. A page holds at most the configured maximum.
+  - `POST /api/v1/chapters/:id/panels/move` places `panel_id` at `position` on `page_id`, which reorders it within its page or moves it to another. It follows the same rules as `PATCH /api/v1/pages/:id`.
+  - `DELETE /api/v1/chapters/:id/panels/:panel_id` removes the panel. A page whose last panel goes is removed with it, unless that page holds generated art: the request is then refused with HTTP 409 and nothing is deleted, because it would delete paid work.
+  - The editor asks for confirmation before deleting a panel.
 
 ### 3.6 Draft Sketch Stage
 

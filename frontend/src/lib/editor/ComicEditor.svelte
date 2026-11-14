@@ -1,7 +1,11 @@
 <script>
-	import { tick } from 'svelte';
+	import { tick, onMount, onDestroy } from 'svelte';
 	import ErrorBanner from './ErrorBanner.svelte';
+	import SaveStatus from './SaveStatus.svelte';
+	import ScriptImport from './ScriptImport.svelte';
+	import { Autosaver, SAVE } from './autosave.js';
 	import { PANEL_FIELDS, emptyPanelForm } from './panelFields.js';
+	import { pageOfPanel, moveTarget } from './panelLayout.js';
 	import { stageList, quoteStages } from './stages.js';
 	import { Icon, BetaTag, revealCards } from '#lib/design/shell.js';
 	import { ApprovalTag, ApprovalAction, ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
@@ -9,6 +13,7 @@
 	const GENERATING = 'Generating…';
 	const INK_VARIANT = 'ink';
 	const PAINTED_VARIANT = 'painted';
+	const NEW_PAGE = 'new';
 
 	export let project;
 	export let apiClient;
@@ -89,6 +94,56 @@
 	let editPanelForm = emptyPanelForm();
 	// What the last analysis said about the script, shown on the Characters stage it leads to.
 	let analysisWarnings = [];
+
+	// Autosave. Each editable surface has one Autosaver, which saves after a pause in typing, one request at
+	// a time, so a slow earlier save cannot overwrite a newer edit. The explicit Save button saves at once.
+	const idleSave = { state: SAVE.IDLE, error: null };
+	const savers = () => [scriptSaver, charSaver, chapSaver, panelSaver].filter(Boolean);
+	let scriptSaver = null;
+	let scriptSave = idleSave;
+	let charSaver = null;
+	let charSave = idleSave;
+	let chapSaver = null;
+	let chapSave = idleSave;
+	let panelSaver = null;
+	let panelSave = idleSave;
+	let lastChapterCount = 1;
+	// The fields the Script stage edits. A chapter count that is not a whole number of at least 1 is a
+	// half-typed value, so the last good one stands in for it.
+	function scriptDraft(source) {
+		const count = Math.floor(Number(source.chapter_count));
+		if (count >= 1) lastChapterCount = count;
+		return {
+			title: source.title ?? '',
+			art_style: source.art_style ?? '',
+			chapter_count: lastChapterCount,
+			original_script: source.original_script ?? source.script ?? ''
+		};
+	}
+	function watchScript(source) {
+		scriptSaver?.dispose();
+		const id = source.id;
+		lastChapterCount = Math.max(1, Math.floor(Number(source.chapter_count)) || 1);
+		scriptSaver = new Autosaver({
+			saved: scriptDraft(source),
+			save: (draft) => apiClient.updateProject(id, draft),
+			onChange: (state, error) => (scriptSave = { state, error })
+		});
+		scriptSave = idleSave;
+	}
+	// Leaving with edits unsaved or failing is worth a warning; a save in flight finishes on its own.
+	function warnUnsaved(event) {
+		if (savers().some((saver) => saver.dirty || saver.state === SAVE.ERROR)) {
+			event.preventDefault();
+			event.returnValue = '';
+		}
+	}
+	onMount(() => {
+		window.addEventListener('beforeunload', warnUnsaved);
+		return () => window.removeEventListener('beforeunload', warnUnsaved);
+	});
+	onDestroy(() => savers().forEach((saver) => saver.dispose()));
+	const retry = (saver) => saver?.retry().catch(() => {});
 
 	function normalizePalette(rawPalette) {
 		if (Array.isArray(rawPalette)) return rawPalette;
@@ -206,9 +261,11 @@
 		letteringSessions = new Map();
 		exportCompleted = false;
 		analysisWarnings = [];
+		watchScript(project);
 		reloadProjectData();
 		runner.setProject(project.id);
 	}
+	$: if (scriptSaver && project) scriptSaver.update(scriptDraft(project));
 
 	export async function reloadProjectData() {
 		if (!apiClient || !project || !project.id) return;
@@ -293,6 +350,7 @@
 			label: 'Script',
 			status: 'Analyzing…',
 			start: async () => {
+				await scriptSaver?.flush().catch(() => {});
 				await apiClient.updateProject(project.id, {
 					title: project.title,
 					art_style: project.art_style,
@@ -305,6 +363,13 @@
 				return receipt;
 			}
 		});
+	}
+
+	// An imported file replaces the script as written and is saved at once, not after the typing pause.
+	async function importScript(text) {
+		project.original_script = text;
+		await tick();
+		await scriptSaver?.flush().catch(() => {});
 	}
 
 	function regenerateCharacterReference(charId) {
@@ -329,6 +394,7 @@
 	}
 
 	function startEditChar(char) {
+		charSaver?.dispose();
 		editingCharId = char.id;
 		editCharForm = {
 			name: char.name || '',
@@ -336,29 +402,31 @@
 			appearance: (char.visual_attributes && char.visual_attributes.appearance) || char.appearance || '',
 			clothing: (char.visual_attributes && char.visual_attributes.clothing) || char.clothing || ''
 		};
-	}
-
-	function cancelEditChar() {
-		editingCharId = null;
-	}
-
-	async function saveEditChar(charId) {
-		jobError = null;
-		try {
-			await apiClient.updateCharacter(charId, {
-				name: editCharForm.name,
-				description: editCharForm.description,
+		charSave = idleSave;
+		charSaver = new Autosaver({
+			saved: { ...editCharForm },
+			save: (form) => apiClient.updateCharacter(char.id, {
+				name: form.name,
+				description: form.description,
 				// The server merges these into the stored attributes, so age, hair, reference role and
 				// anything else the form does not show are kept.
-				visual_attributes: {
-					appearance: editCharForm.appearance,
-					clothing: editCharForm.clothing
-				}
-			});
+				visual_attributes: { appearance: form.appearance, clothing: form.clothing }
+			}),
+			onChange: (state, error) => (charSave = { state, error })
+		});
+	}
+	$: if (charSaver) charSaver.update({ ...editCharForm });
+
+	async function saveEditChar() {
+		jobError = null;
+		try {
+			await charSaver.flush();
+			charSaver.dispose();
+			charSaver = null;
 			editingCharId = null;
 			await reloadProjectData();
-		} catch (err) {
-			jobError = formatApiError(err);
+		} catch {
+			// The form stays open and shows what failed, with Retry.
 		}
 	}
 
@@ -411,6 +479,7 @@
 	const fromLines = (text) => text.split('\n').map((line) => line.trim()).filter(Boolean);
 
 	function startEditChap(chap) {
+		chapSaver?.dispose();
 		editingChapId = chap.id;
 		editChapForm = {
 			title: chap.title || '',
@@ -419,52 +488,110 @@
 			cast: toLines(chap.character_names),
 			ending: chap.ending || ''
 		};
+		chapSave = idleSave;
+		chapSaver = new Autosaver({
+			saved: { ...editChapForm },
+			save: (form) => apiClient.updateChapter(chap.id, {
+				title: form.title,
+				summary: form.summary,
+				important_events: fromLines(form.events),
+				character_names: fromLines(form.cast),
+				ending: form.ending
+			}),
+			onChange: (state, error) => (chapSave = { state, error })
+		});
 	}
+	$: if (chapSaver) chapSaver.update({ ...editChapForm });
 
-	function cancelEditChap() {
-		editingChapId = null;
-	}
-
-	async function saveEditChap(chapId) {
+	async function saveEditChap() {
 		jobError = null;
 		try {
-			await apiClient.updateChapter(chapId, {
-				title: editChapForm.title,
-				summary: editChapForm.summary,
-				important_events: fromLines(editChapForm.events),
-				character_names: fromLines(editChapForm.cast),
-				ending: editChapForm.ending
-			});
+			await chapSaver.flush();
+			chapSaver.dispose();
+			chapSaver = null;
 			editingChapId = null;
 			await reloadProjectData();
-		} catch (err) {
-			jobError = formatApiError(err);
+		} catch {
+			// The form stays open and shows what failed, with Retry.
 		}
 	}
 
-	function startEditPanel(panel) {
-		editingPanelId = panel.id;
-		editPanelForm = Object.fromEntries(PANEL_FIELDS.map(([key]) => [key, panel[key] || '']));
-	}
+	// Structure edits (add, move, delete) are one request each; the server stales every page they change.
+	// They run one at a time, and the chapter is reloaded after each, even after a refusal, so the screen
+	// shows what is stored if another tab changed the layout meanwhile.
+	let layoutBusy = false;
+	let deletingPanelId = null;
+	let addingToChapterId = null;
+	let addPanelForm = emptyPanelForm();
+	let addPanelPageId = NEW_PAGE;
+	const chapterPages = (chapterId, allPages) => allPages.filter((page) => page.chapter_id === chapterId);
+	const hasPanels = (chapterId, allPanels) => allPanels.some((panel) => panel.chapter_id === chapterId);
 
-	function cancelEditPanel() {
-		editingPanelId = null;
-	}
-
-	async function saveEditPanel(panelId) {
+	async function editLayout(edit) {
 		jobError = null;
+		layoutBusy = true;
+		let done = false;
 		try {
-			// Only fields that changed are sent: any save marks the pages holding the panel as edited,
-			// so a save with nothing changed must not undo their approvals.
-			const stored = panels.find((panel) => panel.id === panelId) || {};
-			const changes = Object.fromEntries(
-				PANEL_FIELDS.filter(([key]) => editPanelForm[key] !== (stored[key] || '')).map(([key]) => [key, editPanelForm[key]])
-			);
-			if (Object.keys(changes).length > 0) await apiClient.updatePanel(panelId, changes);
-			editingPanelId = null;
-			await reloadProjectData();
+			await edit();
+			done = true;
 		} catch (err) {
 			jobError = formatApiError(err);
+		}
+		await reloadProjectData();
+		layoutBusy = false;
+		return done;
+	}
+
+	function stepPanel(panel, direction) {
+		const target = moveTarget(chapterPages(panel.chapter_id, pages), panel.id, direction);
+		if (target) editLayout(() => apiClient.movePanel(panel.chapter_id, panel.id, target.pageId, target.position));
+	}
+
+	async function deletePanel(panel) {
+		if (await editLayout(() => apiClient.deletePanel(panel.chapter_id, panel.id))) deletingPanelId = null;
+	}
+
+	function startAddPanel(chapter) {
+		const last = chapterPages(chapter.id, pages).at(-1);
+		addingToChapterId = chapter.id;
+		addPanelForm = emptyPanelForm();
+		addPanelPageId = last ? last.id : NEW_PAGE;
+	}
+
+	async function addPanel(chapterId) {
+		const fields = Object.fromEntries(PANEL_FIELDS.map(([key]) => [key, addPanelForm[key].trim()]).filter(([, value]) => value));
+		const payload = addPanelPageId === NEW_PAGE ? fields : { ...fields, page_id: addPanelPageId };
+		if (await editLayout(() => apiClient.addPanel(chapterId, payload))) addingToChapterId = null;
+	}
+
+	function startEditPanel(panel) {
+		panelSaver?.dispose();
+		editingPanelId = panel.id;
+		editPanelForm = Object.fromEntries(PANEL_FIELDS.map(([key]) => [key, panel[key] || '']));
+		panelSave = idleSave;
+		panelSaver = new Autosaver({
+			saved: { ...editPanelForm },
+			// Only fields that changed are sent: any save marks the pages holding the panel as edited, so a
+			// save with nothing changed must not undo their approvals.
+			save: async (form, stored) => {
+				const changes = Object.fromEntries(PANEL_FIELDS.filter(([key]) => form[key] !== stored[key]).map(([key]) => [key, form[key]]));
+				if (Object.keys(changes).length > 0) await apiClient.updatePanel(panel.id, changes);
+			},
+			onChange: (state, error) => (panelSave = { state, error })
+		});
+	}
+	$: if (panelSaver) panelSaver.update({ ...editPanelForm });
+
+	async function saveEditPanel() {
+		jobError = null;
+		try {
+			await panelSaver.flush();
+			panelSaver.dispose();
+			panelSaver = null;
+			editingPanelId = null;
+			await reloadProjectData();
+		} catch {
+			// The form stays open and shows what failed, with Retry.
 		}
 	}
 
@@ -577,6 +704,7 @@
 			<header class="section-header">
 				<h2>Script</h2>
 				<span class="meta-info">Words: <strong>{scriptWordCount}</strong></span>
+				<SaveStatus state={scriptSave.state} error={scriptSave.error} onRetry={() => retry(scriptSaver)} />
 			</header>
 
 			<div class="form-grid">
@@ -608,6 +736,7 @@
 					rows="8"
 					bind:value={project.original_script}
 				></textarea>
+				<ScriptImport current={project.original_script || ''} disabled={isJobActive} onImport={importScript} />
 			</div>
 
 			<div class="section-actions">
@@ -661,8 +790,8 @@
 								<label>Look: <input type="text" bind:value={editCharForm.appearance} /></label>
 								<label>Clothes: <input type="text" bind:value={editCharForm.clothing} /></label>
 								<div class="edit-actions">
-									<button class="primary-btn small" on:click={() => saveEditChar(char.id)}>Save</button>
-									<button class="secondary-btn small" on:click={cancelEditChar}>Cancel</button>
+									<button class="primary-btn small" on:click={saveEditChar}>Save</button>
+									<SaveStatus state={charSave.state} error={charSave.error} onRetry={() => retry(charSaver)} />
 								</div>
 							</div>
 						{:else}
@@ -729,8 +858,8 @@
 							{#if editingChapId === chap.id}
 								<div class="chap-edit-row">
 									<input type="text" bind:value={editChapForm.title} />
-									<button class="primary-btn small" on:click={() => saveEditChap(chap.id)}>Save</button>
-									<button class="secondary-btn small" on:click={cancelEditChap}>Cancel</button>
+									<button class="primary-btn small" on:click={saveEditChap}>Save</button>
+									<SaveStatus state={chapSave.state} error={chapSave.error} onRetry={() => retry(chapSaver)} />
 								</div>
 							{:else}
 								<h3>Chapter {chap.chapter_number}: {chap.title}</h3>
@@ -796,46 +925,99 @@
 				<button class="primary-btn" on:click={generatePanels} disabled={isJobActive || !allChaptersApproved}>Panels</button>
 			{/if}
 			{#if panels.length === 0}<div class="stage-empty"><Icon name="panels" size={48} /></div>{/if}
-			<div class="panels-list">
-				{#each panels as panel}
-					<div class="panel-card">
-						<div class="panel-header-row">
-							<span class="panel-num">Chapter {panel.chapter_number}, Panel {panel.panel_number}</span>
+			{#each chapters.filter((chapter) => hasPanels(chapter.id, panels)) as chapter (chapter.id)}
+				{@const chapterPanels = panels.filter((panel) => panel.chapter_id === chapter.id)}
+				{@const pagesOfChapter = chapterPages(chapter.id, pages)}
+				<div class="panels-list">
+					{#each chapterPanels as panel (panel.id)}
+						{@const page = pageOfPanel(pagesOfChapter, panel.id)}
+						<div class="panel-card">
+							<div class="panel-header-row">
+								<span class="panel-num">Chapter {panel.chapter_number}, Panel {panel.panel_number}{#if page} <span class="page-chip">Page {page.page_number}</span>{/if}</span>
+								{#if editingPanelId === panel.id}
+									<div class="panel-edit-btns">
+										<button class="primary-btn small" on:click={saveEditPanel}>Save</button>
+										<SaveStatus state={panelSave.state} error={panelSave.error} onRetry={() => retry(panelSaver)} />
+									</div>
+								{:else}
+									<div class="panel-tools">
+										<button class="edit-icon-btn" aria-label="Move panel {panel.panel_number} up" disabled={layoutBusy || !moveTarget(pagesOfChapter, panel.id, 'up')} on:click={() => stepPanel(panel, 'up')}><span class="turn-up"><Icon name="arrow" size={18} /></span></button>
+										<button class="edit-icon-btn" aria-label="Move panel {panel.panel_number} down" disabled={layoutBusy || !moveTarget(pagesOfChapter, panel.id, 'down')} on:click={() => stepPanel(panel, 'down')}><span class="turn-down"><Icon name="arrow" size={18} /></span></button>
+										<button class="edit-icon-btn" on:click={() => startEditPanel(panel)} ><Icon name="edit" size={18} /> Edit</button>
+										<button class="edit-icon-btn" aria-label="Delete panel {panel.panel_number}" disabled={layoutBusy} on:click={() => (deletingPanelId = panel.id)}><Icon name="delete" size={18} /> Delete</button>
+									</div>
+								{/if}
+							</div>
+
+							{#if deletingPanelId === panel.id}
+								<div class="panel-confirm" role="alertdialog" aria-label="Confirm delete">
+									<p><Icon name="warning" size={18} /> Delete panel {panel.panel_number}? Its pages need approval again.</p>
+									<div class="edit-actions">
+										<button class="primary-btn small" disabled={layoutBusy} on:click={() => deletePanel(panel)}>Delete</button>
+										<button class="secondary-btn small" disabled={layoutBusy} on:click={() => (deletingPanelId = null)}>Keep</button>
+									</div>
+								</div>
+							{/if}
+
 							{#if editingPanelId === panel.id}
-								<div class="panel-edit-btns">
-									<button class="primary-btn small" on:click={() => saveEditPanel(panel.id)}>Save</button>
-									<button class="secondary-btn small" on:click={cancelEditPanel}>Cancel</button>
+								<div class="panel-edit-form">
+									{#each PANEL_FIELDS as [key, label, multiline]}
+										<label>{label}:
+											{#if multiline}
+												<textarea rows="2" bind:value={editPanelForm[key]}></textarea>
+											{:else}
+												<input type="text" bind:value={editPanelForm[key]} />
+											{/if}
+										</label>
+									{/each}
 								</div>
 							{:else}
-								<button class="edit-icon-btn" on:click={() => startEditPanel(panel)} ><Icon name="edit" size={18} /> Edit</button>
+								<div class="panel-content">
+									{#each PANEL_FIELDS as [key, label]}
+										<p class:prompt-text={key === 'image_prompt'}>
+											<strong>{label}:</strong>
+											<span class:narration={key === 'narration'}>{key === 'dialogue' ? `"${panel[key]}"` : panel[key]}</span>
+										</p>
+									{/each}
+								</div>
 							{/if}
 						</div>
+					{/each}
 
-						{#if editingPanelId === panel.id}
+					{#if addingToChapterId === chapter.id}
+						<div class="panel-card panel-add" role="group" aria-label="New panel">
+							<div class="panel-header-row"><span class="panel-num">New panel</span></div>
 							<div class="panel-edit-form">
+								<label>Page:
+									<select bind:value={addPanelPageId}>
+										{#each pagesOfChapter as pageOption (pageOption.id)}
+											<option value={pageOption.id}>Page {pageOption.page_number}</option>
+										{/each}
+										<option value={NEW_PAGE}>New page</option>
+									</select>
+								</label>
 								{#each PANEL_FIELDS as [key, label, multiline]}
 									<label>{label}:
 										{#if multiline}
-											<textarea rows="2" bind:value={editPanelForm[key]}></textarea>
+											<textarea rows="2" bind:value={addPanelForm[key]}></textarea>
 										{:else}
-											<input type="text" bind:value={editPanelForm[key]} />
+											<input type="text" bind:value={addPanelForm[key]} />
 										{/if}
 									</label>
 								{/each}
+																<div class="edit-actions">
+									<button class="primary-btn small" disabled={layoutBusy || !addPanelForm.scene_description.trim()} on:click={() => addPanel(chapter.id)}>Add panel</button>
+									<button class="secondary-btn small" disabled={layoutBusy} on:click={() => (addingToChapterId = null)}>Cancel</button>
+								</div>
 							</div>
-						{:else}
-							<div class="panel-content">
-								{#each PANEL_FIELDS as [key, label]}
-									<p class:prompt-text={key === 'image_prompt'}>
-										<strong>{label}:</strong>
-										<span class:narration={key === 'narration'}>{key === 'dialogue' ? `"${panel[key]}"` : panel[key]}</span>
-									</p>
-								{/each}
-							</div>
-						{/if}
-					</div>
-				{/each}
-			</div>
+						</div>
+					{:else}
+						<button class="secondary-btn small add-panel-btn" disabled={layoutBusy} on:click={() => startAddPanel(chapter)}>
+							<Icon name="plus" size={18} /> Add panel{chapters.length > 1 ? ` (chapter ${chapter.chapter_number})` : ''}
+						</button>
+					{/if}
+				</div>
+			{/each}
 
 			<div class="section-actions">
 				<button class="primary-btn" on:click={() => (activeStage = STAGES.DRAFT)} >
