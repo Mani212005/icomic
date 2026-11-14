@@ -119,7 +119,7 @@ The system must:
 - Reject empty input.
 - Display the script word count.
 - Allow the user to edit the script.
-- Save the script to the project.
+- Save the script to the project. The editor saves the Script stage's title, style, chapter count and script on its own after a pause in typing (about one second), and shows Unsaved changes, Saving, Saved, or Not saved with the reason and a Retry. Character, outline and panel edit forms autosave the same way; their Save button saves at once and closes the form. Saves are sent one at a time in edit order, so a slow earlier save cannot overwrite a newer edit and its answer never marks newer edits as saved. Leaving the page with unsaved or failed edits asks for confirmation.
 
 The system must preserve the original script.
 

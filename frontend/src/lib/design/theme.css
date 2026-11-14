@@ -444,3 +444,5 @@ h1, h2, h3 { overflow-wrap: anywhere; text-wrap: pretty; }
   .account-control .status-pill { max-width: 56px; }
   .account-control .action-btn { min-height: 28px; padding: 3px 8px; font-size: 11px; }
 }
+.save-status { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 36px; font-size: 12px; color: var(--muted); }
+.save-status.save-failed { color: var(--warning); font-weight: 650; }
