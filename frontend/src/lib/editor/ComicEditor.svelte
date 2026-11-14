@@ -6,6 +6,7 @@
 	import { Icon, BetaTag, revealCards } from '#lib/design/shell.js';
 	import { ApprovalTag, ApprovalAction, ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
 	import { STAGES, APPROVAL, approvalState, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote, publishSpend, INK_OVERLAY_NOTE, isOverlayPage } from '#lib/api/types.js';
+	const GENERATING = 'Generating…';
 	const INK_VARIANT = 'ink';
 	const PAINTED_VARIANT = 'painted';
 
@@ -365,7 +366,7 @@
 		jobError = null;
 		isJobActive = true;
 		activeJobType = stageList.find((stage) => stage.id === activeStage).label.slice(3);
-		currentJobStatus = 'Generating…';
+		currentJobStatus = GENERATING;
 		try {
 			await apiClient.createChapters(project.id, { chapter_count: project.chapter_count });
 			await reloadProjectData();
@@ -380,7 +381,7 @@
 		jobError = null;
 		isJobActive = true;
 		activeJobType = stageList.find((stage) => stage.id === activeStage).label.slice(3);
-		currentJobStatus = 'Generating…';
+		currentJobStatus = GENERATING;
 		try {
 			for (const chapter of chapters) {
 				const existing = await apiClient.getPanels(chapter.id);
@@ -472,7 +473,7 @@
 		return runner.run({
 			kind: JOB_KIND.PAGE,
 			label: 'Draft',
-			status: 'Generating…',
+			status: GENERATING,
 			entityId: pageId,
 			start: (idempotencyKey) => apiClient.generateDraft(pageId, { idempotencyKey })
 		});
@@ -494,7 +495,7 @@
 		return runner.run({
 			kind: JOB_KIND.PAGE,
 			label: variant === INK_VARIANT ? 'Ink' : 'Paint',
-			status: 'Generating…',
+			status: GENERATING,
 			entityId: pageId,
 			start: (idempotencyKey) => apiClient.generateLineArt(pageId, variant, { idempotencyKey })
 		});
