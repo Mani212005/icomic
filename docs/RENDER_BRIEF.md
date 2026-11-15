@@ -1,7 +1,7 @@
 # Page render brief
 
 `ai/app/services/render_brief.py` assembles the versioned page render brief for
-draft, ink, and painted-page generation. Stage constraints precede the same story contract.
+draft and painted-page generation. Stage constraints precede the same story contract.
 The brief includes every `PanelTextItem` field without truncation. Array order is
 the page's allocation/reading order; panel numbers remain source identifiers and
 do not trigger sorting. Camera, background, actions and image-prompt details are
@@ -32,11 +32,9 @@ removed from the bubble text; speakers are indicated by bubble tails and positio
 The prompt forbids names or labels inside bubbles. Empty dialogue means no bubble.
 Narration is retained as story context and remains
 excluded from image captions by the existing image-only rules. This does not
-select a deterministic lettering implementation or change approvals. Final line
-art inking derives its line and tonal treatment from the shared style bible without
-contradictory flat-white/no-shading exclusions. The style ID is resolved into the
+select a deterministic lettering implementation or change approvals. The style ID is resolved into the
 versioned style bible (`style-bible-v1`) embedded directly in the render brief and
-shared across reference, draft, painted-page and ink rendering, and palette suggestion.
+shared across reference, draft and painted-page rendering.
 
 Default character-reference generation now includes name, description and the
 stored visual attributes (including age, appearance, hair and clothing when
@@ -53,7 +51,7 @@ metadata or provenance verification.
 ## Stage 2 overlay mode (on in Compose, off in the code default)
 
 New projects/pages allocated with `LETTERING_OVERLAY_ENABLED=true` persist overlay
-eligibility and a versioned lettering document. Existing projects/pages and ink
+eligibility and a versioned lettering document. Existing projects/pages and pages finished with the retired Ink route
 stay baked. Baked v1/v4/v5 prompt fixtures remain unchanged. Overlay draft and painted
 requests supply `lettering_document`; `page-render-brief-v6-overlay` contains an
 explicit 2:3 page aspect, exact normalized panel rectangles and reserved zones.

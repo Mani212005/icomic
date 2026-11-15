@@ -11,8 +11,8 @@ from app.adapters.image.port import ImageResult
 from app.adapters.storage.fake import FakeStorageAdapter
 from app.gen.models import PageExportItem
 from app.services.draft import DraftService
-from app.services.line_art import LineArtService
 from app.services.page_art import clean_page_art
+from app.services.painted_page import PaintedPageService
 from app.services.pdf import PdfAssemblyService
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/page_art/live_margin_annotations.png"
@@ -28,7 +28,7 @@ class SampleImageAdapter:
         return self.result
 
 
-@pytest.mark.parametrize("stage", ["draft", "line_art"])
+@pytest.mark.parametrize("stage", ["draft", "painted_page"])
 def test_real_provider_page_is_clean_before_storage_and_export(stage, monkeypatch, caplog):
     from app.services import images
 
@@ -44,9 +44,9 @@ def test_real_provider_page_is_clean_before_storage_and_export(stage, monkeypatc
     adapter = SampleImageAdapter(source)
     storage = FakeStorageAdapter()
     draft_url = storage.put("draft.png", source, "image/png")
-    if stage == "line_art":
-        url, model, provenance = LineArtService(adapter, storage).generate_line_art(
-            "sample", 1, draft_url, [], "ink", "fixture-user"
+    if stage == "painted_page":
+        url, model, provenance, _ = PaintedPageService(adapter, storage).generate_painted_page(
+            "sample", 1, [], "ink", "fixture-user", "draft-conditioned", draft_url
         )
     else:
         url, model, provenance = DraftService(adapter, storage).generate_draft_sketch(

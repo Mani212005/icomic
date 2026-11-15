@@ -2,15 +2,14 @@
 
 from uuid import uuid4
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
 from tests.image_fixtures import image_bytes
 
 
-@pytest.mark.parametrize("stage", ["draft-sketch", "line-art"])
-def test_unrelated_stories_produce_different_image_requests(stage):
+def test_unrelated_stories_produce_different_image_requests():
+    stage = "draft-sketch"
     app = create_app()
     storage = app.state.storage_adapter
     draft_url = storage.put("draft.png", image_bytes("draft"), "image/png")
@@ -56,8 +55,8 @@ def test_unrelated_stories_produce_different_image_requests(stage):
     assert calls[0]["prompt"] != calls[1]["prompt"]
 
 
-@pytest.mark.parametrize("stage", ["draft-sketch", "line-art"])
-def test_ordered_panels_identity_and_reference_bytes_reach_image_wire(stage):
+def test_ordered_panels_identity_and_reference_bytes_reach_image_wire():
+    stage = "draft-sketch"
     """Exercise endpoint, shared brief, real adapter and wire builder on mock HTTP."""
     import base64
     import hashlib
@@ -141,7 +140,7 @@ def test_ordered_panels_identity_and_reference_bytes_reach_image_wire(stage):
     wire = captured[0]
     assert set(wire) == {"model", "input", "user"}
     parts = wire["input"][0]["content"]
-    expected_images = contents if stage == "line-art" else contents[1:]
+    expected_images = contents[1:]
     assert [
         base64.b64decode(part["image_url"].split(",")[1]) for part in parts[:-1]
     ] == expected_images
@@ -158,10 +157,6 @@ def test_ordered_panels_identity_and_reference_bytes_reach_image_wire(stage):
         assert ref["name"] == identity["name"]
         assert ref["visual_attributes"] == identity["visual_attributes"]
         assert ref["source_url"] == identity["reference_image_url"]
-    if stage == "line-art":
-        assert "approved composition" in refs[0]["role"]
-        assert "final inking and line art" in prompt
-        assert "Style bible: classic-comic" in prompt
     assert "Dialogue values contain only the spoken words" in brief["dialogue_policy"]
     assert (
         "Never write a speaker's name or a speaker label inside a bubble"

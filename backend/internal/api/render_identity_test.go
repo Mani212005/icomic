@@ -46,13 +46,13 @@ func TestPageStagesCarryOrderedPanelSemanticsAndNamedIdentities(t *testing.T) {
 				panels, identities = req.Panels, req.CharacterIdentities
 				return &gen.GenerateDraftSketchResponse{JobID: req.JobID, ImageURL: "https://storage.example/new-draft.png"}, nil
 			}
-			fake.GenerateLineArtFunc = func(ctx context.Context, req gen.GenerateLineArtRequest) (*gen.GenerateLineArtResponse, error) {
+			fake.GeneratePaintedPageFunc = func(ctx context.Context, req gen.GeneratePaintedPageRequest) (*gen.GeneratePaintedPageResponse, error) {
 				panels, identities = req.Panels, req.CharacterIdentities
-				return &gen.GenerateLineArtResponse{JobID: req.JobID, ImageURL: "https://storage.example/new-line.png"}, nil
+				return &gen.GeneratePaintedPageResponse{JobID: req.JobID, ImageURL: "https://storage.example/new-painted.png", Variant: gen.GeneratePaintedPageResponseVariantDirectFromBrief}, nil
 			}
 			path := "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/" + stage
 			if stage == "line-art" {
-				path += "?variant=ink"
+				path += "?variant=draft-conditioned"
 			}
 			rec := serveGeneration(s, handler, httptest.NewRequest(http.MethodPost, path, nil))
 			if rec.Code != http.StatusAccepted {

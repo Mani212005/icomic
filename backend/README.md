@@ -4,16 +4,16 @@ Go API service for Icomic (docs/ARCHITECTURE.md section 7).
 
 ## Features and Architecture
 
-- **PostgreSQL Migrations and Schema**: Migration scripts located in `deploy/migrations/` creating all 13 core tables (`plans`, `users`, `projects`, `chapters`, `generation_jobs`, `characters`, `panels`, `pages`, `colour_palettes`, `colour_regions`, `stage_approvals`, `credit_ledger`, `exports`) plus `artifact_provenance`, the write-once provider provenance for each generated image.
+- **PostgreSQL Migrations and Schema**: Migration scripts located in `deploy/migrations/` creating all 13 core tables (`plans`, `users`, `projects`, `chapters`, `generation_jobs`, `characters`, `panels`, `pages`, `colour_palettes` and `colour_regions` (retired, kept for data), `stage_approvals`, `credit_ledger`, `exports`) plus `artifact_provenance`, the write-once provider provenance for each generated image.
 - **Persistence Behind Repository Interfaces**: Persistence is abstracted behind `db.Repository`. An in-memory fake (`db.InMemoryRepository`) is used for hermetic unit tests with zero external database dependencies. A production PostgreSQL implementation (`db.PostgresRepository`) is selected when `DATABASE_URL` is configured.
 - **Credit Ledger and Cost Management**:
-  - One backend pricing configuration supplies image/palette estimate rates, model IDs, generation debits and `POST /api/v1/projects/:id/estimate` quotes.
-  - Defaults retain the documented fake/development basis: $0.01 per image attempt and $0.005 per palette suggestion. They are labeled unverified until `PRICING_VERIFIED=true`; this is not an approved retail price or provider quote.
+  - One backend pricing configuration supplies the image estimate rate, model IDs, generation debits and `POST /api/v1/projects/:id/estimate` quotes.
+  - Defaults retain the documented fake/development basis: $0.01 per image attempt. The retired colour-palette estimate (`META_COLOUR_ESTIMATE_USD`, $0.005) remains only to refund colour jobs started before the Ink route was removed. They are labeled unverified until `PRICING_VERIFIED=true`; this is not an approved retail price or provider quote.
   - Transactional debits: Credit ledger entry and generation job record written atomically.
   - Automatic refunds on eligible failed jobs or user cancellations.
   - Quota enforcement (daily and monthly) and global operator kill switch.
 - **Job Model & Staged Approval Gates**:
-  - Staged gates strictly enforced: Character reference approved -> Chapter outline approved -> Draft sketch approved -> Final line art approved -> Colouring.
+  - Staged gates strictly enforced: Character reference approved -> Chapter outline approved -> Draft sketch approved -> Finished painted page approved.
   - Stale approval rule: Any edit or regeneration automatically makes downstream approvals stale until explicitly re-approved.
   - Concurrency guard preventing duplicate in-flight jobs.
   - Hashed user IDs (SHA-256) attached to external model calls per Meta API terms.
@@ -138,8 +138,6 @@ Resource safeguards are configured separately from image quotas and spending:
 | `MAX_SCRIPT_WORDS` | 100000 | Maximum script words (whitespace separated) |
 | `MAX_CHAPTERS` | 1000 | Maximum explicit/saved project chapter count |
 | `MAX_TEXT_FIELD_BYTES` | 16384 | Maximum bytes per other text field or nested attribute string |
-| `MAX_COLOUR_IMAGE_BYTES` | 10485760 | Maximum PNG/WebP upload bytes |
-| `MAX_COLOUR_IMAGE_PIXELS` | 40000000 | Maximum width times height, checked before image storage |
 | `REQUESTS_PER_IP_PER_MINUTE` | 600 | Public API requests per socket peer IP |
 | `REQUESTS_PER_USER_PER_MINUTE` | 300 | Authenticated requests per user across IPs |
 | `REQUEST_ADMISSION_KEYS` | 10000 | Maximum combined IP/user admission entries |

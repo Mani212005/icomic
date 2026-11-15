@@ -36,7 +36,6 @@ export class MockApiClient {
 		this.panels = new Map();
 		this.pages = new Map();
 		this.jobs = new Map();
-		this.palettes = new Map();
 		this.exports = new Map();
 
 		this.creditUsage = {
@@ -237,19 +236,10 @@ export class MockApiClient {
 			sample_label: 'Sample',
 			sample_source: 'Meta AI',
 			line_art_approved_at: approvedAt,
-			colour_approved_at: null,
 			created_at: now,
 			updated_at: now
 		};
 		this.pages.set(page1.id, page1);
-
-		this.palettes.set(page1.id, [
-			{ region_name: 'sea', hex_color: '#23415A', label: 'Stormy Sea' },
-			{ region_name: 'coat', hex_color: '#24364B', label: 'Nia’s Navy Coat' },
-			{ region_name: 'bird', hex_color: '#DCA83D', label: 'Brass Bird' },
-			{ region_name: 'lamp', hex_color: '#F6C46B', label: 'Lantern Glow' },
-			{ region_name: 'sky', hex_color: '#E9A77E', label: 'Sunrise Sky' }
-		]);
 	}
 
 	createJob(projectId, jobType, stage) {
@@ -665,20 +655,14 @@ export class MockApiClient {
 		return page;
 	}
 
-	async generateLineArt(pageId, variant) {
+	async generateLineArt(pageId) {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		const job = this.createJob('proj-demo-1', 'final_line_art', 'line_art');
 		const now = new Date().toISOString();
-		if (variant === 'ink') {
-			page.line_art_url = '/mock/sample-line-art.webp';
-			page.line_art_image_url = page.line_art_url;
-			page.line_art_approved_at = null;
-		} else {
-			page.painted_page_image_url = '/mock/sample-painted-page.webp';
-			page.painted_page_variant = 'direct-from-brief';
-			page.painted_page_approved_at = null;
-		}
+		page.painted_page_image_url = '/mock/sample-painted-page.webp';
+		page.painted_page_variant = 'direct-from-brief';
+		page.painted_page_approved_at = null;
 		page.is_sample = true;
 		page.sample_label = 'Sample';
 		page.sample_source = 'Meta AI';
@@ -686,46 +670,13 @@ export class MockApiClient {
 		return { job, page };
 	}
 
-	async approveLineArt(pageId, variant) {
+	async approveLineArt(pageId) {
 		const page = this.pages.get(pageId);
 		if (!page) throw new Error(`Page ${pageId} not found`);
 		let now = Date.now();
 		const activity = Date.parse(page.updated_at);
 		if (Number.isFinite(activity) && now <= activity) now = activity + 1;
-		const approvedAt = new Date(now).toISOString();
-		if (variant === 'ink') page.line_art_approved_at = approvedAt;
-		else page.painted_page_approved_at = approvedAt;
-		return page;
-	}
-
-	async getColourPalette(pageId) {
-		return this.palettes.get(pageId) || [];
-	}
-
-	async suggestColourPalette(pageId) {
-		const job = this.createJob('proj-demo-1', 'colour_suggestion', 'colour');
-		const palette = [
-			{ region_name: 'sky', hex_color: '#7DA0C4', label: 'Morning Sky' },
-			{ region_name: 'foliage', hex_color: '#2D5A27', label: 'Forest Green' },
-			{ region_name: 'cloak', hex_color: '#4A6B32', label: 'Forest Cloak' },
-			{ region_name: 'skin', hex_color: '#EDBB99', label: 'Warm Skin' }
-		];
-		this.palettes.set(pageId, palette);
-		return { job, palette };
-	}
-
-	async updateColourPalette(pageId, palette) {
-		this.palettes.set(pageId, palette);
-		return { palette };
-	}
-
-	async approveColour(pageId) {
-		const page = this.pages.get(pageId);
-		if (!page) throw new Error(`Page ${pageId} not found`);
-		let now = Date.now();
-		const activity = Date.parse(page.updated_at);
-		if (Number.isFinite(activity) && now <= activity) now = activity + 1;
-		page.colour_approved_at = new Date(now).toISOString();
+		page.painted_page_approved_at = new Date(now).toISOString();
 		return page;
 	}
 
@@ -734,11 +685,11 @@ export class MockApiClient {
 		const estimatedCost = unitCost * imageCount;
 		return {
 			stage_name: stage,
-			image_count: stage === 'colour_suggestion' ? 0 : imageCount,
+			image_count: imageCount,
 			estimated_cost: estimatedCost,
 			assumptions: ['Mock configured estimate.'],
-			is_estimate_price: stage === 'colour_suggestion',
-			model_id: stage === 'colour_suggestion' ? 'muse-spark-1.3' : 'muse-image-1.0',
+			is_estimate_price: false,
+			model_id: 'muse-image-1.0',
 			currency: 'USD',
 			pricing_version: 'mock-default',
 			price_verified: false

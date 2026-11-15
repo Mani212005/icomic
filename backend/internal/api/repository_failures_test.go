@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"icomic/backend/gen"
 	"icomic/backend/internal/db"
 	"icomic/backend/internal/domain"
 )
@@ -25,12 +24,6 @@ type failingProjectReadRepository struct{ db.Repository }
 
 func (r *failingProjectReadRepository) GetProject(context.Context, string) (*domain.Project, error) {
 	return nil, errors.New("injected database read failure")
-}
-
-type failingPaletteReadRepository struct{ db.Repository }
-
-func (r *failingPaletteReadRepository) GetColourPalette(context.Context, string) (*domain.ColourPalette, error) {
-	return nil, errors.New("injected palette database read failure")
 }
 
 func (r *failingWriteRepository) fail(operation string) bool {
@@ -160,13 +153,6 @@ func (r *failingWriteRepository) ReplaceChapterPanels(ctx context.Context, chapt
 	return r.Repository.ReplaceChapterPanels(ctx, chapterID, panels, pages)
 }
 
-func (r *failingWriteRepository) SaveColourPalette(ctx context.Context, value *domain.ColourPalette) error {
-	if r.fail("SaveColourPalette") {
-		return errors.New("injected database write failure")
-	}
-	return r.Repository.SaveColourPalette(ctx, value)
-}
-
 func (r *failingWriteRepository) RecordApproval(ctx context.Context, value *domain.StageApproval) error {
 	if r.fail("RecordApproval") {
 		return errors.New("injected database write failure")
@@ -193,9 +179,9 @@ func seedWriteFailureFlow(t *testing.T, repo db.Repository) {
 }
 
 func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
-	// Debited image and palette generations answer with a receipt before saving, so a failed save
+	// Debited image generations answer with a receipt before saving, so a failed save
 	// is not an HTTP 500: the job must stay unfinished (never done) for the dispatcher to retry.
-	deferred := map[string]bool{"reference image": true, "draft generation": true, "line art generation": true, "palette suggestion": true}
+	deferred := map[string]bool{"reference image": true, "draft generation": true, "finished page generation": true}
 	cases := []struct{ name, method, path, operation string }{
 		{"analysis character", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/analyze", "CreateCharacter"},
 		{"analysis project", "POST", "/projects/a400e5d7-0409-5a81-9050-3991208ceec1/analyze", "UpdateProject"},
@@ -212,11 +198,8 @@ func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 		{"panel delete", "DELETE", "/chapters/9bc9e3c9-dc89-55a6-bc9e-4c7dcd732d98/panels/a8a24397-3780-5a99-acea-8ab882a2ef5b", "DeletePanel"},
 		{"draft generation", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft", "UpdatePage"},
 		{"draft approval", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/draft/approve", "ApproveStage"},
-		{"line art generation", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art?variant=ink", "UpdatePage"},
-		{"line art approval", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art/approve?variant=ink", "ApproveStage"},
-		{"palette suggestion", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette/suggest", "SaveColourPalette"},
-		{"palette edit", "PATCH", "/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette", "SaveColourPalette"},
-		{"colour approval", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/colour/approve", "RecordApproval"},
+		{"finished page generation", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art?variant=draft-conditioned", "UpdatePage"},
+		{"finished page approval", "POST", "/pages/a5669606-8764-5c90-b282-bad323a49baa/line-art/approve", "ApproveStage"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,6 +222,16 @@ func TestHandlersSurfaceRepositoryWriteFailures(t *testing.T) {
 					t.Fatal(err)
 				}
 				page.DraftImageURL, page.LineArtImageURL, page.ColourImageURL, page.ColourImageUploadedAt = "", "", "", nil
+				if err := repo.UpdatePage(nil, page); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.name == "finished page approval" {
+				page, err := repo.GetPage(nil, "a5669606-8764-5c90-b282-bad323a49baa")
+				if err != nil {
+					t.Fatal(err)
+				}
+				page.PaintedPageImageURL = "https://storage.example/painted.png"
 				if err := repo.UpdatePage(nil, page); err != nil {
 					t.Fatal(err)
 				}
@@ -292,79 +285,5 @@ func TestProjectReadFailureIsNotReportedAsNotFound(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "injected database") {
 		t.Fatalf("database details leaked to client: %s", rec.Body.String())
-	}
-}
-
-func TestPaletteReadFailureIsNotReturnedAsEmptySuccess(t *testing.T) {
-	s, _, repo := setupTestServer(true, "test-user")
-	seedWriteFailureFlow(t, repo)
-	s.Repo = &failingPaletteReadRepository{Repository: repo}
-	rec := httptest.NewRecorder()
-	s.NewRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette", nil))
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("palette read failure returned %d, want 500: %s", rec.Code, rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "injected palette database") {
-		t.Fatalf("database details leaked to client: %s", rec.Body.String())
-	}
-}
-
-func TestPaletteRequiresStoredLineArtBeforeCharging(t *testing.T) {
-	for _, imageURL := range []string{"", "lineart/page.png", "/media/page.png", "file:///page.png", "https://storage.example/lineart.png"} {
-		t.Run(imageURL, func(t *testing.T) {
-			s, _, repo := setupTestServer(true, "test-user")
-			seedWriteFailureFlow(t, repo)
-			page, err := repo.GetPage(nil, "a5669606-8764-5c90-b282-bad323a49baa")
-			if err != nil {
-				t.Fatal(err)
-			}
-			page.LineArtImageURL = imageURL
-			if err := repo.UpdatePage(nil, page); err != nil {
-				t.Fatal(err)
-			}
-			calls := 0
-			s.AIClient.(*gen.FakeAIServiceClient).SuggestColourPaletteFunc = func(_ context.Context, req gen.SuggestColourPaletteRequest) (*gen.SuggestColourPaletteResponse, error) {
-				calls++
-				if req.LineArtImageURL != imageURL {
-					t.Errorf("expected stored URL %q, got %q", imageURL, req.LineArtImageURL)
-				}
-				return &gen.SuggestColourPaletteResponse{}, nil
-			}
-			before, err := s.CreditService.GetBalance(nil, "test-user")
-			if err != nil {
-				t.Fatal(err)
-			}
-			rec := serveGeneration(s, s.NewRouter(), httptest.NewRequest("POST", "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/colour-palette/suggest", nil))
-			if strings.HasPrefix(imageURL, "https://") {
-				if rec.Code != http.StatusAccepted || calls != 1 {
-					t.Fatalf("HTTP %d calls=%d: %s", rec.Code, calls, rec.Body.String())
-				}
-			} else {
-				after, err := s.CreditService.GetBalance(nil, "test-user")
-				if err != nil {
-					t.Fatal(err)
-				}
-				if rec.Code != http.StatusConflict || calls != 0 || before != after || !strings.Contains(rec.Body.String(), "stored line art image URL") {
-					t.Fatalf("expected clear HTTP 409 without AI call or debit, HTTP %d calls=%d balances=%v/%v: %s", rec.Code, calls, before, after, rec.Body.String())
-				}
-			}
-		})
-	}
-}
-
-func TestColourApprovalIncludesProject(t *testing.T) {
-	_, handler, repo := setupTestServer(true, "test-user")
-	seedWriteFailureFlow(t, repo)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/pages/a5669606-8764-5c90-b282-bad323a49baa/colour/approve", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
-	}
-	approval, err := repo.GetLatestApproval(nil, "colour_page", "a5669606-8764-5c90-b282-bad323a49baa")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if approval.ProjectID != "a400e5d7-0409-5a81-9050-3991208ceec1" {
-		t.Fatalf("missing project foreign key: %+v", approval)
 	}
 }

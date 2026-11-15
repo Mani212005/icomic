@@ -248,66 +248,6 @@ class GenerateDraftSketchResponse(BaseModel):
     provenance_metadata: dict[str, Any]
 
 
-class GenerateLineArtRequest(BaseModel):
-    job_id: str
-    hashed_user_id: str
-    project_id: str
-    page_id: str
-    page_number: int
-    draft_image_url: str
-    panels: list[PanelTextItem]
-    style: str
-    character_reference_image_urls: list[str] = []
-    character_identities: list[CharacterRenderIdentity] = Field(
-        [],
-        description="Stable ordered identities; reference images precede legacy URL-only references.",
-        validate_default=True,
-    )
-
-
-class GenerateLineArtResponse(BaseModel):
-    job_id: str
-    image_url: str
-    model_id: str
-    provenance_metadata: dict[str, Any]
-
-
-class ColourRegionSuggestion(BaseModel):
-    region_name: str = Field(..., examples=["background_sky"])
-    hex_color: str = Field(..., examples=["#4A90E2"], pattern="^#[0-9A-Fa-f]{6}$")
-    label: str = Field(..., examples=["Twilight Blue Sky"])
-
-
-class SuggestColourPaletteRequest(BaseModel):
-    job_id: str
-    hashed_user_id: str
-    project_id: str
-    page_id: str
-    line_art_image_url: str
-    panel_context: str
-    style: str | None = Field(
-        None,
-        description="Style identifier to resolve palette and color guidance from the shared style bible",
-        examples=["classic-comic"],
-    )
-
-
-class SuggestColourPaletteResponse(BaseModel):
-    job_id: str
-    theme: str
-    palette: list[ColourRegionSuggestion]
-
-
-class StoreColourImageRequest(BaseModel):
-    page_id: UUID
-    image_base64: str
-    media_type: Literal["image/png", "image/webp"]
-
-
-class StoreColourImageResponse(BaseModel):
-    image_url: str
-
-
 class FinishPageImageResponse(BaseModel):
     image_url: str
 

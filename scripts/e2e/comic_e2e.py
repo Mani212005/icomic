@@ -193,7 +193,6 @@ class CostGuard:
                 "analysis",
                 "outline",
                 "panels",
-                "palette",
                 "image",
             }
             and amount <= 0
@@ -283,21 +282,6 @@ def settle_receipt(method: str, path: str, receipt: dict[str, Any]) -> dict[str,
             f"{method} {path} job {job_id} {job['status']}: {job.get('error_message') or ''}"
         )
     return job
-
-
-def binary_request(path: str, method: str, body: bytes, content_type: str) -> Any:
-    headers = {"Content-Type": content_type}
-    if RUN_USER_ID is not None:
-        headers["X-User-ID"] = RUN_USER_ID
-    request = Request(f"{API_URL}{path}", data=body, method=method, headers=headers)
-    try:
-        with urlopen(request, timeout=60) as response:
-            return json.loads(response.read())
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise E2EError(f"{method} {path} returned HTTP {exc.code}: {detail}") from exc
-    except URLError as exc:
-        raise E2EError(f"{method} {path} failed: {exc.reason}") from exc
 
 
 def fetch_line_art_image(image_url: str) -> bytes:
@@ -573,8 +557,6 @@ def run_flow(
     retry_uncertain_job_id: str | None = None,
     repaint_pages: set[int] | None = None,
 ) -> tuple[int, str]:
-    from colouring import colour_enclosed_regions
-
     global RUN_USER_ID
     repaint_pages = set(repaint_pages or [])
     if repaint_pages and (not resume_project_id or min(repaint_pages) < 1):
@@ -712,15 +694,12 @@ def run_flow(
                             )
                         )
                     else:
-                        ink = number == 1 and number not in repaint_pages
-                        field = "line_art" if ink else "painted_page"
-                        query = "?variant=ink" if ink else ""
                         targets.append(
                             (
                                 item,
-                                field + "_image_job_id",
-                                field + "_image_url",
-                                f"/api/v1/pages/{item['id']}/line-art{query}",
+                                "painted_page_image_job_id",
+                                "painted_page_image_url",
+                                f"/api/v1/pages/{item['id']}/line-art",
                             )
                         )
         entity_id = saved_job.get("entity_id")
@@ -943,32 +922,16 @@ def run_flow(
                 f"/api/v1/pages/{page_id}/draft", page.get("draft_image_job_id")
             )
         json_request(f"/api/v1/pages/{page_id}/draft/approve", "POST")
-        # Use the explicit ink variant once to keep that path covered; every
-        # other page exercises the normal painted default with one finish call.
+        # Every page takes the one painted finish call: the only final route.
         repaint = page_index + 1 in repaint_pages
-        ink_variant = (
-            page_index == 0
-            and not repaint
-            and not page.get("painted_page_image_url")
-            and not guard.overlay_lettering
-        )
-        variant_query = "?variant=ink" if ink_variant else ""
-        finish_path = f"/api/v1/pages/{page_id}/line-art{variant_query}"
-        finish_image_url = (
-            page.get("line_art_image_url")
-            if ink_variant
-            else page.get("painted_page_image_url")
-        )
-        finish_job_id = (
-            page.get("line_art_image_job_id")
-            if ink_variant
-            else page.get("painted_page_image_job_id")
-        )
+        finish_path = f"/api/v1/pages/{page_id}/line-art"
+        finish_image_url = page.get("painted_page_image_url")
+        finish_job_id = page.get("painted_page_image_job_id")
         if repaint:
             checked_call(guard, "image", 1, "POST", finish_path)
         elif not finish_image_url:
             generate_missing_image(finish_path, finish_job_id)
-        json_request(f"/api/v1/pages/{page_id}/line-art/approve{variant_query}", "POST")
+        json_request(f"/api/v1/pages/{page_id}/line-art/approve", "POST")
         if guard.overlay_lettering:
             endpoint = f"/api/v1/pages/{page_id}/lettering"
             state = json_request(endpoint)["lettering"]
@@ -1006,46 +969,11 @@ def run_flow(
                 finished_bytes = fetch_line_art_image(finished_url)
                 (artifact_dir / f"raw-art-{page_index+1:02d}.png").write_bytes(raw_bytes)
                 (artifact_dir / f"finished-art-{page_index+1:02d}.jpg").write_bytes(finished_bytes)
-        if not ink_variant:
-            continue
-        if page.get("colour_image_url"):
-            json_request(f"/api/v1/pages/{page_id}/colour/approve", "POST")
-            continue
-        palette_result = json_request(f"/api/v1/pages/{page_id}/colour-palette")
-        if not palette_result.get("palette"):
-            checked_call(
-                guard,
-                "palette",
-                1,
-                "POST",
-                f"/api/v1/pages/{page_id}/colour-palette/suggest",
-            )
-            # The receipt carries no palette: read what the settled job saved.
-            palette_result = json_request(f"/api/v1/pages/{page_id}/colour-palette")
-        page_chapter_id = page_chapter_ids[page_id]
-        current_pages = json_request(f"/api/v1/chapters/{page_chapter_id}/pages").get(
-            "pages", []
-        )
-        current_page = next(
-            (item for item in current_pages if item.get("id") == page_id), None
-        )
-        line_art_url = require(
-            current_page or {}, "line_art_image_url", "approved line art URL missing"
-        )
-        line_art_bytes = fetch_line_art_image(line_art_url)
-        coloured_page = colour_enclosed_regions(
-            line_art_bytes,
-            require(palette_result, "palette", "palette missing"),
-        )
-        binary_request(
-            f"/api/v1/pages/{page_id}/colour-image", "PUT", coloured_page, "image/png"
-        )
-        json_request(f"/api/v1/pages/{page_id}/colour/approve", "POST")
     if retry_uncertain_job_id and not retry_was_used:
         raise E2EError(
             f"retry refused: job {retry_uncertain_job_id} is not an incomplete uncertain image job on this project"
         )
-    print(f"PASS painted default and explicit ink finish: {len(pages)} pages")
+    print(f"PASS painted finish: {len(pages)} pages")
 
     guard.current_stage = "export"
     exported = json_request(f"/api/v1/projects/{project_id}/export", "POST")

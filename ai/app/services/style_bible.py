@@ -1,4 +1,4 @@
-"""Versioned style bible resolver shared by character reference, draft, final line art, and palette suggestion."""
+"""Versioned style bible resolver shared by character reference, draft, and painted page."""
 
 import hashlib
 import json
@@ -87,39 +87,6 @@ class StyleBible:
             f"Follow {self.label} staging: {self.depth} Mood: {self.mood}. "
             f"Style bible: {self.style_id} (version {self.version})."
         )
-
-    def format_for_line_art(self, page_number: int, panel_count: int) -> str:
-        """Stage prompt for final black-and-white inking adhering to style line and tonal guidance.
-
-        Avoids contradictory blanket exclusions like 'flat white fills, no shading' when the
-        style specifies screentones, cross-hatching, or tonal chiaroscuro.
-        """
-        negatives = ", ".join(self.negative_constraints)
-        return (
-            f"Comic book page {page_number} final inking and line art, {panel_count}-panel grid. "
-            "portrait-oriented full comic page, taller than wide, composed to fit the canvas without cropping. "
-            f"Follow the approved draft composition. "
-            f"Inking and line treatment: {self.line_treatment} "
-            f"Tonal values and contrast: {self.values} "
-            f"Lighting in inking: {self.lighting} "
-            f"Materials and textures: {self.materials} "
-            f"Style bible: {self.style_id} (version {self.version}). "
-            f"Negative constraints: {negatives}."
-        )
-
-    def format_for_palette_vision(self, panel_context: str) -> str:
-        """Enrich vision palette prompt context with style bible palette instructions."""
-        palette_info = (
-            f"Style: {self.label} ({self.style_id}). "
-            f"Theme: {self.palette.theme}. "
-            f"Dominant tones: {', '.join(self.palette.dominant_tones)}. "
-            f"Accent tones: {', '.join(self.palette.accent_tones)}. "
-            f"Color temperature: {self.palette.temperature}. "
-            f"Suggested region harmonies: {json.dumps(self.palette.suggested_regions, ensure_ascii=False)}."
-        )
-        if panel_context.strip():
-            return f"{panel_context}. Style palette bible: {palette_info}"
-        return f"Style palette bible: {palette_info}"
 
 
 STYLE_PRESETS: dict[str, StyleBible] = {

@@ -63,24 +63,3 @@ def test_default_fallback_when_style_is_none_or_empty():
     assert resolve_style_bible(None).style_id == "classic-comic"
     assert resolve_style_bible("").style_id == "classic-comic"
     assert resolve_style_bible("   ").style_id == "classic-comic"
-
-
-@pytest.mark.parametrize("preset_id", list(STYLE_PRESETS.keys()))
-def test_stage_prompts_contain_no_contradictory_exclusions(preset_id: str):
-    """Line art stage prompt must not contradict style with blanket 'flat white fills, no shading'."""
-    preset = resolve_style_bible(preset_id)
-    line_art_prompt = preset.format_for_line_art(page_number=1, panel_count=4)
-    assert "no shading" not in line_art_prompt.lower()
-    assert "flat white fills" not in line_art_prompt.lower()
-    assert preset.line_treatment in line_art_prompt
-    assert preset.values in line_art_prompt
-
-
-def test_palette_vision_enrichment():
-    """Vision palette format enriches context with theme and color tones."""
-    preset = resolve_style_bible("cyberpunk-noir")
-    enriched = preset.format_for_palette_vision("Page 2 of chapter 1")
-    assert "Page 2 of chapter 1" in enriched
-    assert preset.palette.theme in enriched
-    assert "hot magenta" in enriched
-    assert "#00F0FF" in enriched

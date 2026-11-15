@@ -24,7 +24,7 @@ from app.adapters.language.port import LanguagePort, Message, TokenUsage
 from app.adapters.meta_http import MetaConfigurationError, MetaEmptyResponseError
 from app.adapters.vision.fake import FakeVisionAdapter
 from app.adapters.vision.meta import MetaVisionAdapter
-from app.adapters.vision.port import PaletteSuggestion, VisionPort
+from app.adapters.vision.port import VisionPort
 from tests.image_fixtures import image_bytes
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "meta"
@@ -182,46 +182,6 @@ def test_meta_vision_adapter_review_payload_and_response():
     assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
-def test_meta_vision_adapter_suggest_palette():
-    fixture = load_fixture("vision_palette.json")
-    captured_payloads: list[dict[str, Any]] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured_payloads.append(json.loads(request.content.decode("utf-8")))
-        return httpx.Response(200, json=fixture, headers={"x-request-id": "req-vis-pal-01"})
-
-    adapter = MetaVisionAdapter(
-        api_key="mock-key-123",
-        base_url=MOCK_BASE_URL,
-        transport=httpx.MockTransport(handler),
-    )
-
-    suggestion = adapter.suggest_palette(
-        model="muse-spark-1.3",
-        image_bytes=b"\x89PNG\r\n\x1a\nline-art-bytes",
-        panel_context="Nighttime rainy street scene with neon reflections",
-        max_tokens=150,
-        temperature=0.1,
-    )
-
-    assert isinstance(suggestion, PaletteSuggestion)
-    assert suggestion.theme == "Neo-Noir Alley"
-    assert len(suggestion.palette) == 3
-    assert adapter.last_finish_reason == "stop"
-
-    # Verify payload forwards max_tokens and temperature
-    assert len(captured_payloads) == 1
-    req = captured_payloads[0]
-    # max_tokens on the wire = caller's 150 + default reserve 1024
-    assert req["max_tokens"] == 150 + 1024
-    assert req["reasoning_effort"] == "low"
-    assert req["temperature"] == 0.1
-    for item in suggestion.palette:
-        assert item.hex_color.startswith("#")
-        assert len(item.hex_color) == 7
-        assert item.region_name != ""
-
-
 # ---------------------------------------------------------------------------
 # MetaImageAdapter Tests
 # ---------------------------------------------------------------------------
@@ -354,11 +314,7 @@ def test_language_port_boundary_contract(adapter_factory):
             transport=httpx.MockTransport(
                 lambda req: httpx.Response(
                     200,
-                    json=load_fixture(
-                        "vision_palette.json"
-                        if "palette" in req.content.decode("utf-8").lower()
-                        else "vision_review.json"
-                    ),
+                    json=load_fixture("vision_review.json"),
                 )
             ),
         ),
@@ -375,16 +331,6 @@ def test_vision_port_boundary_contract(adapter_factory):
     )
     assert isinstance(review, str)
     assert len(review) > 0
-
-    palette = adapter.suggest_palette(
-        model="test-model", image_bytes=dummy_image, panel_context="Panel 1 action"
-    )
-    assert isinstance(palette, PaletteSuggestion)
-    assert palette.theme != ""
-    assert len(palette.palette) > 0
-    for item in palette.palette:
-        assert item.hex_color.startswith("#")
-        assert len(item.hex_color) == 7
 
 
 @pytest.mark.parametrize(
@@ -543,14 +489,6 @@ def test_vision_adapter_refuses_contributor_tier_unless_permitted(monkeypatch):
         )
     assert "contributor tier trains Meta models on user prompts and completions" in str(exc.value)
 
-    with pytest.raises(ValueError) as exc:
-        adapter.suggest_palette(
-            model="muse-spark-1.3-contributor",
-            image_bytes=b"\x89PNG\r\n\x1a\nfake-bytes",
-            panel_context="dark alley scene",
-        )
-    assert "contributor tier trains Meta models on user prompts and completions" in str(exc.value)
-
     # Refuse on init with default model
     with pytest.raises(ValueError) as exc:
         MetaVisionAdapter(
@@ -624,12 +562,10 @@ def test_reasoning_reserve_rejected_at_construction(adapter_class, reserve, monk
 def call_chat_method(adapter, method, **kwargs):
     if method == "complete":
         return adapter.complete("", [Message(role="user", content="Hi")], **kwargs)
-    if method == "review":
-        return adapter.review("", b"\x89PNG\r\n\x1a\nimage", "Hi", **kwargs)
-    return adapter.suggest_palette("", b"\x89PNG\r\n\x1a\nimage", "Hi", **kwargs)
+    return adapter.review("", b"\x89PNG\r\n\x1a\nimage", "Hi", **kwargs)
 
 
-@pytest.mark.parametrize("method", ["complete", "review", "suggest_palette"])
+@pytest.mark.parametrize("method", ["complete", "review"])
 @pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high", "xhigh"])
 def test_reasoning_config_and_per_call_override(method, effort, monkeypatch):
     monkeypatch.setenv("META_REASONING_EFFORT", "high")
@@ -640,9 +576,7 @@ def test_reasoning_config_and_per_call_override(method, effort, monkeypatch):
         captured.append(json.loads(request.content))
         return httpx.Response(
             200,
-            json=load_fixture(
-                "vision_palette.json" if method == "suggest_palette" else "chat_completion.json"
-            ),
+            json=load_fixture("chat_completion.json"),
         )
 
     cls = MetaLanguageAdapter if method == "complete" else MetaVisionAdapter
@@ -660,7 +594,7 @@ def test_reasoning_config_and_per_call_override(method, effort, monkeypatch):
     assert "reserve_tokens" not in captured[0]
 
 
-@pytest.mark.parametrize("method", ["complete", "review", "suggest_palette"])
+@pytest.mark.parametrize("method", ["complete", "review"])
 @pytest.mark.parametrize("effort", ["none", "invalid", None, 5])
 def test_invalid_reasoning_override_refuses_before_http(method, effort):
     def forbidden(request):
@@ -674,7 +608,7 @@ def test_invalid_reasoning_override_refuses_before_http(method, effort):
         call_chat_method(adapter, method, reasoning_effort=effort)
 
 
-@pytest.mark.parametrize("method", ["complete", "review", "suggest_palette"])
+@pytest.mark.parametrize("method", ["complete", "review"])
 @pytest.mark.parametrize("reserve", [0, 1024])
 def test_reasoning_reserve_only_applies_to_explicit_max_tokens(method, reserve, monkeypatch):
     monkeypatch.setenv("META_REASONING_RESERVE_TOKENS", str(reserve))
@@ -684,9 +618,7 @@ def test_reasoning_reserve_only_applies_to_explicit_max_tokens(method, reserve, 
         captured.append(json.loads(request.content))
         return httpx.Response(
             200,
-            json=load_fixture(
-                "vision_palette.json" if method == "suggest_palette" else "chat_completion.json"
-            ),
+            json=load_fixture("chat_completion.json"),
         )
 
     cls = MetaLanguageAdapter if method == "complete" else MetaVisionAdapter
@@ -706,7 +638,7 @@ def test_reasoning_reserve_only_applies_to_explicit_max_tokens(method, reserve, 
         assert estimate.total_tokens == estimate.input_tokens + estimate.output_tokens
 
 
-@pytest.mark.parametrize("method", ["complete", "review", "suggest_palette"])
+@pytest.mark.parametrize("method", ["complete", "review"])
 def test_reasoning_empty_length_error_preserves_billed_usage(method):
     fixture = load_fixture("chat_completion_reasoning_length.json")
     cls = MetaLanguageAdapter if method == "complete" else MetaVisionAdapter

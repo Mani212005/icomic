@@ -17,7 +17,7 @@ This directory contains container definitions, database migrations, seeds, and v
 
 The schema strictly implements the entities and constraints specified in `docs/SPEC.md` Section 9, `docs/ARCHITECTURE.md` Section 5 & 7, and `contracts/schemas/`:
 
-- **Core entities**: `plans`, `users`, `projects`, `chapters`, `characters`, `panels`, `pages`, `colour_palettes`, `colour_regions`, `stage_approvals`, `generation_jobs`, `credit_ledger`, `exports`.
+- **Core entities**: `plans`, `users`, `projects`, `chapters`, `characters`, `panels`, `pages`, `colour_palettes` and `colour_regions` (retired, kept for data), `stage_approvals`, `generation_jobs`, `credit_ledger`, `exports`.
 - **Automatic Migration on Startup**: In `docker-compose.yml`, a dedicated `migration` container runs `deploy/migrate.sh` against PostgreSQL on startup, creating the `schema_migrations` tracking table, applying all `.up.sql` migrations in sequential order, and loading seed data before the Go backend starts.
 - **Stale-approval rule semantics**: Entities support freshness checks comparing `approved_at` timestamps against `updated_at` (for edits) and `generation_jobs.completed_at` (for regenerations).
 - **Provenance preservation**: The `exports.provenance_metadata_preserved` column and check constraint ensure C2PA/watermark metadata is preserved prior to export completion.

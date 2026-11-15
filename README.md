@@ -13,18 +13,17 @@
 
 Turn a written story into a comic, one reviewable stage at a time.
 
-Icomic is an AI-powered comic creator with an approval-gated workflow. Writers can shape characters, plan chapters, review page compositions and line art, colour pages, then export a comic. Deterministic fake adapters keep the app usable and testable without credentials or network access.
+Icomic is an AI-powered comic creator with an approval-gated workflow. Writers can shape characters, plan chapters, review page compositions and finished painted pages, then export a comic. Deterministic fake adapters keep the app usable and testable without credentials or network access.
 
-## The eight stages
+## The seven stages
 
 1. Script
 2. Characters and reference images
 3. Chapter outline
 4. Panel text and page layout
 5. Rough page sketches
-6. Final line art
-7. Colouring
-8. Comic assembly and PDF export
+6. Finished painted page
+7. Comic assembly and PDF export
 
 Image stages wait for explicit approval, and users can review generated work before moving forward.
 

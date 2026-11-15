@@ -128,7 +128,6 @@ func TestInvalidRequestsCannotDispatchOrCharge(t *testing.T) {
 	for _, tc := range []struct{ method, path, body string }{
 		{"POST", "/characters/00000000-0000-0000-0000-000000000001/reference-image", `{"prompt":`},
 		{"PATCH", "/pages/00000000-0000-0000-0000-000000000001", `{"panel_ids":["bad-id"]}`},
-		{"PATCH", "/pages/00000000-0000-0000-0000-000000000001/colour-palette", `{"palette":[]}`},
 		{"PATCH", "/panels/00000000-0000-0000-0000-000000000001", `{"dialogue":1}`},
 		{"POST", "/projects/00000000-0000-0000-0000-000000000001/export", `{"format":"surprise"}`},
 		{"POST", "/projects/00000000-0000-0000-0000-000000000001/export", `{"page_size":"a4,us_letter"}`},

@@ -365,43 +365,13 @@ export class ApiClient {
 		return res && res.page ? res.page : res;
 	}
 
-	async generateLineArt(pageId, variant, options) {
-		return this.postGeneration(`/api/v1/pages/${pageId}/line-art${variant === 'ink' ? '?variant=ink' : ''}`, options);
+	// The painted finished page is the only final route; this path is its stable alias.
+	async generateLineArt(pageId, options) {
+		return this.postGeneration(`/api/v1/pages/${pageId}/line-art`, options);
 	}
 
-	async approveLineArt(pageId, variant) {
-		const res = await this.request(`/api/v1/pages/${pageId}/line-art/approve${variant === 'ink' ? '?variant=ink' : ''}`, {
-			method: 'POST'
-		});
-		return res && res.page ? res.page : res;
-	}
-
-	async getColourPalette(pageId) {
-		const res = await this.request(`/api/v1/pages/${pageId}/colour-palette`);
-		return res && res.palette ? res.palette : res;
-	}
-
-	async suggestColourPalette(pageId, options) {
-		return this.postGeneration(`/api/v1/pages/${pageId}/colour-palette/suggest`, options);
-	}
-
-	async updateColourPalette(pageId, palette) {
-		return this.request(`/api/v1/pages/${pageId}/colour-palette`, {
-			method: 'PATCH',
-			body: JSON.stringify({ palette })
-		});
-	}
-
-	async uploadColourImage(pageId, imageBlob) {
-		return this.request(`/api/v1/pages/${pageId}/colour-image`, {
-			method: 'PUT',
-			body: imageBlob,
-			headers: { 'Content-Type': imageBlob?.type || 'image/png' }
-		});
-	}
-
-	async approveColour(pageId) {
-		const res = await this.request(`/api/v1/pages/${pageId}/colour/approve`, {
+	async approveLineArt(pageId) {
+		const res = await this.request(`/api/v1/pages/${pageId}/line-art/approve`, {
 			method: 'POST'
 		});
 		return res && res.page ? res.page : res;

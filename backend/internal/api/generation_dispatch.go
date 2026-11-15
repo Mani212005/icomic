@@ -16,13 +16,14 @@ import (
 )
 
 // Queue operations whose committed envelopes the dispatcher can replay. Only debited
-// (paid image and colour) jobs carry an envelope: a text or export job has no charge to strand.
+// (paid image) jobs carry an envelope: a text or export job has no charge to strand. The retired
+// Ink operations "generate-line-art" and "suggest-colour-palette" are deliberately absent: an envelope
+// committed before the route was removed reaches the unknown-operation branch of replayEnvelope, which
+// fails the job and refunds its debit instead of spending on a route that no longer exists.
 const (
 	opCharacterReference = "generate-character-reference"
 	opDraftSketch        = "generate-draft-sketch"
-	opLineArt            = "generate-line-art"
 	opPaintedPage        = "generate-painted-page"
-	opColourPalette      = "suggest-colour-palette"
 )
 
 const (
@@ -126,24 +127,6 @@ func (s *Server) finalizeDraftSketch(ctx context.Context, job *domain.Generation
 	return imgURL, s.completeGeneration(ctx, job)
 }
 
-func (s *Server) finalizeLineArt(ctx context.Context, job *domain.GenerationJob, req gen.GenerateLineArtRequest, resp *gen.GenerateLineArtResponse) (string, error) {
-	pg, err := s.Repo.GetPage(ctx, req.PageID)
-	if err != nil {
-		return "", newSaveError(http.StatusInternalServerError, "Failed to save page", err)
-	}
-	imgURL := s.ImageHosting.ResolveURL(resp.ImageURL)
-	pg.LineArtImageURL = imgURL
-	pg.LineArtImageJobID = &job.ID
-	pg.ColourImageURL = ""
-	pg.ColourImageUploadedAt = nil
-	domain.StaleOnLineArtRegeneration(pg, time.Now().UTC())
-	if err := s.Repo.UpdatePage(ctx, pg); err != nil {
-		return "", newSaveError(http.StatusInternalServerError, "Failed to save page", err)
-	}
-	s.recordProvenance(ctx, req.ProjectID, imgURL, resp.ProvenanceMetadata)
-	return imgURL, s.completeGeneration(ctx, job)
-}
-
 func (s *Server) finalizePaintedPage(ctx context.Context, job *domain.GenerationJob, req gen.GeneratePaintedPageRequest, resp *gen.GeneratePaintedPageResponse) (*domain.Page, string, error) {
 	pg, err := s.Repo.GetPage(ctx, req.PageID)
 	if err != nil {
@@ -175,23 +158,13 @@ func (s *Server) finalizePaintedPage(ctx context.Context, job *domain.Generation
 	return pg, imgURL, s.completeGeneration(ctx, job)
 }
 
-func (s *Server) finalizeColourPalette(ctx context.Context, job *domain.GenerationJob, req gen.SuggestColourPaletteRequest, resp *gen.SuggestColourPaletteResponse) (map[string]interface{}, error) {
-	palette := make(map[string]interface{})
-	for _, item := range resp.Palette {
-		palette[item.RegionName] = item.HexColor
-	}
-	if err := s.Repo.SaveColourPalette(ctx, &domain.ColourPalette{PageID: req.PageID, SuggestionJobID: &job.ID, Palette: palette}); err != nil {
-		return nil, newSaveError(http.StatusInternalServerError, "Failed to save colour palette", err)
-	}
-	return palette, s.completeGeneration(ctx, job)
-}
-
 // generationDebit is the amount a job's creation debited, which a known failure refunds.
 func (s *Server) generationDebit(job *domain.GenerationJob) float64 {
 	switch job.JobType {
 	case "character_reference", "draft_sketch", "final_line_art":
 		return s.Pricing.ImagePriceUSD
 	case "colour_suggestion":
+		// Retired job type: still refunded in full when a job from before the retirement fails.
 		return s.Pricing.ColourEstimateUSD
 	}
 	return 0
@@ -262,22 +235,10 @@ func (s *Server) replayEnvelope(ctx context.Context, job *domain.GenerationJob, 
 				_, err := s.finalizeDraftSketch(ctx, job, req, resp)
 				return err
 			})
-	case opLineArt:
-		return replayDispatch(s, ctx, job, d, s.AIClient.GenerateLineArt,
-			func(ctx context.Context, job *domain.GenerationJob, req gen.GenerateLineArtRequest, resp *gen.GenerateLineArtResponse) error {
-				_, err := s.finalizeLineArt(ctx, job, req, resp)
-				return err
-			})
 	case opPaintedPage:
 		return replayDispatch(s, ctx, job, d, s.AIClient.GeneratePaintedPage,
 			func(ctx context.Context, job *domain.GenerationJob, req gen.GeneratePaintedPageRequest, resp *gen.GeneratePaintedPageResponse) error {
 				_, _, err := s.finalizePaintedPage(ctx, job, req, resp)
-				return err
-			})
-	case opColourPalette:
-		return replayDispatch(s, ctx, job, d, s.AIClient.SuggestColourPalette,
-			func(ctx context.Context, job *domain.GenerationJob, req gen.SuggestColourPaletteRequest, resp *gen.SuggestColourPaletteResponse) error {
-				_, err := s.finalizeColourPalette(ctx, job, req, resp)
 				return err
 			})
 	}

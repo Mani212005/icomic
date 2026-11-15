@@ -23,11 +23,9 @@ from app.adapters.language.fake import FakeLanguageAdapter
 from app.adapters.language.meta import MetaLanguageAdapter
 from app.adapters.language.port import Message
 from app.adapters.storage.fake import FakeStorageAdapter
-from app.adapters.vision.meta import MetaVisionAdapter
 from app.costs import calculate_checklist_worst_case
 from app.provider_costs import ProviderCostLedger
 from app.services.character import CharacterService
-from app.services.colour import ColourService
 from app.services.draft import DraftService
 from app.services.moderation import ModerationService
 from app.services.pacing import panel_count, split_text
@@ -41,7 +39,6 @@ USAGE = {
     "characters": (70, 678),
     "outline": (71, 762),
     "panels": (50, 1056),
-    "vision": (3271, 809),
 }
 FIXTURE = Path(__file__).resolve().parents[3] / "tests/fixtures/the_tide_clock.txt"
 
@@ -84,27 +81,21 @@ def test_long_fixture_with_recorded_costs_completes_under_shared_cap(
             )
         messages = payload["messages"]
         content = messages[-1]["content"]
-        operation = "vision" if isinstance(content, list) else "moderation"
+        operation = "moderation"
         if isinstance(content, str):
             try:
                 operation = json.loads(content)["operation"]
             except (ValueError, KeyError):
                 pass
         counts[operation] += 1
-        if operation != "vision":
-            language_requests.append((messages, payload["max_tokens"]))
-        if operation == "vision":
-            answer = '{"theme":"Sea","palette":[{"region_name":"sea","hex_color":"#123456","label":"Sea"}]}'
-        else:
-            answer = FakeLanguageAdapter().complete(
-                "", [Message(role=m["role"], content=m["content"]) for m in messages]
-            )
-            if operation == "characters":
-                # Four retained profiles exercise the estimate's ~0.6 USD variant.
-                profile = json.loads(answer)[0]
-                answer = json.dumps(
-                    [{**profile, "name": name} for name in ("Nia", "Sol", "Ada", "Bo")]
-                )
+        language_requests.append((messages, payload["max_tokens"]))
+        answer = FakeLanguageAdapter().complete(
+            "", [Message(role=m["role"], content=m["content"]) for m in messages]
+        )
+        if operation == "characters":
+            # Four retained profiles exercise the estimate's ~0.6 USD variant.
+            profile = json.loads(answer)[0]
+            answer = json.dumps([{**profile, "name": name} for name in ("Nia", "Sol", "Ada", "Bo")])
         inputs, outputs = USAGE[operation]
         return httpx.Response(
             200,
@@ -122,7 +113,6 @@ def test_long_fixture_with_recorded_costs_completes_under_shared_cap(
     }
     language = MetaLanguageAdapter(**kwargs, cost_stage="language")
     images = MetaImageAdapter(**kwargs, cost_stage="image")
-    vision = MetaVisionAdapter(**kwargs, cost_stage="vision")
     moderation = ModerationService(language)
     script = FIXTURE.read_text()
     moderation.moderate_prompt(script)
@@ -166,7 +156,7 @@ def test_long_fixture_with_recorded_costs_completes_under_shared_cap(
                     "hash",
                     references,
                 )
-                finish, _, _, _ = PaintedPageService(images, storage).generate_painted_page(
+                PaintedPageService(images, storage).generate_painted_page(
                     f"{index}-{page_index}",
                     page_index + 1,
                     page_panels,
@@ -175,7 +165,6 @@ def test_long_fixture_with_recorded_costs_completes_under_shared_cap(
                     variant="direct-from-brief",
                     character_reference_image_urls=references,
                 )
-            ColourService(vision).suggest_palette(storage.get(finish), page)
     assert len(generated) == 51
     assert counts == {
         "characters": 7,
@@ -183,7 +172,6 @@ def test_long_fixture_with_recorded_costs_completes_under_shared_cap(
         "panels": 12,
         "moderation": 38 + regenerations * 12,
         "image": 28 + regenerations * 24,
-        "vision": 12,
     }
     # Explicit caller replays of bounded language requests model operator retries;
     # capped HTTP clients themselves continue to make zero automatic retries.
@@ -202,7 +190,7 @@ def test_long_fixture_with_recorded_costs_completes_under_shared_cap(
     assert report["unpriced_calls"] == 0
     assert report["cumulative_accounted_spend_usd"] + report["third_check_reserve_usd"] < 2
     assert report["actual_spend_usd"] == pytest.approx(
-        0.594634 if not regenerations else 1.453432, abs=1e-9
+        0.50431 if not regenerations else 1.363108, abs=1e-9
     )
     assert counts["moderation"] == (38 + regenerations * 12) * (1 + replays)
     for call in report["calls"]:

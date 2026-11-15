@@ -61,18 +61,11 @@ func TestKillSwitchEnforcementAcrossAllStages(t *testing.T) {
 		t.Fatalf("expected 429 for draft sketch with kill switch active, got: %d", recDraft.Code)
 	}
 
-	// 3. Line art
-	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art?variant=ink", nil)
+	// 3. Finished painted page
+	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art", nil)
 	recLine := serveGeneration(s, handler, reqLine)
 	if recLine.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429 for line art with kill switch active, got: %d", recLine.Code)
-	}
-
-	// 4. Suggest colour palette
-	reqCol := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/colour-palette/suggest", nil)
-	recCol := serveGeneration(s, handler, reqCol)
-	if recCol.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429 for colour palette suggestion with kill switch active, got: %d", recCol.Code)
+		t.Fatalf("expected 429 for the finished page with kill switch active, got: %d", recLine.Code)
 	}
 
 	// Deactivate kill switch
@@ -290,7 +283,7 @@ func TestCascadePanelEditStalesDraftApproval(t *testing.T) {
 	}
 
 	// 1. Line art generation succeeds with approved draft
-	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art?variant=ink", nil)
+	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art?variant=draft-conditioned", nil)
 	recLine := serveGeneration(s, handler, reqLine)
 	if recLine.Code != http.StatusAccepted {
 		t.Fatalf("line art generation should succeed with approved draft, got: %d", recLine.Code)
@@ -336,7 +329,7 @@ func TestCascadePanelEditStalesDraftApproval(t *testing.T) {
 	}
 }
 
-func TestCascadeDraftRegenerationStalesLineArtApproval(t *testing.T) {
+func TestCascadeDraftRegenerationStalesFinishedPageApproval(t *testing.T) {
 	s, handler, repo := setupTestServer(true, "test-user")
 
 	now := time.Now().UTC()
@@ -388,40 +381,38 @@ func TestCascadeDraftRegenerationStalesLineArtApproval(t *testing.T) {
 	handler.ServeHTTP(recAppDraft, reqAppDraft)
 
 	// Generate line art & approve
-	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art?variant=ink", nil)
+	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art?variant=draft-conditioned", nil)
 	serveGeneration(s, handler, reqLine)
 
-	reqAppLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art/approve?variant=ink", nil)
+	reqAppLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/line-art/approve", nil)
 	recAppLine := httptest.NewRecorder()
 	handler.ServeHTTP(recAppLine, reqAppLine)
 
-	// Colour palette suggestion succeeds with approved line art
-	reqCol := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pg.ID+"/colour-palette/suggest", nil)
-	recCol := serveGeneration(s, handler, reqCol)
-	if recCol.Code != http.StatusAccepted {
-		t.Fatalf("colour suggestion should succeed with approved line art, got: %d", recCol.Code)
+	approvedFinish, err := repo.GetPage(nil, pg.ID)
+	if err != nil || approvedFinish.PaintedPageApprovedAt == nil {
+		t.Fatalf("finished page should be approved before the draft is regenerated: %+v err=%v", approvedFinish, err)
 	}
 
-	// 1. User regenerates draft sketch -> triggers cascade staling line art approval
+	// 1. User regenerates draft sketch -> triggers cascade staling the finished page approval
 	time.Sleep(10 * time.Millisecond)
 	recRegenDraft := serveGeneration(s, handler, reqDraft)
 	if recRegenDraft.Code != http.StatusAccepted {
 		t.Fatalf("draft regeneration failed: %d", recRegenDraft.Code)
 	}
 
-	// 2. Colour suggestion is now BLOCKED because line art approval was staled!
-	recColStale := serveGeneration(s, handler, reqCol)
-	if recColStale.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for colour suggestion after draft regeneration, got: %d", recColStale.Code)
+	// 2. The finished page approval was staled by the new draft
+	staledFinish, err := repo.GetPage(nil, pg.ID)
+	if err != nil || staledFinish.PaintedPageApprovedAt != nil || staledFinish.DraftApprovedAt != nil {
+		t.Fatalf("draft regeneration did not stale the finished page and draft approvals: %+v err=%v", staledFinish, err)
 	}
 
-	// 3. Line art generation is also BLOCKED because draft sketch needs new approval
+	// 3. A draft-conditioned finish is also BLOCKED because the draft sketch needs new approval
 	recLineStale := serveGeneration(s, handler, reqLine)
 	if recLineStale.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for line art before new draft is approved, got: %d", recLineStale.Code)
 	}
 
-	// 4. Re-approve draft -> generate line art -> approve line art -> colour suggestion succeeds!
+	// 4. Re-approve draft -> generate the finished page -> approve it
 	recAppDraft2 := httptest.NewRecorder()
 	handler.ServeHTTP(recAppDraft2, reqAppDraft)
 
@@ -429,9 +420,8 @@ func TestCascadeDraftRegenerationStalesLineArtApproval(t *testing.T) {
 
 	recAppLineFresh := httptest.NewRecorder()
 	handler.ServeHTTP(recAppLineFresh, reqAppLine)
-
-	recColFresh := serveGeneration(s, handler, reqCol)
-	if recColFresh.Code != http.StatusAccepted {
-		t.Fatalf("expected 202 for colour suggestion after line art re-approved, got: %d", recColFresh.Code)
+	if recAppLineFresh.Code != http.StatusOK {
+		t.Fatalf("expected 200 approving the finished page after the draft was re-approved, got: %d", recAppLineFresh.Code)
 	}
+
 }

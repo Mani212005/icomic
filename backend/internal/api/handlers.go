@@ -1,14 +1,10 @@
 package api
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/png"
 	"io"
 	"log"
 	"net/http"
@@ -22,7 +18,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "golang.org/x/image/webp"
 	"icomic/backend/gen"
 	"icomic/backend/internal/auth"
 	"icomic/backend/internal/credits"
@@ -1493,31 +1488,24 @@ func (s *Server) FinishPageImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	inkVariant := r.URL.Query().Get("variant") == "ink"
-	if variant := r.URL.Query().Get("variant"); variant != "" && variant != "ink" && variant != "painted" {
-		writeError(w, http.StatusBadRequest, "variant must be painted or ink")
+	if variant := r.URL.Query().Get("variant"); variant != "" && variant != "painted" {
+		writeError(w, http.StatusBadRequest, "variant must be painted")
 		return
 	}
-	eligible := (page.LetteringMode == "overlay" && page.LineArtImageURL == "" && !inkVariant) || project.FinishPresetExplicit
+	eligible := (page.LetteringMode == "overlay" && page.LineArtImageURL == "") || project.FinishPresetExplicit
 	if !eligible || project.FinishPreset == "off" {
 		writeJSON(w, http.StatusOK, map[string]string{"finished_image_url": ""})
 		return
 	}
+	// A page finished before the Ink route was retired has approved line art and no painted page:
+	// it still previews from that art.
 	var sourceURL string
-	if inkVariant {
-		if page.LineArtImageURL != "" && page.LineArtApprovedAt != nil && !domain.IsApprovalStale(page.LineArtApprovedAt, page.UpdatedAt) {
-			sourceURL = page.LineArtImageURL
-		}
-	} else if page.PaintedPageImageURL != "" && page.PaintedPageApprovedAt != nil && !domain.IsApprovalStale(page.PaintedPageApprovedAt, page.UpdatedAt) {
+	if page.PaintedPageImageURL != "" && page.PaintedPageApprovedAt != nil && !domain.IsApprovalStale(page.PaintedPageApprovedAt, page.UpdatedAt) {
 		sourceURL = page.PaintedPageImageURL
 	} else if page.LineArtImageURL != "" && page.LineArtApprovedAt != nil && !domain.IsApprovalStale(page.LineArtApprovedAt, page.UpdatedAt) {
 		sourceURL = page.LineArtImageURL
 	} else {
 		writeError(w, http.StatusConflict, "page has no approved final art")
-		return
-	}
-	if sourceURL == "" {
-		writeError(w, http.StatusConflict, "page has no approved final art for this variant")
 		return
 	}
 	preset := gen.FinishPreset(project.FinishPreset)
@@ -1820,207 +1808,6 @@ func (s *Server) ApproveDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "page": pg})
 }
 
-// GenerateLineArt handles POST /api/v1/pages/{id}/line-art
-func (s *Server) GenerateLineArt(w http.ResponseWriter, r *http.Request) {
-	var reqBody struct {
-		Variant string `json:"variant,omitempty"`
-		Route   string `json:"route,omitempty"`
-	}
-	if r.Body != nil {
-		bodyBytes, _ := io.ReadAll(r.Body)
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		_ = json.Unmarshal(bodyBytes, &reqBody)
-	}
-	variant := r.URL.Query().Get("variant")
-	if variant == "" {
-		variant = reqBody.Variant
-	}
-	if variant != "ink" {
-		s.GeneratePaintedPage(w, r)
-		return
-	}
-
-	userID := s.getUserID(r)
-	pageID := r.PathValue("id")
-
-	pg, err := s.Repo.GetPage(r.Context(), pageID)
-	if err != nil {
-		writeLookupError(w, err, "Page")
-		return
-	}
-
-	if pg.LetteringMode == "overlay" {
-		writeError(w, http.StatusConflict, "Overlay pages require painted finish; ink remains baked")
-		return
-	}
-
-	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
-	if err != nil {
-		writeLookupError(w, err, "Chapter")
-		return
-	}
-
-	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil {
-		writeLookupError(w, err, "Project")
-		return
-	}
-	if proj.UserID != userID {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-
-	// Kill switch and quota check (SPEC 5.5)
-	if err := s.CheckKillSwitchAndQuota(r, userID); err != nil {
-		writeGenerationError(w, err)
-		return
-	}
-
-	// Draft approval gate (ARCHITECTURE 5.3)
-	draftApproved := pg.DraftApprovedAt != nil && !domain.IsApprovalStale(pg.DraftApprovedAt, pg.UpdatedAt)
-	if !draftApproved {
-		writeError(w, http.StatusBadRequest, "Draft sketch must be approved before generating final line art")
-		return
-	}
-
-	if s.AIClient == nil {
-		writeError(w, http.StatusServiceUnavailable, "AI service not available")
-		return
-	}
-
-	chars, err := s.Repo.ListCharacters(r.Context(), proj.ID)
-	if err != nil {
-		writeLookupError(w, err, "Character list")
-		return
-	}
-
-	allPanels, err := s.Repo.ListPanels(r.Context(), c.ID)
-	if err != nil {
-		writeLookupError(w, err, "Panel list")
-		return
-	}
-	panelMap := make(map[string]*domain.Panel)
-	for _, p := range allPanels {
-		panelMap[p.ID] = p
-	}
-
-	var panelItems []gen.PanelTextItem
-	for idx, pid := range pg.PanelIDs {
-		if p, ok := panelMap[pid]; ok {
-			panelItems = append(panelItems, gen.PanelTextItem{
-				PanelNumber:      p.PanelNumber,
-				SceneDescription: p.SceneDescription,
-				CharacterActions: p.CharacterActions,
-				CameraAngle:      p.CameraAngle,
-				Background:       p.Background,
-				Narration:        p.Narration,
-				Dialogue:         p.Dialogue,
-				ImagePrompt:      p.ImagePrompt,
-			})
-		} else {
-			panelItems = append(panelItems, gen.PanelTextItem{
-				PanelNumber:      idx + 1,
-				SceneDescription: fmt.Sprintf("Panel %d", idx+1),
-				ImagePrompt:      fmt.Sprintf("Panel %d", idx+1),
-			})
-		}
-	}
-
-	idempKey := generationKey(r)
-	hashedUID := domain.HashUserID(userID)
-
-	lineArtStyle := proj.ArtStyle
-	if lineArtStyle == "" {
-		lineArtStyle = "classic-comic"
-	}
-	aiReq := gen.GenerateLineArtRequest{
-		HashedUserID:        hashedUID,
-		ProjectID:           proj.ID,
-		PageID:              pg.ID,
-		PageNumber:          pg.PageNumber,
-		DraftImageURL:       pg.DraftImageURL,
-		Panels:              panelItems,
-		Style:               lineArtStyle,
-		CharacterIdentities: characterRenderIdentities(chars),
-	}
-	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		EntityID:         pg.ID,
-		DebitAmount:      s.Pricing.ImagePriceUSD,
-		KillSwitchActive: s.IsKillSwitchActive(),
-		ProjectID:        proj.ID,
-		UserID:           userID,
-		JobType:          "final_line_art",
-		Stage:            "line_art",
-		ModelID:          s.Pricing.ImageModelID,
-		IdempotencyKey:   idempKey,
-		EstimatedCost:    s.Pricing.ImagePriceUSD,
-		HashedUserID:     hashedUID,
-		Envelope:         newEnvelope(opLineArt, aiReq),
-	})
-	if err != nil {
-		writeGenerationError(w, err)
-		return
-	}
-	s.writeReceipt(w, job, gen.Page, "")
-}
-
-// ApproveLineArt handles POST /api/v1/pages/{id}/line-art/approve
-func (s *Server) ApproveLineArt(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("variant") != "ink" {
-		if page, err := s.Repo.GetPage(r.Context(), r.PathValue("id")); err == nil && page.PaintedPageImageURL != "" {
-			s.ApprovePaintedPage(w, r)
-			return
-		}
-	}
-	userID := s.getUserID(r)
-	pageID := r.PathValue("id")
-
-	pg, err := s.Repo.GetPage(r.Context(), pageID)
-	if err != nil {
-		writeLookupError(w, err, "Page")
-		return
-	}
-
-	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
-	if err != nil {
-		writeLookupError(w, err, "Chapter")
-		return
-	}
-
-	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil {
-		writeLookupError(w, err, "Project")
-		return
-	}
-	if proj.UserID != userID {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-
-	if pg.LineArtImageURL == "" {
-		writeError(w, http.StatusBadRequest, "Generate line art before approving it")
-		return
-	}
-	if !s.requireCurrentArt(w, r, pg, pg.LineArtImageJobID, "line art") {
-		return
-	}
-
-	now := timestampAfterActivity(pg.UpdatedAt)
-	if !s.commitApproval(w, r, &domain.StageApproval{
-		ProjectID:                proj.ID,
-		EntityType:               "line_art_page",
-		EntityID:                 pg.ID,
-		ApprovedByUserID:         userID,
-		ApprovedAt:               now,
-		CreditEstimateAtApproval: s.Pricing.ImagePriceUSD,
-	}, pg.UpdatedAt) {
-		return
-	}
-
-	pg.LineArtApprovedAt = &now
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "page": pg})
-}
-
 // GeneratePaintedPage handles the default finished-page route and its explicit API alias.
 func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 	userID := s.getUserID(r)
@@ -2071,10 +1858,6 @@ func (s *Server) GeneratePaintedPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if chosenVariant == "" || chosenVariant == "painted" {
 		chosenVariant = defaultPaintedPageVariant
-	}
-	if chosenVariant == "ink" {
-		writeError(w, http.StatusBadRequest, "Use the line-art route for ink generation")
-		return
 	}
 	if chosenVariant != "draft-conditioned" && chosenVariant != "direct-from-brief" {
 		writeError(w, http.StatusBadRequest, "Unknown painted page variant")
@@ -2272,290 +2055,6 @@ func (s *Server) ApprovePaintedPage(w http.ResponseWriter, r *http.Request) {
 
 	pg.PaintedPageApprovedAt = &now
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "page": pg})
-}
-
-// -------------------------------------------------------------
-// Colouring
-// -------------------------------------------------------------
-
-// GetColourPalette handles GET /api/v1/pages/{id}/colour-palette
-func (s *Server) GetColourPalette(w http.ResponseWriter, r *http.Request) {
-	pageID := r.PathValue("id")
-	if _, status := s.getOwnedPage(r, pageID); status != http.StatusOK {
-		message := "forbidden"
-		if status == http.StatusNotFound {
-			message = "Page not found"
-		}
-		if status >= http.StatusInternalServerError {
-			message = "Unable to load the requested resource."
-		}
-		writeError(w, status, message)
-		return
-	}
-	cp, err := s.Repo.GetColourPalette(r.Context(), pageID)
-	if errors.Is(err, db.ErrNotFound) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"palette": map[string]string{}})
-		return
-	}
-	if err != nil || cp == nil {
-		if err == nil {
-			err = errors.New("palette repository returned no data")
-		}
-		writeLookupError(w, err, "Colour palette")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"palette": cp.Palette})
-}
-
-// SuggestColourPalette handles POST /api/v1/pages/{id}/colour-palette/suggest
-func (s *Server) SuggestColourPalette(w http.ResponseWriter, r *http.Request) {
-	userID := s.getUserID(r)
-	pageID := r.PathValue("id")
-
-	pg, err := s.Repo.GetPage(r.Context(), pageID)
-	if err != nil {
-		writeLookupError(w, err, "Page")
-		return
-	}
-
-	c, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
-	if err != nil {
-		writeLookupError(w, err, "Chapter")
-		return
-	}
-
-	proj, err := s.Repo.GetProject(r.Context(), c.ProjectID)
-	if err != nil {
-		writeLookupError(w, err, "Project")
-		return
-	}
-	if proj.UserID != userID {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-
-	// Kill switch and quota check (SPEC 5.5)
-	if err := domain.CheckKillSwitchAndQuota(s.IsKillSwitchActive(), 0, 0, 0, 0); err != nil {
-		writeGenerationError(w, err)
-		return
-	}
-
-	// Line art approval gate (SPEC 5.3, ARCHITECTURE 5.3)
-	lineArtApproved := pg.LineArtApprovedAt != nil && !domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt)
-	if !lineArtApproved {
-		writeError(w, http.StatusBadRequest, "Final line art must be approved before colour palette suggestion")
-		return
-	}
-
-	lineArtURL := pg.LineArtImageURL
-	parsedURL, parseErr := url.Parse(lineArtURL)
-	if parseErr != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		writeError(w, http.StatusConflict, "Page has no valid stored line art image URL; generate and approve line art before suggesting a palette")
-		return
-	}
-
-	if s.AIClient == nil {
-		writeError(w, http.StatusServiceUnavailable, "AI service not available")
-		return
-	}
-
-	idempKey := generationKey(r)
-	hashedUID := domain.HashUserID(userID)
-
-	aiReq := gen.SuggestColourPaletteRequest{
-		HashedUserID:    hashedUID,
-		ProjectID:       proj.ID,
-		PageID:          pg.ID,
-		LineArtImageURL: lineArtURL,
-		PanelContext:    fmt.Sprintf("Page %d of chapter %d", pg.PageNumber, c.ChapterNumber),
-		Style:           &proj.ArtStyle,
-	}
-	job, _, err := s.JobService.CreateJob(r.Context(), jobs.CreateJobRequest{
-		EntityID:         pg.ID,
-		DebitAmount:      s.Pricing.ColourEstimateUSD,
-		KillSwitchActive: s.IsKillSwitchActive(),
-		ProjectID:        proj.ID,
-		UserID:           userID,
-		JobType:          "colour_suggestion",
-		Stage:            "colour",
-		ModelID:          s.Pricing.VisionModelID,
-		IdempotencyKey:   idempKey,
-		EstimatedCost:    s.Pricing.ColourEstimateUSD,
-		HashedUserID:     hashedUID,
-		Envelope:         newEnvelope(opColourPalette, aiReq),
-	})
-	if err != nil {
-		writeGenerationError(w, err)
-		return
-	}
-	s.writeReceipt(w, job, gen.Page, "")
-}
-
-// UpdateColourPalette handles PATCH /api/v1/pages/{id}/colour-palette
-func (s *Server) UpdateColourPalette(w http.ResponseWriter, r *http.Request) {
-	pageID := r.PathValue("id")
-	if _, status := s.getOwnedPage(r, pageID); status != http.StatusOK {
-		message := "forbidden"
-		if status == http.StatusNotFound {
-			message = "Page not found"
-		}
-		if status >= http.StatusInternalServerError {
-			message = "Unable to load the requested resource."
-		}
-		writeError(w, status, message)
-		return
-	}
-	var body struct {
-		Palette map[string]interface{} `json:"palette"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-
-	if err := s.Repo.SaveColourPalette(r.Context(), &domain.ColourPalette{
-		PageID:  pageID,
-		Palette: body.Palette,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save colour palette")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"palette": body.Palette})
-}
-
-// detectColourImageType identifies the supported media type from image bytes, never from a client header.
-func detectColourImageType(data []byte) (gen.StoreColourImageRequestMediaType, bool) {
-	if len(data) >= 8 && string(data[:8]) == "\x89PNG\r\n\x1a\n" {
-		return gen.ImagePng, true
-	}
-	if len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP" {
-		return gen.ImageWebp, true
-	}
-	return "", false
-}
-
-// UploadColourImage stores the browser-coloured page image beside its unchanged line art.
-func (s *Server) UploadColourImage(w http.ResponseWriter, r *http.Request) {
-	userID := s.getUserID(r)
-	pageID := r.PathValue("id")
-	pg, err := s.Repo.GetPage(r.Context(), pageID)
-	if err != nil {
-		writeLookupError(w, err, "Page")
-		return
-	}
-	chapter, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
-	if err != nil {
-		writeLookupError(w, err, "Chapter")
-		return
-	}
-	project, err := s.Repo.GetProject(r.Context(), chapter.ProjectID)
-	if err != nil {
-		writeLookupError(w, err, "Project")
-		return
-	}
-	if project.UserID != userID {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if pg.LineArtImageURL == "" || pg.LineArtApprovedAt == nil || domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt) {
-		writeError(w, http.StatusBadRequest, "Approved line art is required before uploading page colours")
-		return
-	}
-	if s.AIClient == nil {
-		writeError(w, http.StatusServiceUnavailable, "AI service not available")
-		return
-	}
-	imageBytes, err := io.ReadAll(io.LimitReader(r.Body, s.Limits.ImageBytes+1))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "Could not read coloured page image")
-		return
-	}
-	if len(imageBytes) == 0 {
-		writeError(w, http.StatusBadRequest, "Coloured page image is empty")
-		return
-	}
-	if int64(len(imageBytes)) > s.Limits.ImageBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "Coloured page image exceeds configured byte limit")
-		return
-	}
-	mediaType, ok := detectColourImageType(imageBytes)
-	if !ok {
-		writeError(w, http.StatusUnsupportedMediaType, "Coloured page image must be PNG or WebP")
-		return
-	}
-	config, _, err := image.DecodeConfig(bytes.NewReader(imageBytes))
-	if err != nil || config.Width <= 0 || config.Height <= 0 {
-		writeError(w, http.StatusBadRequest, "Invalid coloured page image")
-		return
-	}
-	if int64(config.Width) > s.Limits.ImagePixels/int64(config.Height) {
-		writeError(w, http.StatusRequestEntityTooLarge, "Coloured page image exceeds configured pixel limit")
-		return
-	}
-	stored, err := s.AIClient.StoreColourImage(r.Context(), gen.StoreColourImageRequest{
-		PageID:      pageID,
-		ImageBase64: base64.StdEncoding.EncodeToString(imageBytes),
-		MediaType:   mediaType,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("Could not store coloured page image: %v", err))
-		return
-	}
-	imageURL := s.ImageHosting.ResolveURL(stored.ImageURL)
-	uploadedAt := time.Now().UTC()
-	if err := s.Repo.SavePageColourImage(r.Context(), pageID, imageURL, uploadedAt); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save coloured page image")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"colour_image_url":         imageURL,
-		"colour_image_uploaded_at": uploadedAt,
-	})
-}
-
-// ApproveColour handles POST /api/v1/pages/{id}/colour/approve
-func (s *Server) ApproveColour(w http.ResponseWriter, r *http.Request) {
-	userID := s.getUserID(r)
-	pageID := r.PathValue("id")
-
-	pg, err := s.Repo.GetPage(r.Context(), pageID)
-	if err != nil {
-		writeLookupError(w, err, "Page")
-		return
-	}
-	chapter, err := s.Repo.GetChapter(r.Context(), pg.ChapterID)
-	if err != nil {
-		writeLookupError(w, err, "Chapter")
-		return
-	}
-
-	project, err := s.Repo.GetProject(r.Context(), chapter.ProjectID)
-	if err != nil {
-		writeLookupError(w, err, "Project")
-		return
-	}
-	if project.UserID != userID {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if pg.ColourImageURL == "" || pg.ColourImageUploadedAt == nil {
-		writeError(w, http.StatusBadRequest, "Upload the coloured page image before approving colour")
-		return
-	}
-	if pg.LineArtApprovedAt == nil || domain.IsApprovalStale(pg.LineArtApprovedAt, pg.UpdatedAt) {
-		writeError(w, http.StatusBadRequest, "Current approved line art is required before approving colour")
-		return
-	}
-
-	now := time.Now().UTC()
-	if err := s.Repo.RecordApproval(r.Context(), &domain.StageApproval{
-		ProjectID:        chapter.ProjectID,
-		EntityType:       "colour_page",
-		EntityID:         pageID,
-		ApprovedByUserID: userID,
-		ApprovedAt:       now,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "Failed to save approval")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "approved", "colour_approved_at": now})
 }
 
 // -------------------------------------------------------------

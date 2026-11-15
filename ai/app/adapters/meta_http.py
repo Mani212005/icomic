@@ -10,7 +10,6 @@ import logging
 import math
 import os
 import random
-import re
 import struct
 import threading
 import time
@@ -25,7 +24,7 @@ from typing_extensions import Self
 
 from ..provider_costs import ProviderBudgetError, ProviderCostLedger, token_output_bound
 from ..provider_diagnostics import ProviderDiagnostics, last_response
-from ..provider_output import ProviderOutputError, reject_schema_echo
+from ..provider_output import ProviderOutputError
 from .image.conditioning import (
     ConditioningLimits,
     ImagePayloadError,
@@ -34,7 +33,6 @@ from .image.conditioning import (
 )
 from .image.port import ImageResult
 from .language.port import Message, TokenUsage
-from .vision.port import ColourItem, PaletteSuggestion
 
 logger = logging.getLogger(__name__)
 
@@ -820,60 +818,6 @@ def parse_responses_image_response(
         width=width,
         height=height,
     )
-
-
-def parse_palette_json(content: str) -> PaletteSuggestion:
-    """Parse JSON palette response from multimodal vision completion."""
-    cleaned = content.strip()
-    # Strip markdown fenced code blocks if present
-    if "```" in cleaned:
-        match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
-        if match:
-            cleaned = match.group(1).strip()
-
-    try:
-        parsed = json.loads(cleaned)
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise ProviderOutputError("palette", "invalid_or_incomplete_json") from exc
-    reject_schema_echo(parsed, "palette")
-    if (
-        not isinstance(parsed, dict)
-        or not isinstance(parsed.get("theme"), str)
-        or not parsed["theme"].strip()
-    ):
-        raise ProviderOutputError("palette", "schema_mismatch")
-    theme = parsed["theme"]
-    palette_raw = parsed.get("palette")
-    items: list[ColourItem] = []
-
-    if isinstance(palette_raw, list):
-        for entry in palette_raw:
-            if (
-                not isinstance(entry, dict)
-                or not all(
-                    isinstance(entry.get(k), str) and entry[k].strip()
-                    for k in ("region_name", "hex_color", "label")
-                )
-                or not re.fullmatch(r"#[0-9a-fA-F]{6}", entry["hex_color"])
-            ):
-                raise ProviderOutputError("palette", "schema_mismatch")
-            items.append(
-                ColourItem(
-                    region_name=entry["region_name"],
-                    hex_color=entry["hex_color"].upper(),
-                    label=entry["label"],
-                )
-            )
-
-    if not items:
-        raise ProviderOutputError("palette", "empty_palette")
-
-    return PaletteSuggestion(theme=theme, palette=items)
-
-
-# ---------------------------------------------------------------------------
-# Meta HTTP Client
-# ---------------------------------------------------------------------------
 
 
 class _ObservedResponseStream(httpx.SyncByteStream):

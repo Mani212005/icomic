@@ -1,14 +1,11 @@
 """FastAPI entry point for Icomic Python AI service."""
 
-import base64
-import binascii
 import hashlib
 import logging
 import math
 import mimetypes
 import os
 import posixpath
-import uuid
 from contextlib import asynccontextmanager
 from functools import wraps
 from io import BytesIO
@@ -34,8 +31,6 @@ from .gen.models import (
     GenerateCharacterReferenceResponse,
     GenerateDraftSketchRequest,
     GenerateDraftSketchResponse,
-    GenerateLineArtRequest,
-    GenerateLineArtResponse,
     GeneratePaintedPageRequest,
     GeneratePaintedPageResponse,
     GeneratePanelTextRequest,
@@ -48,16 +43,11 @@ from .gen.models import (
     ModeratePromptResponse,
     ProviderSpendResponse,
     ReadinessResponse,
-    StoreColourImageRequest,
-    StoreColourImageResponse,
-    SuggestColourPaletteRequest,
-    SuggestColourPaletteResponse,
 )
 from .policies import DirectStoragePolicy
 from .provider_costs import provider_operation
 from .provider_diagnostics import last_response
 from .services.character import CharacterService
-from .services.colour import ColourService
 from .services.draft import DraftService
 from .services.errors import JobExecutionError, classify_error
 from .services.finish_layer import FinishStrength, finish_image, page_seed
@@ -67,7 +57,6 @@ from .services.lettering.subjects import (
     subject_detection_enabled,
     to_art_subjects,
 )
-from .services.line_art import LineArtService
 from .services.moderation import ModerationService
 from .services.painted_page import PaintedPageService
 from .services.panel import PanelService
@@ -115,9 +104,7 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
     character_service = CharacterService(wired_adapters.image, wired_adapters.storage)
     panel_service = PanelService(wired_adapters.language)
     draft_service = DraftService(wired_adapters.image, wired_adapters.storage)
-    line_art_service = LineArtService(wired_adapters.image, wired_adapters.storage)
     painted_page_service = PaintedPageService(wired_adapters.image, wired_adapters.storage)
-    colour_service = ColourService(wired_adapters.vision)
     moderation_service = ModerationService(wired_adapters.language)
     pdf_service = PdfAssemblyService(wired_adapters.storage)
 
@@ -372,29 +359,6 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
         )
 
     @app.post(
-        "/internal/v1/generate-line-art",
-        response_model=GenerateLineArtResponse,
-    )
-    @queued("image", wired_adapters.image)
-    def generate_line_art(req: GenerateLineArtRequest):
-        url, model_id, provenance = line_art_service.generate_line_art(
-            page_id=str(req.page_id),
-            page_number=req.page_number,
-            draft_image_url=req.draft_image_url,
-            panels=req.panels,
-            style=req.style,
-            hashed_user_id=req.hashed_user_id,
-            character_reference_image_urls=req.character_reference_image_urls,
-            character_identities=req.character_identities,
-        )
-        return GenerateLineArtResponse(
-            job_id=str(req.job_id),
-            image_url=url,
-            model_id=model_id,
-            provenance_metadata=provenance,
-        )
-
-    @app.post(
         "/internal/v1/generate-painted-page",
         response_model=GeneratePaintedPageResponse,
     )
@@ -431,60 +395,6 @@ def create_app(adapters: AdapterSet | None = None) -> FastAPI:
             lettering_subjects=subjects,
             lettering_subjects_source=source,
         )
-
-    @app.post(
-        "/internal/v1/suggest-colour-palette",
-        response_model=SuggestColourPaletteResponse,
-    )
-    @queued("vision", wired_adapters.vision)
-    def suggest_colour_palette(req: SuggestColourPaletteRequest):
-        line_art_image_bytes = app.state.media_fetch_adapter.fetch(req.line_art_image_url)
-        theme, palette = colour_service.suggest_palette(
-            line_art_image_bytes=line_art_image_bytes,
-            panel_context=req.panel_context,
-            style=req.style,
-        )
-        return SuggestColourPaletteResponse(
-            job_id=str(req.job_id),
-            theme=theme,
-            palette=palette,
-        )
-
-    @app.post(
-        "/internal/v1/store-colour-image",
-        response_model=StoreColourImageResponse,
-    )
-    def store_colour_image(req: StoreColourImageRequest):
-        try:
-            image_bytes = base64.b64decode(req.image_base64, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise HTTPException(
-                status_code=400, detail="Coloured page image is not valid base64"
-            ) from exc
-        if not image_bytes or len(image_bytes) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Coloured page image has an invalid size")
-        detected = None
-        try:
-            with Image.open(BytesIO(image_bytes)) as image:
-                detected = image.format
-                image.verify()
-        except Exception as exc:
-            raise HTTPException(
-                status_code=400, detail="Coloured page image is not a valid PNG or WebP"
-            ) from exc
-        if detected == "PNG":
-            media_type, extension = "image/png", "png"
-        elif detected == "WEBP":
-            media_type, extension = "image/webp", "webp"
-        else:
-            raise HTTPException(status_code=400, detail="Coloured page image must be PNG or WebP")
-        if media_type != req.media_type:
-            raise HTTPException(
-                status_code=400, detail="Coloured page image media type does not match its bytes"
-            )
-        key = f"pages/{req.page_id}/colours/{uuid.uuid4()}.{extension}"
-        image_url = wired_adapters.storage.put(key, image_bytes, media_type)
-        return StoreColourImageResponse(image_url=image_url)
 
     @app.post(
         "/internal/v1/finish-page-image",

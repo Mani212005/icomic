@@ -23,10 +23,7 @@ type AIService interface {
 	GenerateChapterOutline(ctx context.Context, req GenerateChapterOutlineRequest) (*GenerateChapterOutlineResponse, error)
 	GeneratePanelText(ctx context.Context, req GeneratePanelTextRequest) (*GeneratePanelTextResponse, error)
 	GenerateDraftSketch(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error)
-	GenerateLineArt(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error)
 	GeneratePaintedPage(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error)
-	SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
-	StoreColourImage(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error)
 	FinishPageImage(ctx context.Context, req FinishPageImageRequest) (*FinishPageImageResponse, error)
 	AssemblePdf(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
 	GetJobStatus(ctx context.Context, jobID string) (*JobStatusResponse, error)
@@ -170,33 +167,9 @@ func (c *AIServiceClient) GenerateDraftSketch(ctx context.Context, req GenerateD
 	return &resp, nil
 }
 
-func (c *AIServiceClient) GenerateLineArt(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error) {
-	var resp GenerateLineArtResponse
-	if err := c.postJSON(ctx, "/internal/v1/generate-line-art", req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
 func (c *AIServiceClient) GeneratePaintedPage(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error) {
 	var resp GeneratePaintedPageResponse
 	if err := c.postJSON(ctx, "/internal/v1/generate-painted-page", req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *AIServiceClient) SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error) {
-	var resp SuggestColourPaletteResponse
-	if err := c.postJSON(ctx, "/internal/v1/suggest-colour-palette", req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *AIServiceClient) StoreColourImage(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error) {
-	var resp StoreColourImageResponse
-	if err := c.postJSON(ctx, "/internal/v1/store-colour-image", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -292,10 +265,7 @@ type FakeAIServiceClient struct {
 	GenerateChapterOutlineFunc     func(ctx context.Context, req GenerateChapterOutlineRequest) (*GenerateChapterOutlineResponse, error)
 	GeneratePanelTextFunc          func(ctx context.Context, req GeneratePanelTextRequest) (*GeneratePanelTextResponse, error)
 	GenerateDraftSketchFunc        func(ctx context.Context, req GenerateDraftSketchRequest) (*GenerateDraftSketchResponse, error)
-	GenerateLineArtFunc            func(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error)
 	GeneratePaintedPageFunc        func(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error)
-	SuggestColourPaletteFunc       func(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error)
-	StoreColourImageFunc           func(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error)
 	FinishPageImageFunc            func(ctx context.Context, req FinishPageImageRequest) (*FinishPageImageResponse, error)
 	AssemblePdfFunc                func(ctx context.Context, req AssemblePdfRequest) (*AssemblePdfResponse, error)
 	GetJobStatusFunc               func(ctx context.Context, jobID string) (*JobStatusResponse, error)
@@ -477,22 +447,6 @@ func (f *FakeAIServiceClient) GenerateDraftSketch(ctx context.Context, req Gener
 	}, nil
 }
 
-func (f *FakeAIServiceClient) GenerateLineArt(ctx context.Context, req GenerateLineArtRequest) (*GenerateLineArtResponse, error) {
-	if f.GenerateLineArtFunc != nil {
-		return f.GenerateLineArtFunc(ctx, req)
-	}
-	return &GenerateLineArtResponse{
-		JobID:    req.JobID,
-		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/lineart/page_%s.png", req.PageID),
-		ModelID:  "muse-image-1.0-fake",
-		ProvenanceMetadata: map[string]interface{}{
-			"c2pa": map[string]interface{}{
-				"watermark_present": true,
-			},
-		},
-	}, nil
-}
-
 func (f *FakeAIServiceClient) GeneratePaintedPage(ctx context.Context, req GeneratePaintedPageRequest) (*GeneratePaintedPageResponse, error) {
 	if f.GeneratePaintedPageFunc != nil {
 		return f.GeneratePaintedPageFunc(ctx, req)
@@ -508,30 +462,6 @@ func (f *FakeAIServiceClient) GeneratePaintedPage(ctx context.Context, req Gener
 				"watermark_present": true,
 			},
 		},
-	}, nil
-}
-
-func (f *FakeAIServiceClient) SuggestColourPalette(ctx context.Context, req SuggestColourPaletteRequest) (*SuggestColourPaletteResponse, error) {
-	if f.SuggestColourPaletteFunc != nil {
-		return f.SuggestColourPaletteFunc(ctx, req)
-	}
-	return &SuggestColourPaletteResponse{
-		JobID: req.JobID,
-		Theme: "Cyberpunk Neon",
-		Palette: []ColourRegionSuggestion{
-			{RegionName: "background", HexColor: "#1A0B2E", Label: "Deep Space Violet"},
-			{RegionName: "skin", HexColor: "#F5D0C5", Label: "Warm Fair Skin"},
-			{RegionName: "hair", HexColor: "#00CED1", Label: "Vibrant Cyan"},
-		},
-	}, nil
-}
-
-func (f *FakeAIServiceClient) StoreColourImage(ctx context.Context, req StoreColourImageRequest) (*StoreColourImageResponse, error) {
-	if f.StoreColourImageFunc != nil {
-		return f.StoreColourImageFunc(ctx, req)
-	}
-	return &StoreColourImageResponse{
-		ImageURL: fmt.Sprintf("http://localhost:8000/storage/fake/pages/%s/colours/fake.png", req.PageID),
 	}, nil
 }
 

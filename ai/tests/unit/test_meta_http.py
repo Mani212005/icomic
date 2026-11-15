@@ -31,7 +31,6 @@ from app.adapters.meta_http import (
     extract_provenance,
     load_reasoning_config,
     parse_chat_completion_response,
-    parse_palette_json,
     parse_responses_image_response,
     validate_reasoning_effort,
 )
@@ -222,28 +221,6 @@ def test_detect_c2pa_markers_in_jpeg_app11_and_webp():
     # 4. Clean image bytes without C2PA marker return False
     clean_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
     assert detect_c2pa_markers(clean_bytes) is False
-
-
-def test_parse_palette_json_valid_and_rejects_malformed_output():
-    # Valid JSON inside code block
-    raw_response = (
-        "Here is the requested palette:\n```json\n"
-        '{\n  "theme": "Sunset Highway",\n'
-        '  "palette": [\n'
-        '    {"region_name": "sky", "hex_color": "#FF5733", "label": "Orange Sky"},\n'
-        '    {"region_name": "road", "hex_color": "#1C1C1C", "label": "Asphalt"}\n'
-        "  ]\n}\n```"
-    )
-    suggestion = parse_palette_json(raw_response)
-    assert suggestion.theme == "Sunset Highway"
-    assert len(suggestion.palette) == 2
-    assert suggestion.palette[0].hex_color == "#FF5733"
-    assert suggestion.palette[1].region_name == "road"
-
-    from app.provider_output import ProviderOutputError
-
-    with pytest.raises(ProviderOutputError, match="palette"):
-        parse_palette_json("Sorry, I cannot generate colours for this image.")
 
 
 # ---------------------------------------------------------------------------

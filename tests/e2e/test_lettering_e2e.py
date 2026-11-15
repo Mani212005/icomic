@@ -196,10 +196,10 @@ def test_new_overlay_page_stores_layout_without_changing_source_art(api_client, 
     with zipfile.ZipFile(BytesIO(httpx.get(zipped.json()["export"]["file_url"]).content)) as z:
         assert json.loads(z.read("manifest.json"))["pages"][0]["lettering"] == "withheld"
         assert z.read("pages/page-001.png") == image
-    # Explicit ink never consumes text-free art.
+    # The retired Ink variant is refused and never consumes text-free art.
     assert (
         api_client.post(f"/api/v1/pages/{page_id}/line-art", json={"variant": "ink"}).status_code
-        == 409
+        == 400
     )
 
 

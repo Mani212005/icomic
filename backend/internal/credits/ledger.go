@@ -19,7 +19,8 @@ var (
 const (
 	// Flat per-image attempt cost for Meta muse-image-1.0 (SPEC 5.2).
 	ImageUnitPrice = 0.01
-	// Estimated token cost for colour palette suggestion (SPEC 5.2).
+	// Estimated token cost of the retired colour palette suggestion (SPEC 5.2). It only sizes the
+	// refund of a colour job started before the Ink route was removed.
 	ColourSuggestionUnitPrice = 0.005
 )
 

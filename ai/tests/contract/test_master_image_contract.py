@@ -36,7 +36,6 @@ from app.main import create_app
 from app.services.character import CharacterService
 from app.services.draft import DraftService
 from app.services.images import store_page_image
-from app.services.line_art import LineArtService
 
 
 def make_test_image(format_name: str, size: tuple[int, int] = (120, 80)) -> bytes:
@@ -204,20 +203,6 @@ def test_services_record_role_and_prompt_version():
     assert draft_prov["role"] == "draft"
     assert "prompt_version" in draft_prov
     assert draft_prov["source_hash"] != ""
-
-    line_svc = LineArtService(adapters.image, adapters.storage)
-    draft_url = adapters.storage.put("draft.png", make_test_image("PNG"), "image/png")
-    _, _, line_prov = line_svc.generate_line_art(
-        page_id="page-1",
-        page_number=1,
-        draft_image_url=draft_url,
-        panels=[],
-        style="comic",
-        hashed_user_id="user-1",
-    )
-    assert line_prov["role"] == "line_art"
-    assert "prompt_version" in line_prov
-    assert line_prov["source_hash"] != ""
 
 
 def test_page_art_cleanup_records_source_and_derivative_hash():

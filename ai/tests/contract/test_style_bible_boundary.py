@@ -3,21 +3,14 @@
 Verifies:
 1. Style bible resolver resolves all standard presets with stable version and hash.
 2. Character reference prompt incorporates style bible visual guidance without duplicate Style strings.
-3. Draft sketch and line art briefs carry the resolved style bible.
-4. Line art stage prompt avoids contradictory 'no shading' exclusions for screentone/hatching/chiaroscuro styles.
-5. Colour palette suggestion incorporates the style bible palette guidance into vision context.
-6. Unknown or custom styles resolve to a safe, deterministic style bible fallback.
+3. Draft sketch and painted page briefs carry the resolved style bible.
+4. Unknown or custom styles resolve to a safe, deterministic style bible fallback.
 """
-
-from uuid import uuid4
-
-from fastapi.testclient import TestClient
 
 from app.adapters.storage.fake import FakeStorageAdapter
 from app.gen.models import CharacterRenderIdentity, PanelTextItem
 from app.main import create_app
 from app.services.character import CharacterService
-from app.services.line_art import LineArtService
 from app.services.render_brief import build_page_render_request
 from tests.image_fixtures import image_bytes
 
@@ -63,7 +56,7 @@ def test_character_reference_uses_style_bible_without_duplicate_style():
     assert prompt.count("Style: cyberpunk-noir") <= 1
 
 
-def test_draft_and_line_art_briefs_carry_style_bible():
+def test_draft_and_page_briefs_carry_style_bible():
     """Defect 3: Render brief contains only raw string style, missing style bible."""
     import json
 
@@ -112,62 +105,6 @@ def test_draft_and_line_art_briefs_carry_style_bible():
     assert sb["mood"] == bible.mood
     assert sb["depth"] == bible.depth
     assert sb["negative_constraints"] == bible.negative_constraints
-
-
-def test_line_art_stage_avoids_contradictory_no_shading_for_manga_and_noir():
-    """Defect 4: Line art stage forces 'no shading, flat white fills' contradicting manga/noir."""
-    app = create_app()
-    storage = app.state.storage_adapter
-    draft_url = storage.put("draft.png", image_bytes("draft"), "image/png")
-    service = LineArtService(app.state.image_adapter, storage)
-
-    # Manga ink requires screentones, cross-hatching, and value modeling
-    service.generate_line_art(
-        page_id=str(uuid4()),
-        page_number=1,
-        draft_image_url=draft_url,
-        panels=[
-            PanelTextItem(
-                panel_number=1,
-                scene_description="Action",
-                character_actions="Strikes",
-                camera_angle="Low angle",
-                background="Dojo",
-                dialogue="",
-                narration="",
-                image_prompt="Ink splatters",
-            )
-        ],
-        style="manga-ink",
-        hashed_user_id="user-hash",
-    )
-    calls = app.state.image_adapter.recorded_calls
-    prompt = calls[0]["prompt"]
-    assert "no shading" not in prompt.lower()
-    assert "flat white fills" not in prompt.lower()
-
-
-def test_suggest_colour_palette_incorporates_style_bible():
-    """Defect 5: Colour palette suggestion has no style input or style bible context."""
-
-    app = create_app()
-    storage = app.state.storage_adapter
-    line_art_url = storage.put("line_art.png", b"\x89PNG\r\n\x1a\nlineart", "image/png")
-
-    with TestClient(app) as client:
-        resp = client.post(
-            "/internal/v1/suggest-colour-palette",
-            json={
-                "job_id": str(uuid4()),
-                "hashed_user_id": "test-user",
-                "project_id": str(uuid4()),
-                "page_id": str(uuid4()),
-                "line_art_image_url": line_art_url,
-                "panel_context": "Page 1 of chapter 1",
-                "style": "cyberpunk-noir",
-            },
-        )
-        assert resp.status_code == 200, resp.text
 
 
 def test_unknown_style_fallback_is_safe_and_deterministic():

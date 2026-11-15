@@ -15,7 +15,6 @@ icomic/
 │   │   ├── routes/             # SvelteKit pages
 │   │   ├── lib/
 │   │   │   ├── editor/         # Comic book editor components
-│   │   │   ├── colour/         # Colour editor + paint-bucket fill (client-side)
 │   │   │   └── api/            # Handwritten API client and types (JavaScript, not generated)
 │   │   └── app.html
 │   ├── package.json
@@ -64,8 +63,7 @@ icomic/
 │   │   │   ├── panel.py
 │   │   │   ├── character.py
 │   │   │   ├── draft.py
-│   │   │   ├── line_art.py
-│   │   │   ├── colour.py
+│   │   │   ├── painted_page.py
 │   │   │   └── moderation.py
 │   │   └── gen/                # Models generated from contracts/openapi/ai-service.yaml
 │   ├── tests/
@@ -94,12 +92,12 @@ icomic/
 
 | Service | Technology | Owns |
 |---|---|---|
-| **Frontend** | Svelte | UI rendering, colour editor, paint-bucket fill tool (client-side), job polling, user flows |
+| **Frontend** | Svelte | UI rendering, job polling, user flows |
 | **Go API** | Go + net/http | Auth, session, project/chapter/character/page/panel CRUD, credit ledger, quota enforcement, kill switch, job creation, hashed user ID, approval gates, presigned download URLs |
-| **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, finished painted pages (or explicit ink), colour suggestion, PDF assembly |
-| **PostgreSQL** | Postgres | Durable project state, credit ledger, job records, stage approvals, colour palettes |
+| **Python AI service** | Python + FastAPI | All AI dispatch, adapter wiring, prompt pre-moderation, script analysis, panel text, character description, draft sketch, finished painted pages, PDF assembly |
+| **PostgreSQL** | Postgres | Durable project state, credit ledger, job records, stage approvals |
 | **Redis** | Redis | Job queue; pending, running, retried, and cancelled job envelopes (a job cancelled before it reached the queue is cancelled in PostgreSQL and its outbox envelope; see 5.2.1) |
-| **Object storage** | S3-compatible | Approved working copies (draft, painted page or ink page, reference), exported PDFs (generated images are Meta-hosted) |
+| **Object storage** | S3-compatible | Approved working copies (draft, painted page, reference; pages finished with the retired Ink route keep their line art and coloured image), exported PDFs (generated images are Meta-hosted) |
 
 **Communication rules:**
 
@@ -139,7 +137,7 @@ class LanguagePort(Protocol):
 ```python
 class VisionPort(Protocol):
     def review(self, model: str, image_bytes: bytes, prompt: str) -> str: ...
-    def suggest_palette(self, model: str, image_bytes: bytes, panel_context: str) -> PaletteSuggestion: ...
+    def detect_subjects(self, model: str, image_bytes: bytes, characters: list[str]) -> list[SubjectBox]: ...
 ```
 
 #### ImagePort
@@ -198,7 +196,7 @@ Each port has a deterministic fake adapter that runs with no network and no key.
 | Port | Fake behaviour |
 |---|---|
 | FakeLanguageAdapter | Returns deterministic structured character, outline and panel JSON for story operations; other prompts use an input hash |
-| FakeVisionAdapter | Returns a fixed palette suggestion; review returns a fixed OK string |
+| FakeVisionAdapter | Returns deterministic subject boxes; review returns a fixed OK string |
 | FakeImageAdapter | Returns a small test PNG (e.g., a 64x64 white image with a border); provenance_metadata is a fixed JSON stub |
 | FakeStorageAdapter | Stores blobs in memory (or a temp dir); returns local file URIs |
 | FakeMediaFetchAdapter | Resolves stored URLs from the in-memory storage port; never uses the network |
@@ -253,15 +251,14 @@ POST /internal/v1/generate-character-reference
 POST /internal/v1/generate-chapter-outline
 POST /internal/v1/generate-panel-text
 POST /internal/v1/generate-draft-sketch
-POST /internal/v1/generate-line-art
-POST /internal/v1/suggest-colour-palette
+POST /internal/v1/generate-painted-page
 POST /internal/v1/moderate-prompt
 POST /internal/v1/assemble-pdf        (format pdf, or png_zip for the page PNG ZIP)
 GET  /internal/v1/job/:id/status
 ```
 
 All requests include a `job_id` (idempotency key) and `hashed_user_id`.
-The colour suggestion request carries `line_art_image_url` and `panel_context`; the Python service resolves the approved image bytes through `MediaFetchPort` and passes both inputs to `VisionPort.suggest_palette`.
+The Ink route's internal endpoints `generate-line-art`, `suggest-colour-palette` and `store-colour-image` were removed with it. A dispatch envelope committed for one of those operations before the removal is failed and refunded by the dispatcher, never sent.
 
 ---
 
@@ -281,13 +278,13 @@ The colour suggestion request carries `line_art_image_url` and `panel_context`; 
 - Re-enqueueing a job with the same key is a no-op: the worker checks the key, finds the existing record, and returns the existing result without generating a new image or charging credits.
 - This makes worker retries on queue delivery failures safe.
 
-**Compatibility change: generation requests answer with a receipt (W21).** The five debited public endpoints (`POST /characters/{id}/reference-image`, `/pages/{id}/draft`, `/pages/{id}/line-art`, `/pages/{id}/painted-page`, `/pages/{id}/colour-palette/suggest`) no longer wait for the provider. Earlier versions held the HTTP request open until Python returned the saved result and answered with the finished image URL (or the palette), so a browser could not poll or cancel its first submission and a dropped connection (a flaky tunnel, a proxy timeout) left the client with "Failed to fetch" even though the server finished, inviting a paid retry. Now the request answers `202` as soon as the PostgreSQL transaction that creates the job, takes the debit and stores the dispatch envelope has committed. The body is a receipt (`GenerationReceipt` in `contracts/openapi/ai-service.yaml`, routes in `contracts/openapi/generation-api.yaml`): `job`, `job_id`, `status` (`pending`, or the job's current status when the request repeats a known key), `entity_type` (`character` or `page`), `entity_id`, `project_id`, and `variant` for painted pages. The receipt carries no result and no `image_url` or `palette`: the client polls `GET /api/v1/generation-jobs/{id}` by the receipt's job ID and reads the finished entity once the job is `done`. A failed provider call is no longer the HTTP answer; the job settles `failed` (known failure, refunded) or `uncertain` (unknown outcome, debit kept) with its error message, code and retry guidance. The painted-page route, which answered `200` with the page, now answers `202` like the others. The `Idempotency-Key` header makes a repeated request return the same receipt with the job's current status at any point, never a second job or debit, so a client that lost the connection repeats the request (the frontend retries a dropped request with the same key, and remembers the job ID per project so a reload resumes polling it). A second request without a key while one is active for the same entity and stage is refused with `409`. Text, outline, panel and PDF export requests carry no debit or envelope and still wait for their result; they are not covered by this change.
+**Compatibility change: generation requests answer with a receipt (W21).** The four debited public endpoints (`POST /characters/{id}/reference-image`, `/pages/{id}/draft`, `/pages/{id}/line-art`, `/pages/{id}/painted-page`) no longer wait for the provider. Earlier versions held the HTTP request open until Python returned the saved result and answered with the finished image URL (or the palette), so a browser could not poll or cancel its first submission and a dropped connection (a flaky tunnel, a proxy timeout) left the client with "Failed to fetch" even though the server finished, inviting a paid retry. Now the request answers `202` as soon as the PostgreSQL transaction that creates the job, takes the debit and stores the dispatch envelope has committed. The body is a receipt (`GenerationReceipt` in `contracts/openapi/ai-service.yaml`, routes in `contracts/openapi/generation-api.yaml`): `job`, `job_id`, `status` (`pending`, or the job's current status when the request repeats a known key), `entity_type` (`character` or `page`), `entity_id`, `project_id`, and `variant` for painted pages. The receipt carries no result and no `image_url` or `palette`: the client polls `GET /api/v1/generation-jobs/{id}` by the receipt's job ID and reads the finished entity once the job is `done`. A failed provider call is no longer the HTTP answer; the job settles `failed` (known failure, refunded) or `uncertain` (unknown outcome, debit kept) with its error message, code and retry guidance. The painted-page route, which answered `200` with the page, now answers `202` like the others. The `Idempotency-Key` header makes a repeated request return the same receipt with the job's current status at any point, never a second job or debit, so a client that lost the connection repeats the request (the frontend retries a dropped request with the same key, and remembers the job ID per project so a reload resumes polling it). A second request without a key while one is active for the same entity and stage is refused with `409`. Text, outline, panel and PDF export requests carry no debit or envelope and still wait for their result; they are not covered by this change.
 
 Delivery is the outbox's job, not the request's. After the commit the request only wakes the dispatcher and returns. Go sends the committed envelope to Python through the internal HTTP queue submission: Python serializes the operation and validated request into `QueuePort`, and only the consumer invokes services. The fake queue drains synchronously inside that call, while `ADAPTER_QUEUE=redis` starts one consumer per AI service process during application startup. The internal contract is unchanged: Go's dispatcher goroutine, not the browser's request, waits for the saved result. Paid Go endpoints accept an optional `Idempotency-Key` header scoped to the authenticated user, path and operation; omitting it creates a new attempt.
 
 The Redis adapter atomically saves the envelope and pending state, claims deliveries with a 15 minute lease, and saves terminal responses and costs before acknowledgement. Repeated submissions and redeliveries return that saved response without invoking a provider again. Redis must use persistent storage and AOF; the Compose stack enables AOF with synchronous fsync. Queue status and responses survive AI process restarts, while PostgreSQL remains the owner of the public job and credit state. Go saves image links before marking persistent jobs done, and failed-job polling retries an idempotent refund transaction if the original delivery was interrupted.
 
-**Durable dispatch outbox.** `CreateGeneration` inserts a `generation_dispatches` row beside the job and the debit for every debited job (character reference, draft sketch, line art, painted page, colour palette). The row holds the operation and the exact validated request with the job ID stamped in, which is also the queue key. A committed row is claimable at once. The creating request returns its receipt and wakes the dispatcher; it does not deliver. One bounded dispatcher (at most two envelopes in flight, shared by the wake-up path, the poll loop and restart recovery) claims a row with a 20 minute lease, retires it when the job reaches a terminal state, and releases it for a retry when saving a finished result fails. `Server.RunDispatcher` polls every 5 seconds for rows whose retry delay or lease lapsed. On start it also takes rows still leased to the previous process, since a restart ends that process's deliveries; this assumes one backend instance, and a second instance would only repeat idempotent sends. The in-memory job service keeps the same outbox, so hermetic and fake-stack runs follow the same receipt-then-delivery path. It resends the envelope through the same idempotent queue: the queue runs a job it never saw exactly once and otherwise returns the saved result, failure or uncertain outcome without calling a provider. A saved success goes through the same finalizer the request path uses (entity link, then job `done`), so a result the provider finished but Go never linked is applied after a restart without another provider call or charge. A failed outcome is refunded and an unknown one keeps its debit, as for the request path. An unreachable queue is not a provider outcome: the row is retried, and after 5 attempts the job fails and is refunded. Text, outline, panel and export jobs carry no debit and no envelope. Uncommitted or rolled-back work never has a row.
+**Durable dispatch outbox.** `CreateGeneration` inserts a `generation_dispatches` row beside the job and the debit for every debited job (character reference, draft sketch, painted page). The row holds the operation and the exact validated request with the job ID stamped in, which is also the queue key. A committed row is claimable at once. The creating request returns its receipt and wakes the dispatcher; it does not deliver. One bounded dispatcher (at most two envelopes in flight, shared by the wake-up path, the poll loop and restart recovery) claims a row with a 20 minute lease, retires it when the job reaches a terminal state, and releases it for a retry when saving a finished result fails. `Server.RunDispatcher` polls every 5 seconds for rows whose retry delay or lease lapsed. On start it also takes rows still leased to the previous process, since a restart ends that process's deliveries; this assumes one backend instance, and a second instance would only repeat idempotent sends. The in-memory job service keeps the same outbox, so hermetic and fake-stack runs follow the same receipt-then-delivery path. It resends the envelope through the same idempotent queue: the queue runs a job it never saw exactly once and otherwise returns the saved result, failure or uncertain outcome without calling a provider. A saved success goes through the same finalizer the request path uses (entity link, then job `done`), so a result the provider finished but Go never linked is applied after a restart without another provider call or charge. A failed outcome is refunded and an unknown one keeps its debit, as for the request path. An unreachable queue is not a provider outcome: the row is retried, and after 5 attempts the job fails and is refunded. Text, outline, panel and export jobs carry no debit and no envelope. Uncommitted or rolled-back work never has a row.
 
 A consumer that stops during a provider call leaves an uncertain outcome. When its lease expires the delivery becomes failed, rather than automatically repeating a potentially billed operation. A new generation requires a new key. Completed response records do not expire automatically. Shutdown stops accepting worker progress waits; pending envelopes remain available to the next consumer.
 
@@ -321,17 +318,17 @@ Go enforces this check transactionally before inserting into `generation_jobs` a
 - **Draft sketch generation (per page):** requires approved `character_reference` records for all project characters AND an approved `chapter_outline` for the page's parent chapter (`entity_id=chapter_id`).
 - **Chapter outline generation (project):** requires at least one character and every character approved and current. A project with no characters cannot skip this gate.
 - **Panel text generation (per chapter):** requires a current approved `chapter_outline` for that chapter (`entity_id=chapter_id`), so panels are never generated from an unapproved or edited outline.
-- **Direct-from-brief painted finish (per page):** requires approved character references and chapter outline; draft approval is not required. Draft-conditioned painting and explicit ink require an approved `draft_page` for that page (`entity_id=page_id`).
+- **Direct-from-brief painted finish (per page):** requires approved character references and chapter outline; draft approval is not required. Draft-conditioned painting requires an approved `draft_page` for that page (`entity_id=page_id`).
 
 Regeneration rules:
-- Regeneration of character reference images, draft sketches, or line art is explicitly permitted: a prior completed (`status=done`) or failed (`status=failed`) job for the same entity does not block creating a new generation job with a new idempotency key.
+- Regeneration of character reference images, draft sketches, or finished painted pages is explicitly permitted: a prior completed (`status=done`) or failed (`status=failed`) job for the same entity does not block creating a new generation job with a new idempotency key.
 - Concurrency guard: Go rejects creating a duplicate job only if an active job (`status=pending` or `status=running`) already exists for that entity and stage.
 - Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 
 Approvals describe real artifacts and commit atomically:
-- Approving a character, draft or line art requires that the artifact exists (a reference image, a draft image, a line-art image; extras are approved as profiles without an image). An empty approval is refused with HTTP 400.
+- Approving a character, draft or painted page requires that the artifact exists (a reference image, a draft image, a painted image; extras are approved as profiles without an image). An empty approval is refused with HTTP 400.
 - An approval stamps its entity and appends its `stage_approvals` row in one transaction, conditioned on the entity's `updated_at` as validated. If the entity was edited in between, the approval fails with HTTP 409 instead of blessing a changed version.
-- A draft, line art or painted page can only be approved if the job that made it started after the last edit of the page's panels; otherwise the approval is refused with HTTP 409 and the art must be regenerated. Panel edits and panel moves touch `panels.updated_at`, which the page-level gates read. Overlay-lettered pages are exempt from the currency check, because their text is composited after the art.
+- A draft or painted page can only be approved if the job that made it started after the last edit of the page's panels; otherwise the approval is refused with HTTP 409 and the art must be regenerated. Panel edits and panel moves touch `panels.updated_at`, which the page-level gates read. Overlay-lettered pages are exempt from the currency check, because their text is composited after the art.
 - A panel edit and the staling of every page holding the panel commit together.
 
 Editor edits keep what they do not touch, and show approvals truthfully:
@@ -351,21 +348,21 @@ Page allocation and regeneration are atomic:
 
 The approval gate invariant (no image generation before prerequisite approval) is enforced strictly and transactionally by Go before queue dispatch. In accordance with Section 2 communication rules, the Python service talks to AI adapter ports only and does not perform reverse callbacks into Go.
 
-The default finish is `defaultPaintedPageVariant` in `backend/internal/api/handlers.go`, currently `direct-from-brief`; changing that constant switches the default in one place. The API keeps `variant=ink` as the explicit ink selection.
+The default finish is `defaultPaintedPageVariant` in `backend/internal/api/handlers.go`, currently `direct-from-brief`; changing that constant switches the default in one place. `variant=ink` is retired and answers HTTP 400; `/line-art` and `/painted-page` are aliases of one route, so the painted page is the only final route. Pages finished with the Ink route before its removal keep their approved line art, coloured image and colour approval, and still open, display and export.
 
 ### 5.3.1 Export Gate and Provenance
 
 `POST /projects/{id}/export` takes an optional `{format, page_size}` (`pdf` or `png`; `a4`, `us_letter` or `custom`; defaults PDF on A4). `custom` is the 6.625 x 10.25 in comic page. PNG pages keep their native size. Overlay-lettered pages export in both formats from the same stored layout and the same review gate: the PDF draws it as vector text, and the PNG ZIP rasterizes it onto the artwork (`ai/app/services/lettering/raster.py`, glyph outlines of the bundled fonts, bubbles antialiased, every other pixel unchanged). The original provider file stays under `sources/`, and the manifest records `lettering: drawn` or `withheld` per overlay page. A stale or flagged layout is withheld from both formats and returned as a typed `warnings` entry, which the Export view shows.
 
-Export refuses with `409 EXPORT_NOT_READY` and a per-page `details.problems` list unless every page has a current approved image (line art, uploaded colour or painted page; stale approvals do not count) and the Meta provenance recorded when that image was generated. No placeholder art is ever drawn. If storage no longer holds a page image or an original attachment when the PDF is assembled, the AI service fails with `409 EXPORT_INCOMPLETE`.
+Export refuses with `409 EXPORT_NOT_READY` and a per-page `details.problems` list unless every page has a current approved image (painted page, or the line art or uploaded colour of a page finished with the retired Ink route; stale approvals do not count) and the Meta provenance recorded when that image was generated. No placeholder art is ever drawn. If storage no longer holds a page image or an original attachment when the PDF is assembled, the AI service fails with `409 EXPORT_INCOMPLETE`.
 
-Go records the `provenance_metadata` of every generated draft, line art and painted page in `artifact_provenance`, keyed by the unique image URL and written once. `provider_raw` inside it is the provider's object verbatim, or null when the provider sent none; the remaining keys are Icomic diagnostics. `provenance_metadata_preserved` is true only when every AI source file is attached byte-identical (the raw file when page cleanup produced a derivative) and its SHA-256 equals the recorded `source_hash`. An export that cannot show that is not completed (`409 EXPORT_PROVENANCE_NOT_PRESERVED`). Icomic records provenance; it does not verify C2PA signatures, and no export text claims it does. Pages generated before provenance was recorded must be regenerated before they can be exported.
+Go records the `provenance_metadata` of every generated draft and painted page (and the line art of pages finished with the retired Ink route) in `artifact_provenance`, keyed by the unique image URL and written once. `provider_raw` inside it is the provider's object verbatim, or null when the provider sent none; the remaining keys are Icomic diagnostics. `provenance_metadata_preserved` is true only when every AI source file is attached byte-identical (the raw file when page cleanup produced a derivative) and its SHA-256 equals the recorded `source_hash`. An export that cannot show that is not completed (`409 EXPORT_PROVENANCE_NOT_PRESERVED`). Icomic records provenance; it does not verify C2PA signatures, and no export text claims it does. Pages generated before provenance was recorded must be regenerated before they can be exported.
 
 ### 5.4 No Image Before Approval - Summary
 
 ```
 character reference approved -> chapter_outline approved -> panel text generated
-panel text ready (no separate approval gate) -> draft sketch approved -> painted finish approved (or explicit ink approved) -> colour approved for ink pages
+panel text ready (no separate approval gate) -> draft sketch approved -> painted finish approved
 approved character references anchored across all subsequent page generations
 ```
 
@@ -376,11 +373,11 @@ The Go API checks before creating any generation job:
 1. Is the global kill switch enabled? If yes, reject paid generation with HTTP 429, `code: generation_stopped` and a message saying finished pages, downloads and exports still work.
 2. For image jobs, has the project reached its lifetime book budget (default **40**), or the user reached their rolling 24-hour cap (**80**) or rolling 30-day cap (**800**)? If yes, reject with HTTP 429. Public image endpoints return `code: book_budget_reached` or `code: daily_image_limit_reached` for the first two limits.
 
-The global stop switch is the operator flag (`KILL_SWITCH`, the runtime provider, or `generation_policy.kill_switch_active`, which the spend threshold also sets) and halts **paid generation only**: every job type that can spend at the provider (character reference, draft, finished page, colour palette and the text jobs). It does not halt anything that spends nothing: reading jobs and projects, downloading finished pages and exports, and PDF/PNG export (`pdf_assembly` is exempt from the switch and from the spend-threshold check in `CreateGeneration`). The dispatcher also honours it: while the switch is on, `pumpDispatches` and `ClaimDispatches` claim nothing, so a job that was committed but not yet sent is held `pending` (it can still be cancelled for a full refund) and is sent once the switch is turned off. A job claimed before the switch was turned on is already on its way and finishes. The job whose own debit trips the spend threshold is held like any other unsent job.
+The global stop switch is the operator flag (`KILL_SWITCH`, the runtime provider, or `generation_policy.kill_switch_active`, which the spend threshold also sets) and halts **paid generation only**: every job type that can spend at the provider (character reference, draft, finished page and the text jobs). It does not halt anything that spends nothing: reading jobs and projects, downloading finished pages and exports, and PDF/PNG export (`pdf_assembly` is exempt from the switch and from the spend-threshold check in `CreateGeneration`). The dispatcher also honours it: while the switch is on, `pumpDispatches` and `ClaimDispatches` claim nothing, so a job that was committed but not yet sent is held `pending` (it can still be cancelled for a full refund) and is sent once the switch is turned off. A job claimed before the switch was turned on is already on its way and finishes. The job whose own debit trips the spend threshold is held like any other unsent job.
 
-All limits live in the singleton PostgreSQL `generation_policy` row (`max_book_images`, `max_daily_images`, `max_monthly_images`); zero disables a limit. Forty images accommodates a 12-page, 51-panel book's roughly 30 images (12 drafts, 12 finished painted or ink pages, main-character references) plus revisions. Eighty permits two books in a day, with 800 retaining a monthly guard. Deployment defaults use these limits; any elevated e2e profile belongs only to an isolated e2e database.
+All limits live in the singleton PostgreSQL `generation_policy` row (`max_book_images`, `max_daily_images`, `max_monthly_images`); zero disables a limit. Forty images accommodates a 12-page, 51-panel book's roughly 30 images (12 drafts, 12 finished painted pages, main-character references) plus revisions. Eighty permits two books in a day, with 800 retaining a monthly guard. Deployment defaults use these limits; any elevated e2e profile belongs only to an isolated e2e database.
 
-`CreateGeneration` locks policy then user, checks indexed `image_quota_usage` rows, and inserts the job, ledger debit and project-attributed quota increment in the **same transaction**. Concurrent admissions cannot exceed a boundary. Same-key replays return the original job before quota checks and never increment, including retries after failure or refund. A new key for regeneration or an image edit counts as a new image. Character references, drafts and finished painted page or explicit ink page count; approvals, colouring uploads, language, moderation, palettes and exports do not.
+`CreateGeneration` locks policy then user, checks indexed `image_quota_usage` rows, and inserts the job, ledger debit and project-attributed quota increment in the **same transaction**. Concurrent admissions cannot exceed a boundary. Same-key replays return the original job before quota checks and never increment, including retries after failure or refund. A new key for regeneration or an image edit counts as a new image. Character references, drafts and finished painted pages count; approvals, language, moderation and exports do not.
 
 Failure or cancellation alone retains usage. A full ledger refund deletes that job's quota row in the refund transaction and releases book, daily and monthly usage exactly once; a partial refund retains the image slot. Failed refunds roll back both changes. The ledger preserves the audit trail. Project deletion nulls quota project/job references while preserving user usage and its original timestamp, so it cannot restore daily or monthly capacity. Existing usage is backfilled by upgrade migration; already-deleted jobs have no surviving project attribution.
 
@@ -467,7 +464,7 @@ The following streams can begin in parallel after the contracts are finalised.
    [Database]  [Go API]  [Python AI]  [Svelte]  [CI / Dev Env]
          |          |          |          |          |
    Migrations  CRUD +     Fakes +    Editor UI  Docker Compose
-   Tables      Credit     Services   Colour tool  CI workflow
+   Tables      Credit     Services   Editor tools CI workflow
    Seeds       Ledger     Contract   Export UI    Lint
                Auth       tests      Job polling  Schema checks
                Jobs                              Live check stub
@@ -495,7 +492,7 @@ The following streams can begin in parallel after the contracts are finalised.
 1. Finalise `contracts/openapi/ai-service.yaml` and `contracts/schemas/`.
 2. In parallel: database migrations + Go API skeleton; Python fakes + service stubs; CI workflow scaffold; Svelte scaffold.
 3. Wire Go API to Python test server via contract tests.
-4. Build each pipeline stage (script, character, draft, line art, colour, export) incrementally, adding the corresponding DB tables, Go handler, Python service, and Svelte page as a unit.
+4. Build each pipeline stage (script, character, draft, finished page, export) incrementally, adding the corresponding DB tables, Go handler, Python service, and Svelte page as a unit.
 5. Meta API keys come only after the whole project is built on fakes, activating the inert Meta adapters behind the ports - no other change needed.
 
 ---
@@ -549,11 +546,10 @@ The following assumptions were made in drafting this document:
 
 1. **Draft = one image per page (not per panel).** The spec and the task brief both say "one rough page image per attempt". This is the design. Panels on a page share one draft thumbnail.
 2. **`muse-image-1.0` pricing is $0.01 per image.** Verified by two independent reports (both cite `dev.meta.ai/docs/pricing-rate-limits`). No other Meta image pricing exists.
-3. **Paint-bucket fill is entirely client-side.** The colour editor runs in the browser using Canvas API flood-fill. No AI call is made during fill. Only the palette suggestion step costs a language/vision model call.
-4. **Gap-closing is a client-side algorithm.** Morphological dilation/erosion and the manual gap-closer stroke tool run in the browser; no server round-trip.
-5. **The Python service is an internal service only.** It is not exposed to the internet. Only the Go API is public. This is enforced by Docker network configuration.
-6. **Self-hosted language and vision models are in scope; self-hosted image models are not.** Meta has released open-weights language and vision models (Llama 3.x, Llama 3.2 Vision). No open-weights image model from Meta exists. Per the owner decision of 2026-11-02, generated images are Meta-hosted: the real image adapter returns Meta-hosted URLs or Meta-delivered bytes per Meta's API, and the image hosting seam (ImageHostingSeam in Go, ImageHostingPolicy in Python) stays configurable. Our own storage still holds approved working copies and export PDFs as the architecture already says. The image adapter port keeps this swappable.
-7. **Colour suggestion uses the vision model (approved image bytes + panel context -> palette).** The HTTP media fetch adapter allows only configured storage and Meta image hosts, requires HTTPS for external hosts, rejects redirects and non-public addresses, and bounds response size and time.
-8. **`idempotency_key` on generation jobs is a UUID set by Go at job creation.** It is stored in `generation_jobs` with a unique constraint. Postgres enforces uniqueness; the application does not need a separate lock.
-9. **Age gate is deferred.** The enforced age gate and date-of-birth collection are removed from the build scope; a warning that users must be 18+ (the threshold may be 21, to be confirmed with the owner) will be added in a later release.
-10. **Geo-blocking and region restrictions are deferred.** No country-gating or geo-blocking is enforced; users can be global since the owner is in India.
+3. **The browser colour editor was retired with the Ink route.** Paint-bucket fill, palette suggestion and gap closing no longer exist; the painted page is final as generated and approved.
+4. **The Python service is an internal service only.** It is not exposed to the internet. Only the Go API is public. This is enforced by Docker network configuration.
+5. **Self-hosted language and vision models are in scope; self-hosted image models are not.** Meta has released open-weights language and vision models (Llama 3.x, Llama 3.2 Vision). No open-weights image model from Meta exists. Per the owner decision of 2026-11-02, generated images are Meta-hosted: the real image adapter returns Meta-hosted URLs or Meta-delivered bytes per Meta's API, and the image hosting seam (ImageHostingSeam in Go, ImageHostingPolicy in Python) stays configurable. Our own storage still holds approved working copies and export PDFs as the architecture already says. The image adapter port keeps this swappable.
+6. **The media fetch adapter serves the finish step.** The HTTP media fetch adapter allows only configured storage and Meta image hosts, requires HTTPS for external hosts, rejects redirects and non-public addresses, and bounds response size and time.
+7. **`idempotency_key` on generation jobs is a UUID set by Go at job creation.** It is stored in `generation_jobs` with a unique constraint. Postgres enforces uniqueness; the application does not need a separate lock.
+8. **Age gate is deferred.** The enforced age gate and date-of-birth collection are removed from the build scope; a warning that users must be 18+ (the threshold may be 21, to be confirmed with the owner) will be added in a later release.
+9. **Geo-blocking and region restrictions are deferred.** No country-gating or geo-blocking is enforced; users can be global since the owner is in India.

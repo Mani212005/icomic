@@ -1,7 +1,7 @@
 # Coherent style bible
 
 `ai/app/services/style_bible.py` defines the versioned `style-bible-v1` contract
-shared across character reference, draft sketch, final line art, and palette suggestion.
+shared across character reference, draft sketch, and painted page.
 Style presets resolve raw string IDs into explicit visual directions:
 line treatment, environment, materials, tonal values, palette guidance, lighting,
 mood, depth staging, and negative constraints.
@@ -31,12 +31,9 @@ production defaults.
 2. **Draft sketch (`DraftService`)**: Guides composition and staging from the style
    bible's depth and mood parameters, and embeds the complete resolved `style_bible`
    object into `page-render-brief-v1`.
-3. **Final line art (`LineArtService`)**: Uses the style's line and tonal values
-   directly in stage inking instructions. This removes blanket "flat white fills, no shading"
-   instructions that previously conflicted with screentone, cross-hatching, and chiaroscuro styles.
-4. **Colour palette (`ColourService` and vision adapter)**: Enriches the vision model's
-   panel context with the style's theme, dominant and accent tones, temperature, and
-   suggested region harmonies.
+3. **Painted page (`PaintedPageService`)**: Embeds the same resolved `style_bible`
+   object in the page render brief. The retired Ink route's line-art stage and the
+   colour-palette vision prompt no longer use the style bible.
 
 ## Deduplication and stability
 

@@ -1,6 +1,5 @@
 """Boundary contract tests verifying FastAPI endpoints conform to contracts/openapi/ai-service.yaml."""
 
-import base64
 import hashlib
 import json
 import zipfile
@@ -17,58 +16,16 @@ from app.gen.models import (
     GenerateChapterOutlineResponse,
     GenerateCharacterReferenceResponse,
     GenerateDraftSketchResponse,
-    GenerateLineArtResponse,
     GeneratePanelTextResponse,
     HealthResponse,
     JobStatusResponse,
     ModeratePromptResponse,
-    SuggestColourPaletteResponse,
 )
 from app.main import create_app
 from tests.image_fixtures import image_bytes
 
 app = create_app()
 client = TestClient(app)
-
-
-def test_store_colour_image_contract_and_content_type_validation():
-    page_id = "55555555-5555-5555-5555-555555555555"
-    png_buffer = BytesIO()
-    Image.new("RGB", (2, 2), "red").save(png_buffer, format="PNG")
-    png_bytes = png_buffer.getvalue()
-    response = client.post(
-        "/internal/v1/store-colour-image",
-        json={
-            "page_id": page_id,
-            "image_base64": base64.b64encode(png_bytes).decode("ascii"),
-            "media_type": "image/png",
-        },
-    )
-    assert response.status_code == 200
-    image_url = response.json()["image_url"]
-    assert f"pages/{page_id}/colours/" in image_url
-    assert app.state.storage_adapter.get(image_url) == png_bytes
-    assert app.state.storage_adapter.get_content_type(image_url) == "image/png"
-
-    invalid = client.post(
-        "/internal/v1/store-colour-image",
-        json={
-            "page_id": page_id,
-            "image_base64": base64.b64encode(b"not an image").decode("ascii"),
-            "media_type": "image/png",
-        },
-    )
-    assert invalid.status_code == 400
-
-    mismatched = client.post(
-        "/internal/v1/store-colour-image",
-        json={
-            "page_id": page_id,
-            "image_base64": base64.b64encode(png_bytes).decode("ascii"),
-            "media_type": "image/webp",
-        },
-    )
-    assert mismatched.status_code == 400
 
 
 def test_healthz():
@@ -226,64 +183,14 @@ def test_generate_draft_sketch_contract():
     assert model.model_id == "muse-image-1.0-fake"
 
 
-def test_generate_line_art_contract():
-    app.state.storage_adapter.put(
-        "draft_1.png", image_bytes("89504e470d0a1a0a6472616674"), "image/png"
-    )
-    app.state.storage_adapter.put("char1.png", image_bytes("reference"), "image/png")
-    payload = {
-        "job_id": "99999999-9999-9999-9999-999999999999",
-        "hashed_user_id": "user-hash-abc",
-        "project_id": "22222222-2222-2222-2222-222222222222",
-        "page_id": "88888888-8888-8888-8888-888888888888",
-        "page_number": 1,
-        "draft_image_url": "http://storage/draft_1.png",
-        "style": "noir",
-        "panels": [
-            {
-                "panel_number": 1,
-                "scene_description": "Lab console explodes",
-                "character_actions": "Shields face",
-                "camera_angle": "Close up",
-                "background": "Sparks flying",
-                "dialogue": "It is overloading!",
-                "narration": "Silence fell",
-                "image_prompt": "Comic panel 1",
-            }
-        ],
-        "character_reference_image_urls": ["http://storage/char1.png"],
-    }
-    response = client.post("/internal/v1/generate-line-art", json=payload)
-    assert response.status_code == 200
-    data = response.json()
-    model = GenerateLineArtResponse(**data)
-    assert model.job_id == payload["job_id"]
-    assert model.image_url.startswith("http")
-    assert model.model_id == "muse-image-1.0-fake"
-
-
-def test_suggest_colour_palette_contract():
-    line_art_url = app.state.storage_adapter.put(
-        "line-art/line_art_1.png", b"approved line art bytes", "image/png"
-    )
-    payload = {
-        "job_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        "hashed_user_id": "user-hash-abc",
-        "project_id": "22222222-2222-2222-2222-222222222222",
-        "page_id": "88888888-8888-8888-8888-888888888888",
-        "line_art_image_url": line_art_url,
-        "panel_context": "Nighttime neon alleyway in cyberpunk city",
-    }
-    response = client.post("/internal/v1/suggest-colour-palette", json=payload)
-    assert response.status_code == 200
-    data = response.json()
-    model = SuggestColourPaletteResponse(**data)
-    assert model.job_id == payload["job_id"]
-    assert model.theme != ""
-    assert len(model.palette) > 0
-    for colour in model.palette:
-        assert colour.hex_color.startswith("#")
-        assert len(colour.hex_color) == 7
+def test_retired_ink_endpoints_are_gone():
+    """The Ink route is retired: its three internal endpoints answer the normal 404."""
+    for path in (
+        "/internal/v1/generate-line-art",
+        "/internal/v1/suggest-colour-palette",
+        "/internal/v1/store-colour-image",
+    ):
+        assert client.post(path, json={}).status_code == 404, path
 
 
 def test_moderate_prompt_contract():

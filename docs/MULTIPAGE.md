@@ -86,7 +86,7 @@ the cumulative accounted total.
 | Runner | Forced one chapter and generated only first chapter | Generates, persists, and checks every chapter, panel and page; accepts `--script-file` |
 | Editor | Fetched only first chapter; chapter inputs capped at ten | Loads all chapter lists, labels chapter/page context, removes chapter input cap, exposes missing outline/panel generation actions |
 | PDF/export | Page numbers restarted for each chapter; count check allowed missing cover/pages | Export page numbers span all chapters; runner requires exact comic pages plus one cover; assembly loops over every supplied page |
-| Quota | Image exhaustion also rejected text, palette and export jobs | Image quota applies to image attempts; kill switch, spend protection and credits still apply to every paid generation (the kill switch never stops PDF/PNG export) |
+| Quota | Image exhaustion also rejected text and export jobs | Image quota applies to image attempts; kill switch, spend protection and credits still apply to every paid generation (the kill switch never stops PDF/PNG export) |
 
 The Go fake client honors the requested panel budget, and the Python fake language
 adapter returns deterministic structured responses whose scene descriptions cover
@@ -104,10 +104,9 @@ schema overhead is included before reserving provider cost. Failed generation
 jobs retain observed provider costs even when output validation fails and user
 credits are refunded.
 
-Character, outline, panel and palette parsing reject schema documents, incorrect
+Character, outline and panel parsing reject schema documents, incorrect
 root types and incomplete JSON with a non-retryable `ProviderOutputError`.
-Palettes require a nonempty theme and valid named hex colours; invalid output no
-longer silently becomes a default palette. A `length` finish reason fails even
+A `length` finish reason fails even
 when its partial text happens to parse as JSON. Corrupt PNGs fail PDF export
 instead of becoming placeholder artwork. Successful image responses are stored
 using their actual byte format, including WebP with a misleading PNG label.
@@ -148,17 +147,16 @@ calls. There are no per-panel image or vision calls.
 | Chapter outlines (two chunks per chapter) | 8 | 0 | 0 | 7 |
 | Panel text (one call per planned page) | 12 | 0 | 0 | 8 |
 | Drafts (one image per page) | 0 | 12 | 0 | 12 |
-| Line art (one image per page) | 0 | 12 | 0 | 0 |
-| Palette suggestions (one vision call per page) | 0 | 0 | 12 | 0 |
+| Finished painted pages (one image per page) | 0 | 12 | 0 | 0 |
 | Export and approval | 0 | 0 | 0 | 0 |
-| Total | 27 | 24 + C | 12 | 34 + C |
-| Total with fake fixture's single profile | 27 | 25 | 12 | 35 |
+| Total | 27 | 24 + C | 0 | 34 + C |
+| Total with fake fixture's single profile | 27 | 25 | 0 | 35 |
 
-Per-page generation uses one language call, two image calls, one vision call and
+Per-page generation uses one language call, two image calls and
 one draft moderation call. Chapter/source moderation is additional as shown.
 Across the whole one-character fixture, normalized counts per panel are
-`27/51` language, `25/51` image, `12/51` vision and `35/51` moderation;
-per comic page they are `27/12`, `25/12`, `1`, and `35/12` respectively.
+`27/51` language, `25/51` image, no vision and `35/51` moderation;
+per comic page they are `27/12`, `25/12`, none, and `35/12` respectively.
 Including moderation, the language provider receives `61 + C` calls in total.
 Page image calls attach only named references selected from that page's visual panel fields, plus the relevant composition/style inputs; URL-only legacy callers supply their own selected references.
 Conditioning limits and payload accounting are documented in [the Meta guide](META_SWAP.md#upload-response-and-conditioning-budgets).
@@ -170,6 +168,6 @@ chunks. This is a call inventory, not a cost estimate.
 
 ## Image budgets
 
-The runtime policy defaults to 40 images per project/book, 80 per user over 24 hours and 800 over 30 days. A 51-panel, 12-page book needs about 30 images: 12 drafts, 12 finished painted pages (or ink pages when explicitly selected), and main-character references. The finish call replaces the former line-art call, so the default image count and per-page image cost stay the same. The book budget leaves revision room, and the daily cap permits two books.
+The runtime policy defaults to 40 images per project/book, 80 per user over 24 hours and 800 over 30 days. A 51-panel, 12-page book needs about 30 images: 12 drafts, 12 finished painted pages, and main-character references. The painted finish replaced the former line-art call, so the image count and per-page image cost stay the same. The book budget leaves revision room, and the daily cap permits two books.
 
-Each new image generation, regeneration or image edit counts once. Replaying an idempotency key never counts again. Failed or cancelled attempts count until a full refund commits; that refund releases all three budgets once. Partial refunds retain the image count. An uncertain provider outcome retains its debit and image slot because the provider may have billed it. Approvals, colouring uploads, moderation and language calls do not count. Deleting a project retains daily/monthly usage. See ARCHITECTURE section 5.5 for transaction and upgrade details. Elevated runner quotas must remain confined to an explicit e2e profile on an isolated database; production defaults stay 40/80/800.
+Each new image generation, regeneration or image edit counts once. Replaying an idempotency key never counts again. Failed or cancelled attempts count until a full refund commits; that refund releases all three budgets once. Partial refunds retain the image count. An uncertain provider outcome retains its debit and image slot because the provider may have billed it. Approvals, moderation and language calls do not count. Deleting a project retains daily/monthly usage. See ARCHITECTURE section 5.5 for transaction and upgrade details. Elevated runner quotas must remain confined to an explicit e2e profile on an isolated database; production defaults stay 40/80/800.

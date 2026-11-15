@@ -8,14 +8,12 @@ import pytest
 from app.adapters.language.fake import FakeLanguageAdapter
 from app.adapters.language.meta import MetaLanguageAdapter
 from app.adapters.language.port import Message
-from app.adapters.vision.meta import MetaVisionAdapter
-from app.services.colour import ColourService
 from app.services.moderation import ModerationService
 from app.services.panel import PanelService
 from app.services.script import ScriptService
 
 
-@pytest.mark.parametrize("operation", ["moderation", "script", "outline", "panels", "palette"])
+@pytest.mark.parametrize("operation", ["moderation", "script", "outline", "panels"])
 @pytest.mark.parametrize("configured_model", [None, "configured-model"])
 @pytest.mark.parametrize("override", [None, "explicit-model"])
 def test_services_honor_adapter_model_selection(monkeypatch, operation, configured_model, override):
@@ -33,12 +31,8 @@ def test_services_honor_adapter_model_selection(monkeypatch, operation, configur
         requests.append(payload)
         if payload["model"] != expected_model:
             return httpx.Response(404, json={"error": {"message": "Unknown model"}})
-        content = (
-            '{"theme":"Ocean","palette":[{"region_name":"sea","hex_color":"#123456","label":"Sea"}]}'
-            if operation == "palette"
-            else FakeLanguageAdapter().complete(
-                "fake", [Message(role=m["role"], content=m["content"]) for m in payload["messages"]]
-            )
+        content = FakeLanguageAdapter().complete(
+            "fake", [Message(role=m["role"], content=m["content"]) for m in payload["messages"]]
         )
         return httpx.Response(
             200,
@@ -48,8 +42,7 @@ def test_services_honor_adapter_model_selection(monkeypatch, operation, configur
             },
         )
 
-    adapter_type = MetaVisionAdapter if operation == "palette" else MetaLanguageAdapter
-    adapter = adapter_type(
+    adapter = MetaLanguageAdapter(
         api_key="mock-key-only",
         base_url="http://mock.meta.internal/v1",
         transport=httpx.MockTransport(respond),
@@ -64,10 +57,8 @@ def test_services_honor_adapter_model_selection(monkeypatch, operation, configur
         ScriptService(adapter, **kwargs).analyze_script("A bird flies home.")
     elif operation == "outline":
         PanelService(adapter, **kwargs).generate_chapter_outline("A bird flies home.", 1, [])
-    elif operation == "panels":
-        PanelService(adapter, **kwargs).generate_panel_text(1, "Home", "A bird returns.", [])
     else:
-        ColourService(adapter, **kwargs).suggest_palette(b"\x89PNG\r\n\x1a\n", "A bird")
+        PanelService(adapter, **kwargs).generate_panel_text(1, "Home", "A bird returns.", [])
 
     assert len(requests) == 1
     assert requests[0]["model"] == expected_model

@@ -81,7 +81,7 @@ func TestApprovalsRequireTheArtifactTheyApprove(t *testing.T) {
 	for _, tc := range []struct{ path, entityType, entityID string }{
 		{"/characters/" + bare.ID + "/approve", "character_reference", bare.ID},
 		{"/pages/" + page.ID + "/draft/approve", "draft_page", page.ID},
-		{"/pages/" + page.ID + "/line-art/approve?variant=ink", "line_art_page", page.ID},
+		{"/pages/" + page.ID + "/line-art/approve", "painted_page", page.ID},
 	} {
 		if rec := f.do(t, "POST", tc.path, ""); rec.Code != http.StatusBadRequest {
 			t.Fatalf("%s without an artifact: HTTP %d %s", tc.path, rec.Code, rec.Body.String())

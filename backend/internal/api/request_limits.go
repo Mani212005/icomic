@@ -26,15 +26,13 @@ type RequestLimits struct {
 	ScriptWords     int
 	MaxChapters     int
 	TextBytes       int
-	ImageBytes      int64
-	ImagePixels     int64
 	RequestsPerIP   int
 	RequestsPerUser int
 	AdmissionKeys   int
 }
 
 func DefaultRequestLimits() RequestLimits {
-	return RequestLimits{JSONBytes: 1 << 20, ScriptBytes: 512 << 10, ScriptWords: 100000, MaxChapters: 1000, TextBytes: 16384, ImageBytes: 10 << 20, ImagePixels: 40000000, RequestsPerIP: 600, RequestsPerUser: 300, AdmissionKeys: 10000}
+	return RequestLimits{JSONBytes: 1 << 20, ScriptBytes: 512 << 10, ScriptWords: 100000, MaxChapters: 1000, TextBytes: 16384, RequestsPerIP: 600, RequestsPerUser: 300, AdmissionKeys: 10000}
 }
 
 // RequestLimitsFromEnv fails closed on invalid configuration instead of disabling bounds.
@@ -59,7 +57,7 @@ func RequestLimitsFromEnv(getenv func(string) string) (RequestLimits, error) {
 		name   string
 		target *int64
 	}{
-		{"MAX_JSON_BYTES", &l.JSONBytes}, {"MAX_COLOUR_IMAGE_BYTES", &l.ImageBytes}, {"MAX_COLOUR_IMAGE_PIXELS", &l.ImagePixels},
+		{"MAX_JSON_BYTES", &l.JSONBytes},
 	} {
 		if raw := getenv(item.name); raw != "" {
 			n, err := strconv.ParseInt(raw, 10, 64)
@@ -144,9 +142,6 @@ func (s *Server) validatePublicRequest(w http.ResponseWriter, r *http.Request, p
 			writeError(w, 400, "Invalid resource ID: expected a UUID")
 			return false
 		}
-	}
-	if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/colour-image") {
-		return true
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.Limits.JSONBytes)
 	data, err := io.ReadAll(r.Body)
@@ -273,8 +268,6 @@ func (s *Server) publicFields(pattern string) map[string]string {
 		return map[string]string{"text": "text"}
 	case "PATCH /api/v1/pages/{id}/lettering/zones":
 		return map[string]string{"panel_id": "text", "reserved_zones": "zones"}
-	case "PATCH /api/v1/pages/{id}/colour-palette":
-		return map[string]string{"palette": "object"}
 	case "POST /api/v1/projects/{id}/estimate":
 		return map[string]string{"stage": "stage", "image_count": "positive"}
 	case "POST /api/v1/projects/{id}/export":
@@ -401,7 +394,7 @@ func (s *Server) validateField(name, kind string, raw json.RawMessage) error {
 			return invalid()
 		}
 		enums := map[string]string{
-			"stage":  "draft,draft_sketch,line_art,final_line_art,character_reference,reference,colour_suggestion,colour",
+			"stage":  "draft,draft_sketch,line_art,final_line_art,character_reference,reference",
 			"format": "pdf,png,png_zip", "pageSize": "a4,A4,us_letter,US_Letter,custom,Custom",
 			"projectStatus": "draft,in_progress,completed,archived", "chapterStatus": "pending,in_progress,approved,completed",
 			"finishPreset": "off,print,print-plus,print-heavy",

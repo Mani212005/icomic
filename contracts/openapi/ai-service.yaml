@@ -179,28 +179,6 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /internal/v1/generate-line-art:
-    post:
-      summary: Generate final black-and-white line art per page after draft approval
-      operationId: generateLineArt
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GenerateLineArtRequest'
-      responses:
-        '200':
-          description: Line art generated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GenerateLineArtResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
   /internal/v1/generate-painted-page:
     post:
       summary: Generate one finished painted page per page
@@ -218,50 +196,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GeneratePaintedPageResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /internal/v1/suggest-colour-palette:
-    post:
-      summary: Suggest colour palette for a page
-      operationId: suggestColourPalette
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SuggestColourPaletteRequest'
-      responses:
-        '200':
-          description: Colour palette suggested
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SuggestColourPaletteResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /internal/v1/store-colour-image:
-    post:
-      summary: Store a client-coloured page image separately from its line art
-      operationId: storeColourImage
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/StoreColourImageRequest'
-      responses:
-        '200':
-          description: Coloured page image stored
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StoreColourImageResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '500':
@@ -402,8 +336,8 @@ paths:
 
   /api/v1/pages/{id}/line-art:
     post:
-      summary: Generate or regenerate final line art
-      description: Public Go API image admission boundary. Each new idempotency key counts once against the book and user image budgets; replays do not count.
+      summary: Generate or regenerate the finished painted page
+      description: Public Go API image admission boundary (the painted-page route's stable alias). Each new idempotency key counts once against the book and user image budgets; replays do not count.
       operationId: requestLineArtImage
       parameters:
         - name: id
@@ -1215,70 +1149,6 @@ components:
           type: object
           additionalProperties: true
 
-    GenerateLineArtRequest:
-      type: object
-      required:
-        - job_id
-        - hashed_user_id
-        - project_id
-        - page_id
-        - page_number
-        - draft_image_url
-        - panels
-        - style
-      properties:
-        job_id:
-          type: string
-          format: uuid
-        hashed_user_id:
-          type: string
-        project_id:
-          type: string
-          format: uuid
-        page_id:
-          type: string
-          format: uuid
-        page_number:
-          type: integer
-        draft_image_url:
-          type: string
-        panels:
-          type: array
-          items:
-            $ref: '#/components/schemas/PanelTextItem'
-        style:
-          type: string
-        character_reference_image_urls:
-          type: array
-          items:
-            type: string
-          default: []
-
-        character_identities:
-          type: array
-          description: Stable ordered identities; reference images precede legacy URL-only references.
-          items:
-            $ref: '#/components/schemas/CharacterRenderIdentity'
-          default: []
-
-    GenerateLineArtResponse:
-      type: object
-      required:
-        - job_id
-        - image_url
-        - model_id
-        - provenance_metadata
-      properties:
-        job_id:
-          type: string
-        image_url:
-          type: string
-        model_id:
-          type: string
-        provenance_metadata:
-          type: object
-          additionalProperties: true
-
     GeneratePaintedPageRequest:
       type: object
       required:
@@ -1370,94 +1240,6 @@ components:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/LetteringSubjectsSource'
-
-    ColourRegionSuggestion:
-      type: object
-      required:
-        - region_name
-        - hex_color
-        - label
-      properties:
-        region_name:
-          type: string
-          example: background_sky
-        hex_color:
-          type: string
-          pattern: '^#[0-9A-Fa-f]{6}$'
-          example: '#4A90E2'
-        label:
-          type: string
-          example: Twilight Blue Sky
-
-    SuggestColourPaletteRequest:
-      type: object
-      required:
-        - job_id
-        - hashed_user_id
-        - project_id
-        - page_id
-        - line_art_image_url
-        - panel_context
-      properties:
-        job_id:
-          type: string
-          format: uuid
-        hashed_user_id:
-          type: string
-        project_id:
-          type: string
-          format: uuid
-        page_id:
-          type: string
-          format: uuid
-        line_art_image_url:
-          type: string
-        panel_context:
-          type: string
-        style:
-          type: string
-          description: Style identifier to resolve palette and color guidance from the shared style bible
-          example: classic-comic
-
-    SuggestColourPaletteResponse:
-      type: object
-      required:
-        - job_id
-        - theme
-        - palette
-      properties:
-        job_id:
-          type: string
-        theme:
-          type: string
-        palette:
-          type: array
-          items:
-            $ref: '#/components/schemas/ColourRegionSuggestion'
-
-    StoreColourImageRequest:
-      type: object
-      required:
-        - page_id
-        - image_base64
-        - media_type
-      properties:
-        page_id:
-          type: string
-          format: uuid
-        image_base64:
-          type: string
-        media_type:
-          type: string
-          enum: [image/png, image/webp]
-
-    StoreColourImageResponse:
-      type: object
-      required:
-        - image_url
-      properties:
-        image_url:
-          type: string
 
     FinishPageImageRequest:
       type: object
