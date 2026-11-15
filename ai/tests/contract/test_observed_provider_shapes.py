@@ -14,8 +14,6 @@ from app.adapters.image.fake import FakeImageAdapter
 from app.adapters.image.meta import MetaImageAdapter
 from app.adapters.language.fake import FakeLanguageAdapter
 from app.adapters.language.meta import MetaLanguageAdapter
-from app.adapters.vision.fake import FakeVisionAdapter
-from app.adapters.vision.meta import MetaVisionAdapter
 from app.main import create_app
 from app.provider_costs import ProviderCostLedger
 from app.provider_diagnostics import ProviderDiagnostics
@@ -48,10 +46,8 @@ def wired_replay(tmp_path, name, fake):
     }
     adapters = build_adapters_from_env()
     language = MetaLanguageAdapter(**kwargs)
-    vision = MetaVisionAdapter(**kwargs, cost_stage="vision")
     image = MetaImageAdapter(**kwargs, cost_stage="image")
     adapters.language = FakeLanguageAdapter(replay_adapter=language) if fake else language
-    adapters.vision = FakeVisionAdapter(replay_adapter=vision) if fake else vision
     adapters.image = FakeImageAdapter(replay_adapter=image) if fake else image
     adapters.cost_ledger = ledger
     adapters.diagnostics = diagnostics
@@ -87,11 +83,6 @@ def request_for(operation, image_url):
             "prompt": "An explorer",
             "style": "storybook",
         },
-        "suggest-colour-palette": {
-            "page_id": str(uuid4()),
-            "line_art_image_url": image_url,
-            "panel_context": "Sea",
-        },
     }
     return {**common, **inputs[operation]}
 
@@ -111,9 +102,6 @@ def request_for(operation, image_url):
         ("moderate-prompt", "http_404", "UPSTREAM_ERROR"),
         ("moderate-prompt", "moderation_length_873", "INVALID_PROVIDER_OUTPUT"),
         ("generate-panel-text", "http_400", "UPSTREAM_ERROR"),
-        ("suggest-colour-palette", "palette_schema_echo", "INVALID_PROVIDER_OUTPUT"),
-        ("suggest-colour-palette", "palette_list", "INVALID_PROVIDER_OUTPUT"),
-        ("suggest-colour-palette", "palette_invalid_json", "INVALID_PROVIDER_OUTPUT"),
         ("generate-character-reference", "invalid_image", "INVALID_PROVIDER_OUTPUT"),
     ],
 )
@@ -162,7 +150,6 @@ def test_failed_shapes_stop_retain_usage_and_do_not_publish(
     [
         ("moderate-prompt", "moderation"),
         ("analyze-script", "characters_cached"),
-        ("suggest-colour-palette", "vision"),
         ("generate-character-reference", "webp_png_label"),
     ],
 )

@@ -3,7 +3,7 @@
 Exercises the entire user journey against live local Go API and Python AI processes:
 sign-in -> create project -> submit script -> analyse -> approve characters ->
 generate & approve chapter outline -> panels & pages -> draft sketches ->
-approve drafts -> line art -> approve line art -> colour palette suggestion ->
+approve drafts -> finished painted page -> approve it ->
 export -> download PDF -> structural PDF verification (disclosure & provenance).
 """
 
@@ -131,37 +131,28 @@ def test_complete_comic_lifecycle_e2e(api_client: httpx.Client) -> None:
     assert app_draft_res.status_code == 200, f"Approve draft sketch failed: {app_draft_res.text}"
 
     # -------------------------------------------------------------------------
-    # 9. Explicit ink finish keeps the existing colour workflow available.
+    # 9. Finished painted page: the only final route
     # -------------------------------------------------------------------------
-    line_res = api_client.post(f"/api/v1/pages/{target_page_id}/line-art?variant=ink")
-    assert line_res.status_code == 202, f"Generate ink failed: {line_res.text}"
+    line_res = api_client.post(f"/api/v1/pages/{target_page_id}/line-art")
+    assert line_res.status_code == 202, f"Generate finished page failed: {line_res.text}"
 
     # -------------------------------------------------------------------------
-    # 10. Approve Line Art
+    # 10. Approve the finished page
     # -------------------------------------------------------------------------
     app_line_res = api_client.post(f"/api/v1/pages/{target_page_id}/line-art/approve")
-    assert app_line_res.status_code == 200, f"Approve line art failed: {app_line_res.text}"
+    assert app_line_res.status_code == 200, f"Approve finished page failed: {app_line_res.text}"
 
     # -------------------------------------------------------------------------
-    # 11. Colour Palette Suggestion
+    # 11. The retired Ink route answers the normal 404
     # -------------------------------------------------------------------------
-    col_res = api_client.post(f"/api/v1/pages/{target_page_id}/colour-palette/suggest")
-    assert col_res.status_code == 202, f"Suggest colour palette failed: {col_res.text}"
-
-    png_buffer = BytesIO()
-    Image.new("RGB", (3, 3), "red").save(png_buffer, format="PNG")
-    colour_image_res = api_client.put(
-        f"/api/v1/pages/{target_page_id}/colour-image",
-        content=png_buffer.getvalue(),
-        headers={"Content-Type": "image/png"},
-    )
-    assert colour_image_res.status_code == 200, (
-        f"Upload coloured page failed: {colour_image_res.text}"
-    )
-    assert colour_image_res.json().get("colour_image_url"), "Expected a stored coloured page URL"
-
-    app_col_res = api_client.post(f"/api/v1/pages/{target_page_id}/colour/approve")
-    assert app_col_res.status_code == 200, f"Approve colour failed: {app_col_res.text}"
+    for method, path in (
+        ("GET", "colour-palette"),
+        ("POST", "colour-palette/suggest"),
+        ("PUT", "colour-image"),
+        ("POST", "colour/approve"),
+    ):
+        retired = api_client.request(method, f"/api/v1/pages/{target_page_id}/{path}")
+        assert retired.status_code == 404, f"{method} {path} should be retired: {retired.text}"
 
     # -------------------------------------------------------------------------
     # 12. Export Project

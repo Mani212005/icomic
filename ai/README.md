@@ -4,7 +4,7 @@ FastAPI Python microservice for Icomic AI pipeline, built on the Ports and Adapt
 
 ## Responsibilities
 
-The Python AI service handles all AI dispatch, adapter wiring, prompt moderation, script analysis, panel text, character references, draft sketches, line art, colour suggestions, and PDF compilation for the Icomic platform.
+The Python AI service handles all AI dispatch, adapter wiring, prompt moderation, script analysis, panel text, character references, draft sketches, finished painted pages, and PDF compilation for the Icomic platform.
 
 Per architecture rules:
 - Python talks to AI adapter ports only (language, vision, image, storage, queue, clock).
@@ -17,7 +17,7 @@ Per architecture rules:
 ### 1. Adapter Ports (`app/adapters/*/port.py`)
 
 - `LanguagePort`: Text and dialogue completion and token estimation.
-- `VisionPort`: Multimodal image review and colour palette suggestion.
+- `VisionPort`: Multimodal image review and page subject detection.
 - `ImagePort`: Image generation with C2PA provenance tracking (`ImageResult`).
 - `StoragePort`: Object storage for images and assembled PDFs.
 - `QueuePort`: Background job queue with idempotency keys.
@@ -27,7 +27,7 @@ Per architecture rules:
 
 Default adapters for local development and CI:
 - `FakeLanguageAdapter`: Deterministic responses based on input SHA-256 hash.
-- `FakeVisionAdapter`: Fixed palette suggestions with valid hex colours.
+- `FakeVisionAdapter`: Fixed review text and deterministic subject boxes.
 - `FakeImageAdapter`: Generates valid 64x64 test images and deterministic C2PA provenance metadata.
 - `FakeStorageAdapter`: In-memory object store.
 - `FakeQueueAdapter`: In-process synchronous queue enforcing idempotency deduplication.
@@ -49,7 +49,7 @@ Storage configuration:
 - `META_IMAGE_HOSTS`: Comma-separated exact hostnames allowed for externally hosted images when `ADAPTER_MEDIA_FETCH=http`. External hosts must use HTTPS and resolve only to public IP addresses.
 
 When `meta` is selected, adapters read credentials lazily at construction time.
-Script, panel, moderation and colour services use the selected adapter's default model unless an explicit service `model_id` is supplied. Meta defaults to `muse-spark-1.3` for language and vision; `META_LANGUAGE_MODEL` and `META_VISION_MODEL` configure those adapter defaults.
+Script, panel and moderation services use the selected adapter's default model unless an explicit service `model_id` is supplied. Meta defaults to `muse-spark-1.3` for language and vision; `META_LANGUAGE_MODEL` and `META_VISION_MODEL` configure those adapter defaults.
 If credentials are not configured, adapters raise a descriptive `RuntimeError`.
 All outbound HTTP interactions support injectable transports for hermetic unit testing.
 A dedicated smoke verification script is provided in `scripts/manual/meta_live_check.py` for manual validation, generating a sanitized `.live-diagnostics.json` record on every run.
@@ -73,8 +73,7 @@ The image adapter detects real media types (PNG, JPEG, WebP, GIF) by magic numbe
 - `CharacterService`: Character turnaround reference generation, asset storage, and provenance preservation.
 - `PanelService`: Chapter outline generation and panel text / visual prompt generation.
 - `DraftService`: Rough draft sketch generation per page for composition approval.
-- `LineArtService`: Closed-contour black-and-white inking generation from approved draft.
-- `ColourService`: Region-based palette suggestions using multimodal vision models.
+- `PaintedPageService`: Finished painted page generation, direct from the brief or conditioned on the approved draft.
 - `ModerationService`: Pre-moderation screening against prohibited content guidelines.
 - `PdfAssemblyService`: Exports JPEG, PNG and WebP pages with AI disclosures. JPEG bytes are embedded directly; WebP is decoded with Pillow for display. Every page's provider file is attached unchanged (the raw file when page cleanup made a derivative), and `provenance_metadata_preserved` is true only when its hash matches the recorded `source_hash`. Missing page art or attachments raise `ExportIncompleteError`; no placeholder is drawn. `format: png_zip` instead bundles each page as a PNG with its sources, a manifest and the disclosure.
 

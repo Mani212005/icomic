@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -334,23 +335,34 @@ func TestPaintedPageRegeneratesOverlayLayoutWithStoredArtURL(t *testing.T) {
 	}
 }
 
-func TestLineArtEndpointKeepsInkExplicit(t *testing.T) {
+func TestInkVariantIsRetiredAndNeverDispatches(t *testing.T) {
 	server, handler, repo, _, pageID := paintedPageFixture(t)
 	fake := server.AIClient.(*gen.FakeAIServiceClient)
-	calledInk := false
-	fake.GenerateLineArtFunc = func(ctx context.Context, req gen.GenerateLineArtRequest) (*gen.GenerateLineArtResponse, error) {
-		calledInk = true
-		return &gen.GenerateLineArtResponse{JobID: req.JobID, ImageURL: "http://storage/ink.png", ModelID: "muse-image-1.0"}, nil
+	dispatched := false
+	fake.GeneratePaintedPageFunc = func(ctx context.Context, req gen.GeneratePaintedPageRequest) (*gen.GeneratePaintedPageResponse, error) {
+		dispatched = true
+		return nil, errors.New("the retired Ink variant must never reach the provider")
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
-	req.Header.Set("X-User-ID", "owner")
-	rec := serveGeneration(server, handler, req)
-	if rec.Code != http.StatusAccepted || !calledInk {
-		t.Fatalf("explicit ink route returned %d (called=%v): %s", rec.Code, calledInk, rec.Body.String())
+	before, err := repo.GetPage(context.Background(), pageID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	page, err := repo.GetPage(context.Background(), pageID)
-	if err != nil || page.LineArtImageURL != "http://storage/ink.png" || page.PaintedPageImageURL != "" {
-		t.Fatalf("ink result was not saved independently: page=%+v err=%v", page, err)
+	for _, path := range []string{"/line-art?variant=ink", "/painted-page?variant=ink"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+path, nil)
+		req.Header.Set("X-User-ID", "owner")
+		rec := serveGeneration(server, handler, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s returned %d, want 400: %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	finish := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/finish?variant=ink", nil)
+	finish.Header.Set("X-User-ID", "owner")
+	if rec := serveGeneration(server, handler, finish); rec.Code != http.StatusBadRequest {
+		t.Fatalf("finish?variant=ink returned %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	after, err := repo.GetPage(context.Background(), pageID)
+	if err != nil || dispatched || after.LineArtImageURL != before.LineArtImageURL || after.PaintedPageImageURL != before.PaintedPageImageURL {
+		t.Fatalf("a retired Ink request changed the page or reached the provider: dispatched=%v page=%+v err=%v", dispatched, after, err)
 	}
 }
 

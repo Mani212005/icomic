@@ -655,24 +655,6 @@ func (e ReadinessResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for StoreColourImageRequestMediaType.
-const (
-	ImagePng  StoreColourImageRequestMediaType = "image/png"
-	ImageWebp StoreColourImageRequestMediaType = "image/webp"
-)
-
-// Valid indicates whether the value is a known member of the StoreColourImageRequestMediaType enum.
-func (e StoreColourImageRequestMediaType) Valid() bool {
-	switch e {
-	case ImagePng:
-		return true
-	case ImageWebp:
-		return true
-	default:
-		return false
-	}
-}
-
 // Account defines model for Account.
 type Account struct {
 	// CsrfToken Per-session token for X-CSRF-Token. Absent for header-authenticated callers.
@@ -816,13 +798,6 @@ type CharacterRenderIdentity struct {
 	VisualAttributes  map[string]interface{} `json:"visual_attributes"`
 }
 
-// ColourRegionSuggestion defines model for ColourRegionSuggestion.
-type ColourRegionSuggestion struct {
-	HexColor   string `json:"hex_color"`
-	Label      string `json:"label"`
-	RegionName string `json:"region_name"`
-}
-
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
 	Code              string                  `json:"code"`
@@ -903,29 +878,6 @@ type GenerateDraftSketchRequest struct {
 
 // GenerateDraftSketchResponse defines model for GenerateDraftSketchResponse.
 type GenerateDraftSketchResponse struct {
-	ImageURL           string                 `json:"image_url"`
-	JobID              string                 `json:"job_id"`
-	ModelID            string                 `json:"model_id"`
-	ProvenanceMetadata map[string]interface{} `json:"provenance_metadata"`
-}
-
-// GenerateLineArtRequest defines model for GenerateLineArtRequest.
-type GenerateLineArtRequest struct {
-	// CharacterIdentities Stable ordered identities; reference images precede legacy URL-only references.
-	CharacterIdentities         *[]CharacterRenderIdentity `json:"character_identities,omitempty"`
-	CharacterReferenceImageURLs *[]string                  `json:"character_reference_image_urls,omitempty"`
-	DraftImageURL               string                     `json:"draft_image_url"`
-	HashedUserID                string                     `json:"hashed_user_id"`
-	JobID                       string                     `json:"job_id"`
-	PageID                      string                     `json:"page_id"`
-	PageNumber                  int                        `json:"page_number"`
-	Panels                      []PanelTextItem            `json:"panels"`
-	ProjectID                   string                     `json:"project_id"`
-	Style                       string                     `json:"style"`
-}
-
-// GenerateLineArtResponse defines model for GenerateLineArtResponse.
-type GenerateLineArtResponse struct {
 	ImageURL           string                 `json:"image_url"`
 	JobID              string                 `json:"job_id"`
 	ModelID            string                 `json:"model_id"`
@@ -1428,41 +1380,6 @@ type ReadinessResponse struct {
 // ReadinessResponseStatus defines model for ReadinessResponse.Status.
 type ReadinessResponseStatus string
 
-// StoreColourImageRequest defines model for StoreColourImageRequest.
-type StoreColourImageRequest struct {
-	ImageBase64 string                           `json:"image_base64"`
-	MediaType   StoreColourImageRequestMediaType `json:"media_type"`
-	PageID      string                           `json:"page_id"`
-}
-
-// StoreColourImageRequestMediaType defines model for StoreColourImageRequest.MediaType.
-type StoreColourImageRequestMediaType string
-
-// StoreColourImageResponse defines model for StoreColourImageResponse.
-type StoreColourImageResponse struct {
-	ImageURL string `json:"image_url"`
-}
-
-// SuggestColourPaletteRequest defines model for SuggestColourPaletteRequest.
-type SuggestColourPaletteRequest struct {
-	HashedUserID    string `json:"hashed_user_id"`
-	JobID           string `json:"job_id"`
-	LineArtImageURL string `json:"line_art_image_url"`
-	PageID          string `json:"page_id"`
-	PanelContext    string `json:"panel_context"`
-	ProjectID       string `json:"project_id"`
-
-	// Style Style identifier to resolve palette and color guidance from the shared style bible
-	Style *string `json:"style,omitempty"`
-}
-
-// SuggestColourPaletteResponse defines model for SuggestColourPaletteResponse.
-type SuggestColourPaletteResponse struct {
-	JobID   string                   `json:"job_id"`
-	Palette []ColourRegionSuggestion `json:"palette"`
-	Theme   string                   `json:"theme"`
-}
-
 // AuthError defines model for AuthError.
 type AuthError = AuthErrorResponse
 
@@ -1527,9 +1444,6 @@ type GenerateCharacterReferenceJSONRequestBody = GenerateCharacterReferenceReque
 // GenerateDraftSketchJSONRequestBody defines body for GenerateDraftSketch for application/json ContentType.
 type GenerateDraftSketchJSONRequestBody = GenerateDraftSketchRequest
 
-// GenerateLineArtJSONRequestBody defines body for GenerateLineArt for application/json ContentType.
-type GenerateLineArtJSONRequestBody = GenerateLineArtRequest
-
 // GeneratePaintedPageJSONRequestBody defines body for GeneratePaintedPage for application/json ContentType.
 type GeneratePaintedPageJSONRequestBody = GeneratePaintedPageRequest
 
@@ -1541,9 +1455,3 @@ type LayoutLetteringJSONRequestBody = LetteringLayoutRequest
 
 // ModeratePromptJSONRequestBody defines body for ModeratePrompt for application/json ContentType.
 type ModeratePromptJSONRequestBody = ModeratePromptRequest
-
-// StoreColourImageJSONRequestBody defines body for StoreColourImage for application/json ContentType.
-type StoreColourImageJSONRequestBody = StoreColourImageRequest
-
-// SuggestColourPaletteJSONRequestBody defines body for SuggestColourPalette for application/json ContentType.
-type SuggestColourPaletteJSONRequestBody = SuggestColourPaletteRequest

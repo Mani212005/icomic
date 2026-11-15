@@ -78,8 +78,6 @@ func (m *InMemoryRepository) editLayoutLocked(chapterID string, now time.Time, n
 		delete(m.panels, edit.Deleted)
 	}
 	for _, id := range edit.Removed {
-		delete(m.palettes, id)
-		delete(m.regions, id)
 		delete(m.pages, id)
 	}
 	if edit.Created != "" && newPage != nil {

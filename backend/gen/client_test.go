@@ -171,20 +171,6 @@ func TestFakeAIServiceClientHermetic(t *testing.T) {
 		t.Fatalf("GenerateDraftSketch failed: %v, resp: %+v", err, draftResp)
 	}
 
-	// 7. GenerateLineArt
-	lineResp, err := fake.GenerateLineArt(ctx, gen.GenerateLineArtRequest{
-		JobID:         "job-7",
-		HashedUserID:  "hash-1",
-		ProjectID:     "proj-1",
-		PageID:        "page-1",
-		PageNumber:    1,
-		DraftImageURL: draftResp.ImageURL,
-		Style:         "manga",
-	})
-	if err != nil || !strings.HasPrefix(lineResp.ImageURL, "http") {
-		t.Fatalf("GenerateLineArt failed: %v, resp: %+v", err, lineResp)
-	}
-
 	// 7b. GeneratePaintedPage (opt-in prototype route)
 	paintedVariant := gen.GeneratePaintedPageRequestVariantDraftConditioned
 	paintedResp, err := fake.GeneratePaintedPage(ctx, gen.GeneratePaintedPageRequest{
@@ -201,25 +187,6 @@ func TestFakeAIServiceClientHermetic(t *testing.T) {
 		t.Fatalf("GeneratePaintedPage failed: %v, resp: %+v", err, paintedResp)
 	}
 
-	// 8. SuggestColourPalette
-	colResp, err := fake.SuggestColourPalette(ctx, gen.SuggestColourPaletteRequest{
-		JobID:           "job-8",
-		HashedUserID:    "hash-1",
-		ProjectID:       "proj-1",
-		PageID:          "page-1",
-		LineArtImageURL: lineResp.ImageURL,
-		PanelContext:    "Neon city",
-	})
-	if err != nil || len(colResp.Palette) == 0 {
-		t.Fatalf("SuggestColourPalette failed: %v, resp: %+v", err, colResp)
-	}
-	storedColour, err := fake.StoreColourImage(ctx, gen.StoreColourImageRequest{
-		PageID: "page-1", ImageBase64: "cG5n", MediaType: gen.ImagePng,
-	})
-	if err != nil || !strings.Contains(storedColour.ImageURL, "page-1/colours/") {
-		t.Fatalf("StoreColourImage failed: %v, resp: %+v", err, storedColour)
-	}
-
 	// 9. AssemblePdf
 	pdfResp, err := fake.AssemblePdf(ctx, gen.AssemblePdfRequest{
 		JobID:               "job-9",
@@ -229,7 +196,7 @@ func TestFakeAIServiceClientHermetic(t *testing.T) {
 		PageSize:            gen.A4,
 		IncludeAIDisclosure: true,
 		Pages: []gen.PageExportItem{
-			{PageNumber: 1, ImageURL: lineResp.ImageURL, PanelCount: intPointer(4)},
+			{PageNumber: 1, ImageURL: paintedResp.ImageURL, PanelCount: intPointer(4)},
 		},
 	})
 	if err != nil || !strings.HasSuffix(pdfResp.PdfURL, ".pdf") {
@@ -456,31 +423,6 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 		t.Fatalf("unexpected draft sketch response: %+v", draftResp)
 	}
 
-	// Exercise Endpoint 7: GenerateLineArt (POST /internal/v1/generate-line-art)
-	lineArtResp, err := client.GenerateLineArt(ctx, gen.GenerateLineArtRequest{
-		JobID:         "99999999-9999-9999-9999-999999999999",
-		HashedUserID:  "user-hash-abc",
-		ProjectID:     "22222222-2222-2222-2222-222222222222",
-		PageID:        "88888888-8888-8888-8888-888888888888",
-		PageNumber:    1,
-		DraftImageURL: draftResp.ImageURL,
-		Panels: []gen.PanelTextItem{
-			{
-				PanelNumber:      1,
-				SceneDescription: "Lab console explodes",
-				Dialogue:         "It is overloading!",
-				ImagePrompt:      "Comic panel 1",
-			},
-		},
-		Style: "noir",
-	})
-	if err != nil {
-		t.Fatalf("GenerateLineArt failed: %v", err)
-	}
-	if !strings.HasPrefix(lineArtResp.ImageURL, "http") || lineArtResp.ModelID != "muse-image-1.0-fake" {
-		t.Fatalf("unexpected line art response: %+v", lineArtResp)
-	}
-
 	// Exercise Endpoint 7b: GeneratePaintedPage (POST /internal/v1/generate-painted-page)
 	realPaintedVariant := gen.GeneratePaintedPageRequestVariantDraftConditioned
 	realPaintedResp, err := client.GeneratePaintedPage(ctx, gen.GeneratePaintedPageRequest{
@@ -508,29 +450,6 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 		t.Fatalf("unexpected painted page response: %+v", realPaintedResp)
 	}
 
-	// Exercise Endpoint 8: SuggestColourPalette (POST /internal/v1/suggest-colour-palette)
-	palResp, err := client.SuggestColourPalette(ctx, gen.SuggestColourPaletteRequest{
-		JobID:           "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-		HashedUserID:    "user-hash-abc",
-		ProjectID:       "22222222-2222-2222-2222-222222222222",
-		PageID:          "88888888-8888-8888-8888-888888888888",
-		LineArtImageURL: lineArtResp.ImageURL,
-		PanelContext:    "Nighttime neon alleyway in cyberpunk city",
-	})
-	if err != nil {
-		t.Fatalf("SuggestColourPalette failed: %v", err)
-	}
-	if palResp.Theme == "" || len(palResp.Palette) == 0 || !strings.HasPrefix(palResp.Palette[0].HexColor, "#") {
-		t.Fatalf("unexpected colour palette response: %+v", palResp)
-	}
-
-	storedColour, err := client.StoreColourImage(ctx, gen.StoreColourImageRequest{
-		PageID: "88888888-8888-8888-8888-888888888888", ImageBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", MediaType: gen.ImagePng,
-	})
-	if err != nil || !strings.Contains(storedColour.ImageURL, "/colours/") {
-		t.Fatalf("StoreColourImage failed: %v, response: %+v", err, storedColour)
-	}
-
 	// Exercise Endpoint 9: AssemblePdf (POST /internal/v1/assemble-pdf)
 	pdfResp, err := client.AssemblePdf(ctx, gen.AssemblePdfRequest{
 		JobID:               "dddddddd-dddd-dddd-dddd-dddddddddddd",
@@ -542,9 +461,9 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 		Pages: []gen.PageExportItem{
 			{
 				PageNumber:         1,
-				ImageURL:           lineArtResp.ImageURL,
+				ImageURL:           realPaintedResp.ImageURL,
 				PanelCount:         intPointer(4),
-				ProvenanceMetadata: &lineArtResp.ProvenanceMetadata,
+				ProvenanceMetadata: &realPaintedResp.ProvenanceMetadata,
 			},
 		},
 	})
@@ -561,7 +480,7 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 		ProjectID: "22222222-2222-2222-2222-222222222222", Title: "Quantum Odyssey",
 		PageSize: gen.A4, IncludeAIDisclosure: true,
 		Pages: []gen.PageExportItem{{
-			PageNumber: 1, ImageURL: lineArtResp.ImageURL,
+			PageNumber: 1, ImageURL: realPaintedResp.ImageURL,
 			ProvenanceMetadata: mapPointer(map[string]interface{}{"c2pa": true}),
 		}},
 	})
@@ -576,7 +495,7 @@ func TestAIServiceClientBoundaryRealPython(t *testing.T) {
 		ProjectID: "22222222-2222-2222-2222-222222222222", Title: "Quantum Odyssey",
 		PageSize: gen.A4, Format: &zipFormat, IncludeAIDisclosure: true,
 		Pages: []gen.PageExportItem{{
-			PageNumber: 1, ImageURL: lineArtResp.ImageURL, ProvenanceMetadata: &lineArtResp.ProvenanceMetadata,
+			PageNumber: 1, ImageURL: realPaintedResp.ImageURL, ProvenanceMetadata: &realPaintedResp.ProvenanceMetadata,
 		}},
 	})
 	if err != nil || !strings.HasSuffix(zipResp.PdfURL, "comic-pages.zip") || !zipResp.ProvenanceMetadataPreserved || zipResp.PageCount != 1 {

@@ -10,11 +10,9 @@ These are shape fixtures, not original prompts or complete original responses. N
 | empty_length | Existing chat_completion_reasoning_length.json preserves the 17 input/64 completion/62 reasoning diagnostic shape. IDs are synthetic. |
 | moderation_length_873 | Exact HTTP 200/finish_reason=length shape, 797 content characters, 34 input/1056 completion/873 reasoning counts from response-2012b25584b546c398a18ae88abbfa54.json. Content is synthetic replacement text of equal length, without the echoed prompt; ID redacted. This truncated fixture must fail even under the larger cap. A completed SAFE replay with the same token load is explicitly synthetic and tests headroom only. |
 | moderation | Successful completion envelope and 69 input/593 completion usage from live-attempt-3-provider-costs.json; safe text and reasoning detail reconstructed because raw moderation content was not retained. |
-| vision | Palette object contract and 3271 input/809 completion usage from attempt 3; palette text and reasoning detail reconstructed. |
 | webp_png_label | live-attempt-2-image-shape.json establishes WebP bytes stored with image/png. Response envelope, PNG labels and tiny generated WebP replace unavailable raw response/real artwork. |
 | schema_echo, invalid_json, truncated_json | Completion usage 904 input/1995 completion/369 cached input from the failed long run; malformed JSON strings are synthetic negative cases. Truncation uses finish_reason length. |
 | characters_cached | Synthetic character text, with the exact cached-token usage shape from the failed long run. |
-| palette_schema_echo, palette_invalid_json | Synthetic malformed contents with the observed vision usage; separate from character usage to fit the vision output cap. |
-| palette_list, invalid_image, outline_list, characters_object | Synthetic negative shapes exercising strict palette/image validation, not claimed to be observed live. |
+| invalid_image, outline_list, characters_object | Synthetic negative shapes exercising strict image/outline/character validation, not claimed to be observed live. |
 
 Every replay uses an in-memory httpx.MockTransport. Fake adapters can delegate to these replay adapters while retaining their deterministic default behavior. No fixture can send a network request. The matrix tests run real services, queues and cost accounting with these bodies.

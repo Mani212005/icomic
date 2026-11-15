@@ -88,24 +88,6 @@ test('ApiClient retains structured retry metadata from the shared error envelope
 	}
 });
 
-test('ApiClient uploads the coloured page as raw PNG bytes', async () => {
-	const originalFetch = globalThis.fetch;
-	const blob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
-	try {
-		globalThis.fetch = async (url, options) => {
-			assert.equal(url, 'http://test-api:8080/api/v1/pages/page-1/colour-image');
-			assert.equal(options.method, 'PUT');
-			assert.equal(options.body, blob);
-			assert.equal(options.headers['Content-Type'], 'image/png');
-			return { ok: true, status: 200, json: async () => ({ colour_image_url: 'stored' }) };
-		};
-		const client = new ApiClient('http://test-api:8080');
-		assert.deepEqual(await client.uploadColourImage('page-1', blob), { colour_image_url: 'stored' });
-	} finally {
-		globalThis.fetch = originalFetch;
-	}
-});
-
 test('ApiClient sends correct HTTP request for projects and operations', async () => {
 	const requests = [];
 	const originalFetch = globalThis.fetch;
@@ -140,11 +122,11 @@ test('ApiClient sends correct HTTP request for projects and operations', async (
 		assert.equal(requests[3].url, 'http://test-server:8080/api/v1/pages/page-1/draft/approve');
 		assert.equal(requests[3].options.method, 'POST');
 
-		await client.suggestColourPalette('page-1');
-		assert.equal(requests[4].url, 'http://test-server:8080/api/v1/pages/page-1/colour-palette/suggest');
+		await client.generateLineArt('page-1');
+		assert.equal(requests[4].url, 'http://test-server:8080/api/v1/pages/page-1/line-art');
 
-		await client.approveColour('page-1');
-		assert.equal(requests[5].url, 'http://test-server:8080/api/v1/pages/page-1/colour/approve');
+		await client.approveLineArt('page-1');
+		assert.equal(requests[5].url, 'http://test-server:8080/api/v1/pages/page-1/line-art/approve');
 
 		await client.getJob('job-999');
 		assert.equal(requests[6].url, 'http://test-server:8080/api/v1/generation-jobs/job-999');
@@ -389,7 +371,7 @@ test('ApiClient never retries a generation the server answered, and gives up on 
 			calls += 1;
 			throw new TypeError('Failed to fetch');
 		};
-		await assert.rejects(client.suggestColourPalette('p-1', { retryDelayMs: 1 }), TypeError);
+		await assert.rejects(client.generateLineArt('p-1', { retryDelayMs: 1 }), TypeError);
 		assert.equal(calls, 3);
 	} finally {
 		globalThis.fetch = originalFetch;
@@ -405,8 +387,8 @@ test('ApiClient sends one fresh idempotency key per generation action', async ()
 			return { ok: true, status: 202, json: async () => ({ job: { id: `job-${keys.length}` } }) };
 		};
 		const client = new ApiClient('http://test-api:8080');
-		await client.generateLineArt('page-1', 'ink');
-		await client.generateLineArt('page-1', 'ink');
+		await client.generateLineArt('page-1');
+		await client.generateLineArt('page-1');
 		assert.equal(keys.length, 2);
 		assert.notEqual(keys[0], keys[1]);
 	} finally {

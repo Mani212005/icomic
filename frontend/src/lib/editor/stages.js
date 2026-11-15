@@ -6,7 +6,6 @@ export const stageList = [
 	{ id: STAGES.PANELS, label: '4. Panels' },
 	{ id: STAGES.DRAFT, label: '5. Drafts' },
 	{ id: STAGES.LINE_ART, label: '6. Finish' },
-	{ id: STAGES.COLOUR, label: '7. Ink' },
-	{ id: STAGES.EXPORT, label: '8. Export' }
+	{ id: STAGES.EXPORT, label: '7. Export' }
 ];
-export const quoteStages = ['character_reference', 'draft_sketch', 'final_line_art', 'colour_suggestion'];
+export const quoteStages = ['character_reference', 'draft_sketch', 'final_line_art'];

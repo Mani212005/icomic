@@ -274,8 +274,6 @@ func (m *InMemoryRepository) ReplaceChapterOutline(_ context.Context, projectID 
 func (m *InMemoryRepository) dropChapters(ids map[string]bool) {
 	for id, pg := range m.pages {
 		if ids[pg.ChapterID] {
-			delete(m.palettes, id)
-			delete(m.regions, id)
 			delete(m.pages, id)
 		}
 	}
@@ -342,8 +340,6 @@ func (m *InMemoryRepository) ReplaceChapterPanels(_ context.Context, chapterID s
 	}
 	for id, pg := range m.pages {
 		if pg.ChapterID == chapterID {
-			delete(m.palettes, id)
-			delete(m.regions, id)
 			delete(m.pages, id)
 		}
 	}

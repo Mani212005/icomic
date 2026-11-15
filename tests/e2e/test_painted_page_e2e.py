@@ -1,4 +1,4 @@
-"""End-to-end integration tests for the painted default and explicit ink finish."""
+"""End-to-end integration tests for the painted finish, the only final route."""
 
 from __future__ import annotations
 
@@ -150,8 +150,8 @@ def test_painted_page_direct_from_brief_e2e(api_client: httpx.Client) -> None:
     assert len(download_res.content) > 0
 
 
-def test_explicit_ink_finish_e2e(api_client: httpx.Client) -> None:
-    """Verify ink stays available by explicit variant and exports without a painted page."""
+def test_retired_ink_variant_is_refused_e2e(api_client: httpx.Client) -> None:
+    """The Ink route is retired: its variant is refused and nothing is generated or charged."""
     project = api_client.post(
         "/api/v1/projects",
         json={"title": "Ink finish", "original_script": "Nia watches the harbor.", "art_style": "classic-comic", "chapter_count": 1},
@@ -167,10 +167,14 @@ def test_explicit_ink_finish_e2e(api_client: httpx.Client) -> None:
     api_client.post(f"/api/v1/pages/{page_id}/draft")
     api_client.post(f"/api/v1/pages/{page_id}/draft/approve")
 
+    before = api_client.get("/api/v1/me/credit-usage").json()
     ink = api_client.post(f"/api/v1/pages/{page_id}/line-art?variant=ink")
-    assert ink.status_code == 202, ink.text
-    assert artifact_url(api_client, ink.json()).startswith("http")
-    approved = api_client.post(f"/api/v1/pages/{page_id}/line-art/approve?variant=ink")
+    assert ink.status_code == 400, ink.text
+    assert api_client.get("/api/v1/me/credit-usage").json() == before
+    # The default route still finishes and approves the page.
+    painted = api_client.post(f"/api/v1/pages/{page_id}/line-art")
+    assert painted.status_code == 202, painted.text
+    assert artifact_url(api_client, painted.json()).startswith("http")
+    approved = api_client.post(f"/api/v1/pages/{page_id}/line-art/approve")
     assert approved.status_code == 200, approved.text
-    assert approved.json()["page"]["line_art_approved_at"]
-    assert not approved.json()["page"].get("painted_page_image_url")
+    assert approved.json()["page"]["painted_page_approved_at"]

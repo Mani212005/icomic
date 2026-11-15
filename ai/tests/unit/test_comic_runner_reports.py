@@ -2,8 +2,6 @@
 
 import importlib.util
 import json
-import sys
-import types
 from pathlib import Path
 from uuid import UUID
 
@@ -228,9 +226,6 @@ def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
         page["draft_image_job_id"] = "newer-job"
     chapter = {"id": "chapter-1", "status": "approved"}
     calls = []
-    fake_colouring = types.ModuleType("colouring")
-    fake_colouring.colour_enclosed_regions = lambda image, palette: b"fake png"
-    monkeypatch.setitem(sys.modules, "colouring", fake_colouring)
     monkeypatch.setattr(runner, "fetch_line_art_image", lambda _: b"fake line art")
 
     def request(path, method="GET", payload=None, extra_headers=None):
@@ -262,9 +257,7 @@ def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
         if path.endswith("/panels"):
             return {"panels": [{"id": panel_id} for panel_id in panel_ids]}
         if path.endswith("/pages"):
-            return {"pages": [page | {"line_art_image_url": "http://local/storage/fake/art"}]}
-        if path == "/api/v1/pages/page-1/colour-palette":
-            return {"palette": {}}
+            return {"pages": [page | {"painted_page_image_url": "http://local/storage/fake/art"}]}
         if path == "/api/v1/generation-jobs/uncertain-1":
             return {
                 "job": {
@@ -289,12 +282,9 @@ def test_resume_reuses_persisted_panels_and_requires_explicit_new_attempt(
             return {"export": {"id": "export-1"}}
         if path.endswith(("/draft", "/line-art")):
             return {"job_id": "job-1"}
-        if path.endswith("/suggest"):
-            return {"palette": {"sea": "#123456"}}
         return {}
 
     monkeypatch.setattr(runner, "json_request", request)
-    monkeypatch.setattr(runner, "binary_request", lambda *args: {})
     guard = runner.CostGuard(float("inf"), live=False)
     guard.script_file = script_file
     if legacy:

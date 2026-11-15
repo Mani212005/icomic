@@ -10,12 +10,9 @@ import pytest
 from app.adapters.image.fake import FakeImageAdapter
 from app.adapters.language.fake import FakeLanguageAdapter
 from app.adapters.storage.fake import FakeStorageAdapter
-from app.adapters.vision.fake import FakeVisionAdapter
 from app.gen.models import CharacterProfile, PageExportItem, PanelTextItem
 from app.services.character import CharacterService
-from app.services.colour import ColourService
 from app.services.draft import DraftService
-from app.services.line_art import LineArtService
 from app.services.moderation import ModerationService
 from app.services.panel import PanelService
 from app.services.pdf import ExportIncompleteError, PdfAssemblyService, PdfWriter
@@ -271,99 +268,6 @@ def test_draft_service_character_consistency_anchoring():
     # Verify adapter aliases
     assert img.calls == img.recorded_calls
     assert img.recorded_inputs == img.recorded_calls
-
-
-def test_line_art_service_without_character_references():
-    img = FakeImageAdapter()
-    storage = FakeStorageAdapter()
-    svc = LineArtService(img, storage)
-
-    panels = [
-        PanelTextItem(
-            panel_number=1,
-            scene_description="Wide alley",
-            character_actions="Stands",
-            camera_angle="Wide",
-            background="Alley",
-            dialogue="Look here",
-            narration="It began",
-            image_prompt="Panel 1",
-        )
-    ]
-    draft_bytes = image_bytes("89504e470d0a1a0a6472616674")
-    storage.put("pages/page-101/draft_page_1.png", draft_bytes, "image/png")
-    url, model_id, prov = svc.generate_line_art(
-        page_id="page-101",
-        page_number=1,
-        draft_image_url="http://storage/pages/page-101/draft_page_1.png",
-        panels=panels,
-        style="noir",
-        hashed_user_id="hash-1",
-    )
-    assert "/pages/page-101/" in url and url.endswith("/line_art_page_1.png")
-    assert model_id == "muse-image-1.0-fake"
-    assert "c2pa" in prov
-    assert len(img.recorded_calls) == 1
-    assert img.recorded_calls[0]["reference_images"] == [draft_bytes]
-    assert "portrait-oriented full comic page, taller than wide" in img.recorded_calls[0]["prompt"]
-
-
-def test_line_art_service_character_consistency_anchoring():
-    img = FakeImageAdapter()
-    storage = FakeStorageAdapter()
-    svc = LineArtService(img, storage)
-
-    char_bytes = image_bytes("Leo")
-    char_url = storage.put("characters/leo/reference.png", char_bytes, "image/png")
-    draft_url = "http://localhost:8000/storage/fake/pages/page-303/draft_page_1.png"
-    draft_bytes = image_bytes("89504e470d0a1a0a6472616674")
-    storage.put(draft_url, draft_bytes, "image/png")
-
-    panels = [
-        PanelTextItem(
-            panel_number=1,
-            scene_description="Lab interior",
-            character_actions="Leo examines the device",
-            camera_angle="Medium",
-            background="Workbench with monitors",
-            dialogue="The signal is stabilizing.",
-            narration="",
-            image_prompt="Leo working in tech lab",
-        )
-    ]
-
-    url, model_id, prov = svc.generate_line_art(
-        page_id="page-303",
-        page_number=1,
-        draft_image_url=draft_url,
-        panels=panels,
-        style="comic-ink",
-        hashed_user_id="hash-user-leo",
-        character_reference_image_urls=[char_url],
-    )
-    assert "/pages/page-303/" in url and url.endswith("/line_art_page_1.png")
-    assert model_id == "muse-image-1.0-fake"
-    assert "c2pa" in prov
-    assert len(img.recorded_calls) == 1
-    call = img.recorded_calls[0]
-    assert_image_prompt_excludes_editorial_text(call["prompt"])
-
-    # Verify approved character reference image bytes passed as reference inputs
-    assert call["reference_images"] == [draft_bytes, char_bytes]
-
-    # Verify approved character reference URLs and draft URL in prompt
-    assert char_url in call["prompt"]
-    assert draft_url in call["prompt"]
-    assert "Character references:" in call["prompt"]
-
-
-def test_colour_service():
-    vis = FakeVisionAdapter()
-    svc = ColourService(vis)
-    theme, palette = svc.suggest_palette(b"dummy-line-art", "Alley context")
-    assert theme != ""
-    assert len(palette) > 0
-    assert palette[0].hex_color.startswith("#")
 
 
 def test_moderation_service():

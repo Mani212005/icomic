@@ -20,8 +20,7 @@ The user can:
 - Select an art style.
 - Define and approve character profiles and reference images.
 - Review a cheap draft sketch of each page and approve composition.
-- Review and approve the finished page (painted by default; ink is an explicit option).
-- Colour ink pages (AI-suggested palette with automatic apply, fully editable, paint-bucket fill tool).
+- Review and approve the finished painted page.
 - Download the finished comic book.
 - Publish the comic book.
 
@@ -90,13 +89,12 @@ The main pipeline is:
 8. For each chapter, the system generates panel text (scene descriptions, dialogue, narration). The user edits panel text freely. No approval gate - panel text feeds the draft step.
 9. System automatically partitions panels into pages (using a configurable maximum panels per page). The user can move panels between pages before draft generation.
 10. System generates one rough, stick-style draft image per page. User reviews draft composition and approves or regenerates. (Approval gate - no final image is generated before draft approval.)
-11. System generates a finished painted page per page by default, with ink available as an explicit option. User reviews and approves the selected finish.
-12. Ink pages use the optional colour stage: the system suggests a palette, the user edits or overrides it, applies paint-bucket fills, and approves the result. Painted pages are already finished and skip this stage.
-13. System assembles the comic book.
-14. User reviews the final comic and downloads or publishes.
+11. System generates a finished painted page per page. User reviews and approves it. The painted page is the only final route: there is no separate colouring stage.
+12. System assembles the comic book.
+13. User reviews the final comic and downloads or publishes.
 
 The system must not generate draft sketches before character reference images and chapter outline are approved.
-The ink option requires an approved draft. The direct-from-brief painted default does not.
+Draft-conditioned painting requires an approved draft. The direct-from-brief painted default does not.
 
 ---
 
@@ -246,10 +244,10 @@ The draft image lets the user review layout and composition before the next stag
 
 The user must be able to:
 
-- Approve the draft (enables ink or draft-conditioned painting).
+- Approve the draft (enables draft-conditioned painting).
 - Regenerate the draft (costs one additional image call).
 
-Ink generation and draft-conditioned painting require an approved draft.
+Draft-conditioned painting requires an approved draft.
 
 Stale approvals after regeneration or edit: an approval only counts if its `approved_at` is newer than the entity's latest completed generation job or edit, so regenerating or editing automatically makes the approval stale and blocks downstream generation until it is re-approved.
 
@@ -257,66 +255,17 @@ The draft stage costs one image call per attempt per page. Credit cost for the d
 
 ### 3.7 Finished Page Stage
 
-After the draft stage, the system generates and approves one finished painted page per page by default. The default variant is direct-from-brief. Draft-conditioned painting remains available, and `variant=ink` explicitly selects the existing black-and-white ink route. The default finish replaces the former line-art generation call and approval, so each page still uses one finish image call.
+After the draft stage, the system generates and approves one finished painted page per page by default. The default variant is direct-from-brief. Draft-conditioned painting remains available. The painted page is the only final route: the Ink option (black-and-white line art, then browser colouring) was retired, and `variant=ink` is refused with HTTP 400. The finish uses the `/line-art` and `/painted-page` paths, which are aliases of one route, so each page uses one finish image call.
 
-The user can choose Painted or Ink before generation, review the result, approve it, or regenerate it for one additional image call. Ink generation requires an approved draft; direct-from-brief painting requires approved character references and chapter outline but does not require a draft approval.
+The user reviews the result, approves it, or regenerates it for one additional image call. Direct-from-brief painting requires approved character references and chapter outline but does not require a draft approval.
 
 An approval only counts when it is newer than the latest page edit or generation. Regenerating or editing makes the approval stale and requires re-approval.
 
-Exports use the latest valid approved painted page and fall back to the valid approved ink page for pages finished with ink. Existing line-art images and approvals remain available without migration.
+Exports use the latest valid approved image of a page. Pages finished with Ink before the route was retired keep their approved line art, uploaded colour image and colour approval; they still open, display and export, but nothing creates or edits them any more. Existing images, approvals and database columns remain without migration.
 
-The colour editor is available for approved ink pages. Painted pages are already finished and skip the ink colour-fill step.
+### 3.8 Retired: Ink and browser colouring
 
-### 3.8 Colouring
-
-Colouring is a deterministic fill step applied on top of the approved line art. No image API call is made during colouring fill.
-
-#### 3.8.1 AI Colour Palette Suggestion
-
-Before the user starts colouring, the system must request a colour palette suggestion from a Meta language or vision model.
-
-The suggestion must include:
-
-- A palette name or theme.
-- Per-region colour recommendations (background, character skin, hair, clothing, environment).
-- A hex or RGB value for each recommended colour.
-
-The system must apply the suggested palette automatically as the initial colour state.
-
-The user can accept the suggested palette or override any colour.
-
-#### 3.8.2 Manual Colour Editing
-
-The user must be able to:
-
-- See the full palette in use.
-- Change any colour in the palette.
-- Use an eyedropper to sample a colour from the canvas.
-- Apply a colour to a region with a paint-bucket fill tool.
-
-#### 3.8.3 Paint-Bucket Fill Tool
-
-The paint-bucket fill tool must operate on the approved line art.
-
-Fill regions are bounded by dark pixels in the line art layer.
-
-The fill algorithm must:
-
-- Use a flood-fill algorithm with a configurable darkness threshold so near-black anti-aliased pixels are treated as boundaries.
-- Apply morphological gap-closing before fill so small gaps in the line art do not cause colour leakage.
-- Provide a manual gap-closer tool so the user can draw small bridge strokes to close visible gaps before applying fill.
-
-The fill is computed entirely in the browser (client-side) using ordinary code. No AI call and no API credit is consumed during fill.
-
-#### 3.8.4 Canvas Undo
-
-Client-side canvas undo in the colour editor must operate on page canvas stroke and fill history.
-
-The user must be able to undo the last N fill actions on the page canvas (N is configurable, default 20).
-
-#### 3.8.5 Colouring Approval
-
-The user must approve the coloured result for each page before the page is marked complete.
+The browser colour editor (AI palette suggestion, manual palette editing, paint-bucket fill with gap closing, canvas undo, colour approval) was removed together with the Ink finish. The routes `GET`/`PATCH /api/v1/pages/:id/colour-palette`, `POST /api/v1/pages/:id/colour-palette/suggest`, `PUT /api/v1/pages/:id/colour-image` and `POST /api/v1/pages/:id/colour/approve` answer the normal 404. The painted page is final as generated and approved.
 
 ### 3.9 Comic Book Editor
 
@@ -327,7 +276,7 @@ The editor must allow the user to:
 - View all chapters.
 - View all panels.
 - Regenerate a draft image.
-- Regenerate a final line art image.
+- Regenerate the finished painted page.
 - Edit dialogue.
 - Edit narration.
 - Change panel order.
@@ -412,8 +361,7 @@ The model layer must support the following tasks:
 | Panel text generation  | Meta language model        |
 | Dialogue generation    | Meta language model        |
 | Character descriptions | Meta language model        |
-| Colour palette suggestion | Meta language or vision model |
-| Image generation (draft, painted finish or explicit ink, reference) | Meta image model (`muse-image-1.0`) |
+| Image generation (draft, painted finish, reference) | Meta image model (`muse-image-1.0`) |
 | Image review           | Meta multimodal model      |
 | Video generation       | Meta video model (deferred) |
 
@@ -485,15 +433,13 @@ The system must control generation cost at every stage.
 
 Before each image generation stage, the system must display an estimate for that stage only.
 
-**Pricing basis (verified):** Meta's `muse-image-1.0` charges a flat **$0.01 per image** regardless of size, resolution, quality, or reasoning strength. Colour palette suggestions use a language or vision model call (token-based pricing). Paint-bucket fill is ordinary code and costs no credits.
+**Pricing basis (verified):** Meta's `muse-image-1.0` charges a flat **$0.01 per image** regardless of size, resolution, quality, or reasoning strength.
 
 | Stage | Cost basis |
 | ----- | ---------- |
 | Draft sketch | $0.01 per page image attempt |
-| Finished painted page or explicit ink | $0.01 per page image attempt |
+| Finished painted page | $0.01 per page image attempt |
 | Character reference image | $0.01 per image attempt |
-| Colour palette suggestion | Token cost of one language/vision model call (estimated from configured token price) |
-| Paint-bucket fill | $0.00 (no API call) |
 
 The system must calculate estimates using the actual configured per-image price. The system must not invent credit prices. If a price is not yet configured, the system must label the estimate as "estimate" and make it clear the price is unverified.
 
@@ -526,8 +472,8 @@ Each generation operation must record:
 - Project ID
 - Generation job ID
 - Model ID
-- Task type (draft_sketch | final_line_art | character_reference | colour_suggestion)
-- Stage (draft | line_art | colour | reference)
+- Task type (draft_sketch | final_line_art | character_reference; the retired colour_suggestion type stays valid for earlier jobs)
+- Stage (draft | line_art | reference; the retired colour stage stays valid for earlier jobs)
 - Number of images
 - Input token usage (for language calls)
 - Output token usage (for language calls)
@@ -552,7 +498,7 @@ The API has no hard spend cap. The system must therefore enforce spend limits in
 The system must support:
 
 - A configurable lifetime per-book image budget (default 40), rolling per-user daily image cap (80) and monthly image cap (800). A 12-page book needs roughly 30 images, leaving room for revisions. Full refunds release image usage; new regenerations count, same-key replays do not.
-- A global budget kill switch (the global stop switch): a single operator-set flag that halts all new paid generation (image, colour and text jobs that call the provider) for all users when the platform-wide spend reaches a configured threshold. It does not stop work that spends nothing at the provider: finished pages, downloads and PDF/PNG export keep working. Jobs committed but not yet sent are held, not sent, and can be cancelled for a refund.
+- A global budget kill switch (the global stop switch): a single operator-set flag that halts all new paid generation (image and text jobs that call the provider) for all users when the platform-wide spend reaches a configured threshold. It does not stop work that spends nothing at the provider: finished pages, downloads and PDF/PNG export keep working. Jobs committed but not yet sent are held, not sent, and can be cancelled for a refund.
 - Operators must be able to update the kill-switch threshold and reset it without a code deployment.
 
 When a quota or kill switch is active, the system must inform the user clearly (a structured `generation_stopped` error for the kill switch) and must not initiate the generation job.
@@ -735,9 +681,6 @@ The system must separate the application into services.
                  Generated Images
                         |
                         v
-               Colour Editor (Svelte)
-                        |
-                        v
                     PDF Export
 ```
 
@@ -778,7 +721,6 @@ The Python service must handle:
 - Chapter generation
 - Panel text generation
 - Character profile generation
-- Colour palette suggestion
 - Image generation via the image adapter port
 - Image review via the vision adapter port
 - Prompt pre-moderation (language model call before any AI dispatch)
@@ -887,8 +829,9 @@ The initial database must contain the following tables.
 - line_art_image_url
 - line_art_image_job_id (FK to generation_jobs)
 - line_art_approved_at
+- colour_image_url, colour_image_uploaded_at (retired: read-only for pages finished with Ink)
 
-### colour_palettes
+### colour_palettes (retired: kept for data, no longer read or written)
 
 - id (UUID)
 - page_id (FK)
@@ -896,7 +839,7 @@ The initial database must contain the following tables.
 - palette (JSONB; array of {region_name, hex_color, label})
 - user_modified_at (null if only AI suggestion was applied)
 
-### colour_regions
+### colour_regions (retired: kept for data, no longer read or written)
 
 - id (UUID)
 - page_id (FK)
@@ -1019,20 +962,13 @@ POST   /api/v1/pages/:id/draft
 POST   /api/v1/pages/:id/draft/approve
 ```
 
-### Final Line Art Stage
+### Finished Page Stage
+
+The line-art paths are aliases of the painted-page route.
 
 ```http
 POST   /api/v1/pages/:id/line-art
 POST   /api/v1/pages/:id/line-art/approve
-```
-
-### Colouring
-
-```http
-GET    /api/v1/pages/:id/colour-palette
-POST   /api/v1/pages/:id/colour-palette/suggest
-PATCH  /api/v1/pages/:id/colour-palette
-POST   /api/v1/pages/:id/colour/approve
 ```
 
 ### Generation Jobs and Credits
@@ -1167,8 +1103,7 @@ The first release must include:
 - Character profiles and approved reference images
 - Panel text generation and editing
 - Draft sketch generation and approval (one image per page)
-- Finished page generation and approval (painted by default, ink by explicit choice)
-- Colouring with AI palette suggestion, manual editing, and paint-bucket fill
+- Finished painted page generation and approval
 - Credit estimation per stage
 - User approval gates before each image generation stage
 - Per-user quotas and global kill switch
@@ -1209,15 +1144,12 @@ The project is complete when:
 12. The user can approve or regenerate draft sketches.
 13. The system displays an estimated cost before each image generation stage.
 14. The user can approve or decline the cost estimate.
-15. The system generates one finished painted page per page by default; ink remains an explicit option.
-16. The user can approve or regenerate the selected finish.
-17. For ink pages, the system suggests a colour palette via AI.
-18. For ink pages, the user can edit the palette and apply colours with the paint-bucket tool.
-19. The user can undo fill actions on the page canvas.
-20. The system records credit usage for every image generation job.
-21. The system enforces per-user quotas and the global kill switch.
-22. Age warning (18+/21+) and geo-blocking are deferred; no regional restriction or date-of-birth gate is enforced.
-23. The system exports a PDF with AI-generation disclosure and provenance metadata preserved.
+15. The system generates one finished painted page per page.
+16. The user can approve or regenerate the finished page.
+17. The system records credit usage for every image generation job.
+18. The system enforces per-user quotas and the global kill switch.
+19. Age warning (18+/21+) and geo-blocking are deferred; no regional restriction or date-of-birth gate is enforced.
+20. The system exports a PDF with AI-generation disclosure and provenance metadata preserved.
 24. The user can download the PDF.
 25. The system uses Meta models only.
 26. The system does not expose model API keys.
@@ -1274,27 +1206,16 @@ The user can review draft page compositions before selecting a finished-page sty
 
 Build:
 
-- Finished page generation (painted default or explicit ink)
-- Selected finish approval
+- Finished painted page generation
+- Finished page approval
 
 Success:
 
-The user can generate and approve a finished painted page per page by default, with ink available as an explicit option.
+The user can generate and approve a finished painted page per page.
 
-### Phase 5: Colouring Pipeline
+### Phase 5: Colouring Pipeline (retired)
 
-Build:
-
-- AI colour palette suggestion
-- Manual palette editing
-- Paint-bucket fill tool with gap-closing
-- Manual gap-closer tool
-- Canvas stroke/fill undo
-- Colour approval
-
-Success:
-
-The user can colour each page using AI palette suggestions and manual fill.
+Removed together with the Ink route. Nothing builds or promises it.
 
 ### Phase 6: Comic Book Editor and Export
 
@@ -1341,13 +1262,12 @@ The user can edit the complete comic book and download a PDF.
 - Include the hashed user ID on every image API call.
 - Meta API keys come only after the whole project is built on fakes, with the Meta adapters inert behind the ports.
 - Delivery uses direct-PR with GitHub Actions CI and no external validation pipeline.
-- The paint-bucket fill tool must work without any API call.
 
 ## 17. Definition of Done
 
 The first version is complete when a user can:
 
-Provide a script -> Approve character references -> Select chapters -> Approve outline -> Edit panel text -> Approve draft sketches -> Approve painted pages (or explicit ink) -> Colour ink pages when selected -> Export a PDF -> Download the comic book.
+Provide a script -> Approve character references -> Select chapters -> Approve outline -> Edit panel text -> Approve draft sketches -> Approve painted pages -> Export a PDF -> Download the comic book.
 
 The system must provide a reliable, cost-controlled, and approval-gated workflow from script to comic book.
 

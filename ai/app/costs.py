@@ -47,7 +47,6 @@ GENERATION_POLICIES = MappingProxyType(
         "analysis": GenerationPolicy(4096, 2560, "low", 1995, 1995, STORY_INPUT_TOKEN_LIMIT),
         "outline": GenerationPolicy(4096, 1280, "low", 762, 762, STORY_INPUT_TOKEN_LIMIT),
         "panels": GenerationPolicy(4096, 1536, "low", 1056, 1056, STORY_INPUT_TOKEN_LIMIT),
-        "palette": GenerationPolicy(512, 1280, "low", 809, 809, STORY_INPUT_TOKEN_LIMIT),
         "check_language": GenerationPolicy(
             256, 2048, "minimal", 64, 62, WORST_CASE_TEXT_INPUT_TOKENS
         ),

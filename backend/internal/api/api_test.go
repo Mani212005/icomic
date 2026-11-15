@@ -166,7 +166,7 @@ func TestFinishPageImageUsesOwnedApprovedArtAndProjectPreset(t *testing.T) {
 		return &gen.FinishPageImageResponse{ImageURL: "finishes/page.jpg"}, nil
 	}
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+page.ID+"/finish?variant=ink", nil))
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+page.ID+"/finish?variant=painted", nil))
 	var finished map[string]string
 	if response.Code != http.StatusOK || !called || json.Unmarshal(response.Body.Bytes(), &finished) != nil {
 		t.Fatalf("finish endpoint returned %d (%s), called=%t", response.Code, response.Body.String(), called)
@@ -344,54 +344,6 @@ func assertPanelFields(t *testing.T, panel *domain.Panel, want map[string]string
 		if got[field] != value {
 			t.Errorf("%s = %q, want %q", field, got[field], value)
 		}
-	}
-}
-
-func TestPaletteRoutesRequirePageOwnership(t *testing.T) {
-	_, handler, repo := setupTestServer(true, "owner")
-	ctx := context.Background()
-	if err := repo.CreateProject(ctx, &domain.Project{ID: "ba298efb-07bc-58ba-b92c-d1798edf7606", UserID: "owner"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.CreateChapter(ctx, &domain.Chapter{ID: "946e2bd7-facc-54af-8a76-892c5ae92445", ProjectID: "ba298efb-07bc-58ba-b92c-d1798edf7606"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.CreatePage(ctx, &domain.Page{ID: "374dc62a-f5bc-5af6-b94e-b35eeea746c4", ChapterID: "946e2bd7-facc-54af-8a76-892c5ae92445"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.SaveColourPalette(ctx, &domain.ColourPalette{PageID: "374dc62a-f5bc-5af6-b94e-b35eeea746c4", Palette: map[string]interface{}{"skin": "#123456"}}); err != nil {
-		t.Fatal(err)
-	}
-
-	request := func(method, path, userID, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("X-User-ID", userID)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-		return rec
-	}
-
-	if rec := request(http.MethodGet, "/api/v1/pages/374dc62a-f5bc-5af6-b94e-b35eeea746c4/colour-palette", "owner", ""); rec.Code != http.StatusOK {
-		t.Fatalf("owner GET expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if rec := request(http.MethodPatch, "/api/v1/pages/374dc62a-f5bc-5af6-b94e-b35eeea746c4/colour-palette", "owner", `{"palette":{"skin":"#654321"}}`); rec.Code != http.StatusOK {
-		t.Fatalf("owner PATCH expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if rec := request(http.MethodGet, "/api/v1/pages/374dc62a-f5bc-5af6-b94e-b35eeea746c4/colour-palette", "other-user", ""); rec.Code != http.StatusForbidden {
-		t.Errorf("nonowner GET expected 403, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if rec := request(http.MethodPatch, "/api/v1/pages/374dc62a-f5bc-5af6-b94e-b35eeea746c4/colour-palette", "other-user", `{"palette":{"attacker":"#FF0000"}}`); rec.Code != http.StatusForbidden {
-		t.Errorf("nonowner PATCH expected 403, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if rec := request(http.MethodPatch, "/api/v1/pages/f8b9e358-7f01-5884-b6db-842b1cb962e4/colour-palette", "owner", `{"palette":{"skin":"#FFFFFF"}}`); rec.Code != http.StatusNotFound {
-		t.Errorf("missing page PATCH expected 404, got %d: %s", rec.Code, rec.Body.String())
-	}
-	palette, err := repo.GetColourPalette(ctx, "374dc62a-f5bc-5af6-b94e-b35eeea746c4")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if palette.Palette["skin"] != "#654321" || palette.Palette["attacker"] != nil {
-		t.Errorf("denied PATCH changed palette: %#v", palette.Palette)
 	}
 }
 
@@ -578,8 +530,8 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 		t.Fatalf("generate draft failed: %d", recDraft.Code)
 	}
 
-	// 10. Attempt line art before draft approval -> must fail
-	reqLinePremature := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
+	// 10. Attempt a draft-conditioned finish before draft approval -> must fail
+	reqLinePremature := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/painted-page", strings.NewReader(`{"variant":"draft-conditioned"}`))
 	recLinePremature := httptest.NewRecorder()
 	handler.ServeHTTP(recLinePremature, reqLinePremature)
 	if recLinePremature.Code != http.StatusBadRequest {
@@ -594,39 +546,19 @@ func TestEndToEndPipelineAndApprovalGates(t *testing.T) {
 		t.Fatalf("approve draft failed: %d", recAppDraft.Code)
 	}
 
-	// 12. Generate line art
-	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art?variant=ink", nil)
+	// 12. Generate the finished painted page
+	reqLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art", nil)
 	recLine := serveGeneration(server, handler, reqLine)
 	if recLine.Code != http.StatusAccepted {
-		t.Fatalf("generate line art failed: %d", recLine.Code)
+		t.Fatalf("generate finished page failed: %d", recLine.Code)
 	}
 
-	// 13. Approve line art
-	reqAppLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art/approve?variant=ink", nil)
+	// 13. Approve the finished page: the painted page is the only final route
+	reqAppLine := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/line-art/approve", nil)
 	recAppLine := httptest.NewRecorder()
 	handler.ServeHTTP(recAppLine, reqAppLine)
 	if recAppLine.Code != http.StatusOK {
-		t.Fatalf("approve line art failed: %d", recAppLine.Code)
-	}
-
-	// 14. Colouring: suggest, edit, approve
-	reqPalSuggest := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/colour-palette/suggest", nil)
-	recPalSuggest := serveGeneration(server, handler, reqPalSuggest)
-	if recPalSuggest.Code != http.StatusAccepted {
-		t.Fatalf("suggest colour palette failed: %d", recPalSuggest.Code)
-	}
-	reqColourImage := httptest.NewRequest(http.MethodPut, "/api/v1/pages/"+pageID+"/colour-image", bytes.NewReader([]byte(fixturePNG)))
-	recColourImage := httptest.NewRecorder()
-	handler.ServeHTTP(recColourImage, reqColourImage)
-	if recColourImage.Code != http.StatusOK {
-		t.Fatalf("upload colour image failed: %d (%s)", recColourImage.Code, recColourImage.Body.String())
-	}
-
-	reqAppColour := httptest.NewRequest(http.MethodPost, "/api/v1/pages/"+pageID+"/colour/approve", nil)
-	recAppColour := httptest.NewRecorder()
-	handler.ServeHTTP(recAppColour, reqAppColour)
-	if recAppColour.Code != http.StatusOK {
-		t.Fatalf("approve colour failed: %d", recAppColour.Code)
+		t.Fatalf("approve finished page failed: %d", recAppLine.Code)
 	}
 
 	// 15. Export and Download

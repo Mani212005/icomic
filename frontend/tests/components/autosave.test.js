@@ -23,7 +23,6 @@ function backend(overrides = {}) {
 		getChapters: async () => [CHAPTER],
 		getPanels: async () => [PANEL],
 		getPages: async () => [],
-		getColourPalette: async () => ({ palette: {} }),
 		request: async () => ({}),
 		getCreditUsage: async () => ({ remaining_credits: 5 }),
 		estimateCost: async () => ({ estimated_cost: 0.01, currency: 'USD', price_verified: true }),

@@ -2,7 +2,7 @@ import { pollJob, JobPollingError } from '../api/jobPolling.js';
 import { newIdempotencyKey } from '../api/idempotency.js';
 import { rememberActiveJob, recallActiveJob, forgetActiveJob } from '../api/activeJobs.js';
 
-export const JOB_KIND = { SCRIPT: 'script', CHARACTER: 'character', PAGE: 'page', PALETTE: 'palette' };
+export const JOB_KIND = { SCRIPT: 'script', CHARACTER: 'character', PAGE: 'page' };
 
 const RESUME_LABEL = 'Keep waiting';
 

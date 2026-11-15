@@ -52,7 +52,7 @@ The primary CI pipeline is defined in `.github/workflows/ci.yml`. It runs on pus
 | `e2e` | no | yes | `test-e2e` |
 | `service-images` | no | no | CI only: `python3 scripts/check_backend_container.py` and `docker build --file ai/Dockerfile ai` |
 
-There is no browser-driven test in CI. The colour and lettering editors have manual fixtures
+There is no browser-driven test in CI. The lettering editor has a manual fixture
 under `frontend/static/test-fixtures/`, and the changed browser flow is checked by hand
 against an isolated stack (`make e2e-comic` with `--keep-stack`).
 
@@ -223,8 +223,7 @@ The e2e suite tests:
 - Chapter outline generation and chapter outline approval
 - Panel generation and automatic page partitioning
 - Draft sketch generation and approval
-- Line art inking generation and approval
-- Multimodal colour palette suggestions and approval
+- Finished painted page generation and approval, and the retired Ink routes answering 404
 - Project export compilation and PDF download through Go download endpoint
 - Structural verification of generated PDF (valid PDF header/trailer, page count, mandatory AI generation disclosure text, and Meta C2PA provenance metadata)
 - Invariant and safety negative paths:
@@ -258,7 +257,7 @@ make e2e-comic
 ```
 
 The target starts PostgreSQL, Redis, the AI service, and the Go API with Docker Compose, using fake adapters by default.
-It creates a project, analyzes the script, generates and colours pages, exports and verifies the PDF, then writes `/home/mani/icomic-artifacts/comic-e2e/latest.pdf`, a timestamped PDF copy, and a cost report.
+It creates a project, analyzes the script, generates and approves painted pages, exports and verifies the PDF, then writes `/home/mani/icomic-artifacts/comic-e2e/latest.pdf`, a timestamped PDF copy, and a cost report.
 Use `E2E_ARGS="--artifact-dir /tmp/comic-e2e"` to isolate PDF and report output.
 Managed Compose stacks and their volumes are removed when the run ends, including
 after a failed run. Pass `--keep-stack` to retain a stack for inspection or a later

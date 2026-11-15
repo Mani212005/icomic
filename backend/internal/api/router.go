@@ -132,20 +132,11 @@ func (s *Server) NewRouter() http.Handler {
 	handle("POST /api/v1/pages/{id}/draft", s.GenerateDraft)
 	handle("POST /api/v1/pages/{id}/draft/approve", s.ApproveDraft)
 
-	// Final Line Art
-	handle("POST /api/v1/pages/{id}/line-art", s.GenerateLineArt)
-	handle("POST /api/v1/pages/{id}/line-art/approve", s.ApproveLineArt)
-
-	// Finished Painted Page Prototype (opt-in route)
+	// Finished painted page: the only final route. The line-art paths are its stable aliases.
+	handle("POST /api/v1/pages/{id}/line-art", s.GeneratePaintedPage)
+	handle("POST /api/v1/pages/{id}/line-art/approve", s.ApprovePaintedPage)
 	handle("POST /api/v1/pages/{id}/painted-page", s.GeneratePaintedPage)
 	handle("POST /api/v1/pages/{id}/painted-page/approve", s.ApprovePaintedPage)
-
-	// Colouring
-	handle("GET /api/v1/pages/{id}/colour-palette", s.GetColourPalette)
-	handle("POST /api/v1/pages/{id}/colour-palette/suggest", s.SuggestColourPalette)
-	handle("PATCH /api/v1/pages/{id}/colour-palette", s.UpdateColourPalette)
-	handle("PUT /api/v1/pages/{id}/colour-image", s.UploadColourImage)
-	handle("POST /api/v1/pages/{id}/colour/approve", s.ApproveColour)
 
 	// Jobs and Credits
 	handle("POST /api/v1/projects/{id}/estimate", s.EstimateCost)

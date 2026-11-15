@@ -85,7 +85,7 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
 
             for number in selected:
                 page = original[number - 1]
-                url = page.get("painted_page_image_url") or page["line_art_image_url"]
+                url = page["painted_page_image_url"]
                 sources[url] = fetch_source(url)
             before = runner.json_request("/api/v1/me/credit-usage")["balance"]
             resumed = runner.CostGuard(float("inf"), False)
@@ -115,14 +115,10 @@ def test_long_comic_has_all_panels_pages_and_pdf_pages(
                     assert media_key(old.get("painted_page_image_url")) == media_key(
                         new.get("painted_page_image_url")
                     )
-            assert media_key(original[0]["line_art_image_url"]) == media_key(
-                updated[0]["line_art_image_url"]
-            )
             for url, content in sources.items():
                 assert fetch_source(url) == content
 
-            # A later selective repaint must keep page1's newer painted finish,
-            # rather than reapprove its retained historical ink/colour variant.
+            # A later selective repaint must keep page1's newer painted finish.
             requests = []
             original_request = runner.json_request
 

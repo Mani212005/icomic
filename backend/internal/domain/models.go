@@ -129,25 +129,6 @@ type Page struct {
 	UpdatedAt             time.Time       `json:"updated_at"`
 }
 
-// ColourPalette represents AI suggested and user modified page colors (SPEC 9).
-type ColourPalette struct {
-	ID              string                 `json:"id"`
-	PageID          string                 `json:"page_id"`
-	SuggestionJobID *string                `json:"suggestion_job_id,omitempty"`
-	Palette         map[string]interface{} `json:"palette"`
-	UserModifiedAt  *time.Time             `json:"user_modified_at,omitempty"`
-}
-
-// ColourRegion represents a fill region applied to a page line art layer (SPEC 9).
-type ColourRegion struct {
-	ID            string    `json:"id"`
-	PageID        string    `json:"page_id"`
-	RegionLabel   string    `json:"region_label"`
-	FillColourHex string    `json:"fill_colour_hex"`
-	FillAppliedAt time.Time `json:"fill_applied_at"`
-	FillAppliedBy string    `json:"fill_applied_by"`
-}
-
 // StageApproval records an explicit user approval gate (SPEC 9, ARCHITECTURE 5.3).
 type StageApproval struct {
 	ID                       string    `json:"id"`

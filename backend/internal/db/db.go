@@ -97,13 +97,6 @@ type Repository interface {
 	ReplaceChapterPanels(ctx context.Context, chapterID string, panels []*domain.Panel, pages []*domain.Page) error
 	SavePageLettering(ctx context.Context, id string, previous, next json.RawMessage) error
 	SaveLetteringText(ctx context.Context, pageID string, before, next *domain.Panel, previous, lettering json.RawMessage) error
-	SavePageColourImage(ctx context.Context, pageID, imageURL string, uploadedAt time.Time) error
-
-	// Colour Palettes and Regions
-	GetColourPalette(ctx context.Context, pageID string) (*domain.ColourPalette, error)
-	SaveColourPalette(ctx context.Context, cp *domain.ColourPalette) error
-	ListColourRegions(ctx context.Context, pageID string) ([]*domain.ColourRegion, error)
-	CreateColourRegion(ctx context.Context, cr *domain.ColourRegion) error
 
 	// Stage Approvals
 	CreateApproval(ctx context.Context, a *domain.StageApproval) error
@@ -149,8 +142,6 @@ type InMemoryRepository struct {
 	characters    map[string]*domain.Character
 	panels        map[string]*domain.Panel
 	pages         map[string]*domain.Page
-	palettes      map[string]*domain.ColourPalette
-	regions       map[string][]*domain.ColourRegion
 	approvals     []*domain.StageApproval
 	jobs          map[string]*domain.GenerationJob
 	jobsByIdemp   map[string]string
@@ -172,8 +163,6 @@ func NewInMemoryRepository() *InMemoryRepository {
 		characters:    make(map[string]*domain.Character),
 		panels:        make(map[string]*domain.Panel),
 		pages:         make(map[string]*domain.Page),
-		palettes:      make(map[string]*domain.ColourPalette),
-		regions:       make(map[string][]*domain.ColourRegion),
 		approvals:     make([]*domain.StageApproval, 0),
 		jobs:          make(map[string]*domain.GenerationJob),
 		jobsByIdemp:   make(map[string]string),
@@ -583,75 +572,6 @@ func (m *InMemoryRepository) UpdatePage(_ context.Context, pg *domain.Page) erro
 	cpy.LetteringMode = m.pages[pg.ID].LetteringMode
 	cpy.Lettering = m.pages[pg.ID].Lettering
 	m.pages[pg.ID] = &cpy
-	return nil
-}
-
-func (m *InMemoryRepository) SavePageColourImage(_ context.Context, pageID, imageURL string, uploadedAt time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	pg, ok := m.pages[pageID]
-	if !ok {
-		return ErrNotFound
-	}
-	cpy := *pg
-	cpy.ColourImageURL = imageURL
-	cpy.ColourImageUploadedAt = &uploadedAt
-	m.pages[pageID] = &cpy
-	return nil
-}
-
-// Colour Palettes and Regions
-func (m *InMemoryRepository) GetColourPalette(_ context.Context, pageID string) (*domain.ColourPalette, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	cp, ok := m.palettes[pageID]
-	if !ok {
-		return nil, ErrNotFound
-	}
-	cpy := *cp
-	return &cpy, nil
-}
-
-func (m *InMemoryRepository) SaveColourPalette(_ context.Context, cp *domain.ColourPalette) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if cp.ID == "" {
-		cp.ID = uuid.NewString()
-	}
-	now := time.Now().UTC()
-	cp.UserModifiedAt = &now
-	cpy := *cp
-	m.palettes[cp.PageID] = &cpy
-	return nil
-}
-
-func (m *InMemoryRepository) ListColourRegions(_ context.Context, pageID string) ([]*domain.ColourRegion, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	regs := m.regions[pageID]
-	var res []*domain.ColourRegion
-	for _, r := range regs {
-		cpy := *r
-		res = append(res, &cpy)
-	}
-	return res, nil
-}
-
-func (m *InMemoryRepository) CreateColourRegion(_ context.Context, cr *domain.ColourRegion) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if cr.ID == "" {
-		cr.ID = uuid.NewString()
-	}
-	if cr.FillAppliedAt.IsZero() {
-		cr.FillAppliedAt = time.Now().UTC()
-	}
-	cpy := *cr
-	m.regions[cr.PageID] = append(m.regions[cr.PageID], &cpy)
 	return nil
 }
 

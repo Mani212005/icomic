@@ -41,8 +41,7 @@ from app.provider_diagnostics import ProviderDiagnostics
         ("generate_draft_sketch", "http_400", 1),
         ("generate_draft_sketch", "partial_body", 1),
         ("generate_draft_sketch", "legacy_partial_body", 1),
-        ("generate_line_art", "invalid_image", 1),
-        ("suggest_colour_palette", "palette_list", 1),
+        ("generate_painted_page", "invalid_image", 1),
         ("assemble_pdf", "corrupt_stored_image", 1),
         ("complete_with_reasoning_load", None, 0),
         ("complete_with_extras", None, 0),
@@ -292,10 +291,8 @@ def test_long_flow_stops_at_each_failed_stage(
             if pages:
                 if target == "generate_draft_sketch":
                     assert not pages[0].get("draft_image_url")
-                elif target == "generate_line_art":
-                    assert not pages[0].get("line_art_image_url")
-                elif target == "suggest_colour_palette":
-                    assert not pages[0].get("colour_approved_at")
+                elif target == "generate_painted_page":
+                    assert not pages[0].get("painted_page_image_url")
         if shape in {"partial_body", "legacy_partial_body"}:
             # The real handler saves its job before dispatch, but only links
             # draft_image_job_id on success. Resume must use the durable job's

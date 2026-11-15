@@ -195,9 +195,17 @@ func TestRealDBGenerationTransactionsAndRepositories(t *testing.T) {
 	pageBeforeColour, err := repo.GetPage(ctx, page.ID)
 	must(t, err)
 	colouredAt := time.Now().UTC().Truncate(time.Microsecond)
-	must(t, repo.SavePageColourImage(ctx, page.ID, "fake://coloured-page", colouredAt))
+	// Nothing writes a coloured image any more (the Ink route is retired), but pages finished with
+	// it still carry the columns and must read back untouched, beside their original line art.
+	_, err = pool.ExecContext(ctx, `UPDATE pages SET colour_image_url=$2, colour_image_uploaded_at=$3 WHERE id=$1::uuid`, page.ID, "fake://coloured-page", colouredAt)
+	must(t, err)
 	pageAfterColour, err := repo.GetPage(ctx, page.ID)
 	must(t, err)
+	listedAfterColour, err := repo.ListPages(ctx, chapter.ID)
+	must(t, err)
+	if len(listedAfterColour) != 1 || listedAfterColour[0].ColourImageURL != "fake://coloured-page" || listedAfterColour[0].LineArtImageURL != "fake://line-art-original" {
+		t.Fatalf("a page finished with Ink did not list with both images: %+v", listedAfterColour)
+	}
 	if pageAfterColour.LineArtImageURL != "fake://line-art-original" || pageAfterColour.ColourImageURL != "fake://coloured-page" {
 		t.Fatalf("coloured page persistence overwrote line art: %+v", pageAfterColour)
 	}
@@ -205,7 +213,7 @@ func TestRealDBGenerationTransactionsAndRepositories(t *testing.T) {
 		t.Fatalf("coloured page upload timestamp did not round trip: %+v", pageAfterColour.ColourImageUploadedAt)
 	}
 	if !pageAfterColour.UpdatedAt.Equal(pageBeforeColour.UpdatedAt) {
-		t.Fatalf("colour upload changed the line-art activity timestamp: before=%s after=%s", pageBeforeColour.UpdatedAt, pageAfterColour.UpdatedAt)
+		t.Fatalf("a stored coloured image changed the line-art activity timestamp: before=%s after=%s", pageBeforeColour.UpdatedAt, pageAfterColour.UpdatedAt)
 	}
 
 	makeJob := func(kind, stage, entity, key string) *domain.GenerationJob {

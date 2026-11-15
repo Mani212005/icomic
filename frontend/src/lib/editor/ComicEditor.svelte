@@ -8,11 +8,9 @@
 	import { pageOfPanel, moveTarget } from './panelLayout.js';
 	import { stageList, quoteStages } from './stages.js';
 	import { Icon, BetaTag, revealCards } from '#lib/design/shell.js';
-	import { ApprovalTag, ApprovalAction, ColourEditor, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
-	import { STAGES, APPROVAL, approvalState, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote, publishSpend, INK_OVERLAY_NOTE, isOverlayPage } from '#lib/api/types.js';
+	import { ApprovalTag, ApprovalAction, LetteringPreview, ExportView, LetteringSession, pollJob, GenerationRunner, JOB_KIND } from './features.js';
+	import { STAGES, APPROVAL, approvalState, isApprovalStale, hasValidApproval, formatApiError, formatCostQuote, publishSpend } from '#lib/api/types.js';
 	const GENERATING = 'Generating…';
-	const INK_VARIANT = 'ink';
-	const PAINTED_VARIANT = 'painted';
 	const NEW_PAGE = 'new';
 
 	export let project;
@@ -41,10 +39,7 @@
 		if (!letteringSessions.has(page.id)) letteringSessions.set(page.id, new LetteringSession(apiClient, page.id));
 		return letteringSessions.get(page.id);
 	}
-	let palette = [];
-	let finishVariant = PAINTED_VARIANT;
 	let rawPreviewByPage = {};
-	let palettesByPage = {};
 	let failedImages = new Set();
 	function markImageFailed(event) {
 		failedImages = new Set([...failedImages, event.currentTarget.getAttribute('src')]);
@@ -145,20 +140,6 @@
 	onDestroy(() => savers().forEach((saver) => saver.dispose()));
 	const retry = (saver) => saver?.retry().catch(() => {});
 
-	function normalizePalette(rawPalette) {
-		if (Array.isArray(rawPalette)) return rawPalette;
-		return Object.entries(rawPalette || {}).map(([region_name, hex_color]) => ({
-			region_name,
-			hex_color: typeof hex_color === 'string' ? hex_color : hex_color?.hex_color,
-			label: typeof hex_color === 'string' ? region_name : (hex_color?.label || region_name)
-		})).filter((item) => typeof item.hex_color === 'string');
-	}
-
-	function updatePagePalette(pageId, newPalette) {
-		palettesByPage = { ...palettesByPage, [pageId]: newPalette };
-		if (pages[0]?.id === pageId) palette = newPalette;
-	}
-
 	async function changeFinishPreset(event) {
 		const finish_preset = event.currentTarget.value;
 		try {
@@ -170,29 +151,23 @@
 	}
 
 	async function refreshFinishedPreviews(page) {
-		const request = async (variant) => {
-			try {
-				return await apiClient.request(`/api/v1/pages/${page.id}/finish?variant=${variant}`, { method: 'POST' });
-			} catch {
-				return {};
-			}
-		};
-		const [painted, ink] = await Promise.all([request('painted'), request('ink')]);
+		let painted = {};
+		try {
+			painted = await apiClient.request(`/api/v1/pages/${page.id}/finish?variant=painted`, { method: 'POST' });
+		} catch {
+			painted = {};
+		}
 		return {
 			...page,
 			raw_master_image_url: painted.raw_master_image_url || page.painted_page_image_url || page.line_art_image_url,
-			finished_image_url: painted.finished_image_url || '',
-			raw_ink_image_url: ink.raw_master_image_url || page.line_art_image_url,
-			finished_ink_image_url: ink.finished_image_url || ''
+			finished_image_url: painted.finished_image_url || ''
 		};
 	}
 
 	function finishPreviewUrl(page) {
-		const finished = finishVariant === INK_VARIANT ? page.finished_ink_image_url : page.finished_image_url;
-		const raw = finishVariant === INK_VARIANT ? page.raw_ink_image_url : page.raw_master_image_url;
 		return rawPreviewByPage[page.id]
-			? (raw || finishImageUrl(page))
-			: (finished || finishImageUrl(page));
+			? (page.raw_master_image_url || finishImageUrl(page))
+			: (page.finished_image_url || finishImageUrl(page));
 	}
 
 
@@ -203,7 +178,6 @@
 		[STAGES.PANELS]: panels.length > 0,
 		[STAGES.DRAFT]: allDraftsApproved,
 		[STAGES.LINE_ART]: allLineArtApproved,
-		[STAGES.COLOUR]: allColoursApproved,
 		[STAGES.EXPORT]: exportCompleted
 	};
 	$: onProgress?.(stageCompleted);
@@ -234,26 +208,14 @@
 	$: finishStage = stageState(pages, finishApprovalAt);
 	$: anyLineArtStale = finishStage === APPROVAL.STALE;
 	$: allLineArtApproved = finishStage === APPROVAL.APPROVED;
-	// Ink is baked-lettering only, so say so up front: overlay pages offer Painted only and
-	// never fail with a 409 at click time.
-	$: overlayPages = pages.filter(isOverlayPage);
-	$: allOverlay = pages.length > 0 && overlayPages.length === pages.length;
-	$: if (allOverlay && finishVariant === INK_VARIANT) finishVariant = PAINTED_VARIANT;
-	$: inkBlockedByOverlay = finishVariant === INK_VARIANT && overlayPages.length > 0;
-	// The variant is a parameter so templates re-evaluate when it changes.
-	function inkBlocked(page, variant) {
-		return variant === INK_VARIANT && isOverlayPage(page);
-	}
+	// Pages finished before the Ink route was retired keep their approved line art, so a page
+	// without a painted image still reads its line-art approval and image.
 	function finishApprovalAt(page) {
-		if (finishVariant === INK_VARIANT) return page.line_art_approved_at;
 		return page.painted_page_image_url ? page.painted_page_approved_at : page.line_art_approved_at;
 	}
 	function finishImageUrl(page) {
-		if (finishVariant === INK_VARIANT) return page.line_art_image_url || page.line_art_url;
 		return page.painted_page_image_url || page.line_art_image_url || page.line_art_url;
 	}
-
-	$: allColoursApproved = pages.length > 0 && pages.every((p) => hasValidApproval(p.colour_approved_at, p.updated_at));
 
 	let lastProjectId = null;
 	$: if (project && project.id && project.id !== lastProjectId) {
@@ -297,15 +259,9 @@
 					const session = letteringSessions.get(page.id);
 					return session && !session.value.busy ? session.load(true) : undefined;
 				}));
-
-				const loadedPalettes = await Promise.all(pages.map((page) => apiClient.getColourPalette(page.id)));
-				palettesByPage = Object.fromEntries(pages.map((page, index) => [page.id, normalizePalette(loadedPalettes[index]?.palette || loadedPalettes[index])]));
-				palette = pages.length > 0 ? palettesByPage[pages[0].id] : [];
 			} else {
 				panels = [];
 				pages = [];
-				palettesByPage = {};
-				palette = [];
 			}
 			const quotes = await Promise.all(quoteStages.map(async (stage) => {
 				try {
@@ -325,11 +281,6 @@
 
 	// What a finished job changes on screen, by the kind the receipt was started for.
 	async function settleJob(job) {
-		if (job.kind === JOB_KIND.PALETTE) {
-			const saved = await apiClient.getColourPalette(job.entityId);
-			updatePagePalette(job.entityId, normalizePalette(saved?.palette || saved));
-			return;
-		}
 		await reloadProjectData();
 		if (job.kind === JOB_KIND.SCRIPT) activeStage = STAGES.CHARACTERS;
 	}
@@ -617,52 +568,24 @@
 	}
 
 	function generateLineArt(pageId) {
-		const variant = finishVariant;
 		jobError = null;
 		return runner.run({
 			kind: JOB_KIND.PAGE,
-			label: variant === INK_VARIANT ? 'Ink' : 'Paint',
+			label: 'Paint',
 			status: GENERATING,
 			entityId: pageId,
-			start: (idempotencyKey) => apiClient.generateLineArt(pageId, variant, { idempotencyKey })
+			start: (idempotencyKey) => apiClient.generateLineArt(pageId, { idempotencyKey })
 		});
 	}
 
 	async function approveLineArt(pageId) {
 		jobError = null;
 		try {
-			await apiClient.approveLineArt(pageId, finishVariant);
+			await apiClient.approveLineArt(pageId);
 			await reloadProjectData();
 		} catch (err) {
 			jobError = formatApiError(err);
 		}
-	}
-
-	async function handleApproveColour(pageId, colouredImage) {
-		jobError = null;
-		try {
-			if (colouredImage && typeof apiClient.uploadColourImage === 'function') {
-				await apiClient.uploadColourImage(pageId, colouredImage);
-			}
-			await apiClient.approveColour(pageId);
-			await reloadProjectData();
-			if (pages.length > 0 && pages.every((page) => hasValidApproval(page.colour_approved_at, page.updated_at))) {
-				activeStage = STAGES.EXPORT;
-			}
-		} catch (err) {
-			jobError = formatApiError(err);
-		}
-	}
-
-	function suggestNewPalette(pageId) {
-		jobError = null;
-		return runner.run({
-			kind: JOB_KIND.PALETTE,
-			label: 'Palette',
-			status: 'Suggesting…',
-			entityId: pageId,
-			start: (idempotencyKey) => apiClient.suggestColourPalette(pageId, { idempotencyKey })
-		});
 	}
 </script>
 
@@ -1094,12 +1017,6 @@
 						<option value="print-heavy">Heavy</option>
 					</select>
 				</label>
-				<label class="finish-variant">
-					<select bind:value={finishVariant} aria-label="Variant">
-						<option value="painted">Painted</option>
-						<option value="ink" disabled={allOverlay} title={allOverlay ? INK_OVERLAY_NOTE : undefined}>Ink</option>
-					</select>
-				</label>
 				<div class="header-tags">
 					<ApprovalTag state={finishStage} />
 				</div>
@@ -1107,11 +1024,6 @@
 
 			{#if anyLineArtStale}
 				{@render staleBanner()}
-			{/if}
-			{#if inkBlockedByOverlay}
-				<div class="stale-stage-banner" role="status">
-					<Icon name="info" size={18} /> {INK_OVERLAY_NOTE}
-				</div>
 			{/if}
 
 			{#if pages.length === 0}<div class="stage-empty"><Icon name="draft" size={48} /></div>{/if}
@@ -1125,13 +1037,13 @@
 							{/if}
 						</div>
 						<div class="img-container" class:overlay-preview={page.lettering_mode === 'overlay'}>
-							{#if (finishVariant === INK_VARIANT ? page.finished_ink_image_url : page.finished_image_url)}
+							{#if page.finished_image_url}
 								<button class="image-toggle" aria-label="Raw" on:click={() => rawPreviewByPage = { ...rawPreviewByPage, [page.id]: !rawPreviewByPage[page.id] }}>
 									<Icon name="eye" size={18} />
 								</button>
 							{/if}
 							{#if finishPreviewUrl(page) && !failedImages.has(finishPreviewUrl(page))}
-								{#if page.lettering_mode === 'overlay' && finishVariant !== INK_VARIANT && !page.line_art_image_url && !page.line_art_url}
+								{#if page.lettering_mode === 'overlay' && !page.line_art_image_url && !page.line_art_url}
 									<LetteringPreview session={letteringSession(page)} imageUrl={finishPreviewUrl(page)} imageAlt={`Page ${page.page_number}`} onImageError={markImageFailed} />
 								{:else}
 									<img src={finishPreviewUrl(page)} alt="Page {page.page_number}" on:error={markImageFailed} />
@@ -1141,15 +1053,13 @@
 							{/if}
 						</div>
 						<div class="card-footer">
-							<button class="secondary-btn" aria-label="Regenerate" disabled={isJobActive || inkBlocked(page, finishVariant)} title={inkBlocked(page, finishVariant) ? INK_OVERLAY_NOTE : undefined} on:click={() => generateLineArt(page.id)}>
+							<button class="secondary-btn" aria-label="Regenerate" disabled={isJobActive} on:click={() => generateLineArt(page.id)}>
 								<Icon name="regenerate" size={18} /> Regen ({quoteLabel('final_line_art', costQuotes)})
 							</button>
 
 							<ApprovalAction
 								state={approvalState(finishApprovalAt(page), page.updated_at)}
 								staleLabel="Re-approve"
-								disabled={inkBlocked(page, finishVariant)}
-								title={inkBlocked(page, finishVariant) ? INK_OVERLAY_NOTE : undefined}
 								onApprove={() => approveLineArt(page.id)}
 							/>
 						</div>
@@ -1160,37 +1070,12 @@
 			<div class="section-actions">
 				<button
 					class="primary-btn"
-					on:click={() => (activeStage = finishVariant === INK_VARIANT ? STAGES.COLOUR : STAGES.EXPORT)}
+					on:click={() => (activeStage = STAGES.EXPORT)}
 					disabled={!allLineArtApproved}
 				>
-					{finishVariant === INK_VARIANT ? 'Colour' : 'Export'} <Icon name="arrow" size={18} />
+					Export <Icon name="arrow" size={18} />
 				</button>
 			</div>
-		</section>
-
-	{:else if activeStage === STAGES.COLOUR}
-		<section class="stage-section">
-			<header class="section-header">
-				<h2>Colour</h2>
-			</header>
-
-		{#if pages.length === 0}<div class="stage-empty"><Icon name="colour" size={48} /></div>{/if}
-		{#each pages as page (page.id)}
-			<div class="page-colour-editor">
-				<div class="page-colour-heading">
-					<h3>Page {page.page_number}</h3>
-					<button class="secondary-btn" disabled={isJobActive} on:click={() => suggestNewPalette(page.id)}>
-						<Icon name="colour" size={18} /> Palette ({quoteLabel('colour_suggestion', costQuotes)})
-					</button>
-				</div>
-				<ColourEditor
-					lineArtUrl={page.line_art_image_url || page.line_art_url || ''}
-					palette={palettesByPage[page.id] || []}
-					onApprove={(colouredImage) => handleApproveColour(page.id, colouredImage)}
-					onPaletteChange={(newPalette) => updatePagePalette(page.id, newPalette)}
-				/>
-			</div>
-		{/each}
 		</section>
 
 	{:else if activeStage === STAGES.EXPORT}

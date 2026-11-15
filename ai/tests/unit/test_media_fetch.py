@@ -1,59 +1,12 @@
-"""Media fetch adapters and palette endpoint tests, with no live network access."""
+"""Media fetch adapter tests, with no live network access."""
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
-from app.adapters.clock.fake import FakeClockAdapter
-from app.adapters.factory import AdapterSet, get_media_fetch_adapter
-from app.adapters.image.fake import FakeImageAdapter
-from app.adapters.language.fake import FakeLanguageAdapter
+from app.adapters.factory import get_media_fetch_adapter
 from app.adapters.media_fetch.fake import FakeMediaFetchAdapter
 from app.adapters.media_fetch.http import HTTPMediaFetchAdapter
-from app.adapters.queue.fake import FakeQueueAdapter
 from app.adapters.storage.fake import FakeStorageAdapter
-from app.adapters.vision.fake import FakeVisionAdapter
-from app.main import create_app
-
-
-class RecordingVisionAdapter(FakeVisionAdapter):
-    def suggest_palette(self, model, image_bytes, panel_context, **kwargs):
-        self.image_bytes = image_bytes
-        self.panel_context = panel_context
-        return super().suggest_palette(model, image_bytes, panel_context, **kwargs)
-
-
-def test_palette_endpoint_passes_stored_image_bytes_and_context_to_vision():
-    storage = FakeStorageAdapter("https://storage.example.test/assets")
-    vision = RecordingVisionAdapter()
-    app = create_app(
-        AdapterSet(
-            language=FakeLanguageAdapter(),
-            vision=vision,
-            image=FakeImageAdapter(),
-            storage=storage,
-            queue=FakeQueueAdapter(),
-            clock=FakeClockAdapter(),
-            media_fetch=FakeMediaFetchAdapter(storage),
-        )
-    )
-    image_bytes = b"approved-line-art-png-data"
-    image_url = storage.put("pages/approved.png", image_bytes, "image/png")
-    response = TestClient(app).post(
-        "/internal/v1/suggest-colour-palette",
-        json={
-            "job_id": "palette-job",
-            "hashed_user_id": "user-hash",
-            "project_id": "project-id",
-            "page_id": "page-id",
-            "line_art_image_url": image_url,
-            "panel_context": "A rainy street with a red umbrella",
-        },
-    )
-    assert response.status_code == 200
-    assert vision.image_bytes == image_bytes
-    assert vision.panel_context == "A rainy street with a red umbrella"
-    assert response.json()["theme"]
 
 
 def test_fake_media_fetch_only_reads_configured_storage():

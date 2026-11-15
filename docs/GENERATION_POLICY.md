@@ -15,9 +15,8 @@ reasoning-token counts separately for future tuning.
 | Analysis | 4096 | 2560 | 6656 | low | 1995 | 1995 conservative upper bound |
 | Outline | 4096 | 1280 | 5376 | low | 762 | 762 conservative upper bound |
 | Panel text | 4096 | 1536 | 5632 | low | 1056 | 1056 conservative upper bound |
-| Palette | 512 | 1280 | 1792 | low | 809 | 809 conservative upper bound |
 | Manual text check | 256 | 2048 | 2304 | minimal | 64 | 62 measured in the earlier diagnostic fixture |
-| Manual vision review | 256 | 1280 | 1536 | minimal | No separate live review retained | Uses the palette completion upper bound of 809 |
+| Manual vision review | 256 | 1280 | 1536 | minimal | No separate live review retained | Uses the 809-token completion maximum recorded for the retired palette call |
 | Lettering subject boxes | 1024 | 1280 | 2304 | minimal | 1633 | 672 measured (601 to 672 over three live calls) |
 
 The lettering subject call sends one page downscaled to at most 1024 px on its long
@@ -29,14 +28,13 @@ never retried; a refusal or a malformed answer falls back to the colour heuristi
 
 Image generation has a flat per-image cost and no exposed text/reasoning cap.
 There are no product text/vision calls with an intended answer cap below 256.
-The palette's previous 64-token answer allocation was too small for a structured
-palette; it now has 512 tokens. Moderation requests a compact `SAFE` or `BLOCK`
+Moderation requests a compact `SAFE` or `BLOCK`
 decision with a brief reason, accepts only that decision format, and uses minimal
 reasoning. A block decision stops generation; unrecognized output fails rather
 than being treated as safe.
 
 Margins over the reasoning evidence are 1175 tokens for moderation, 565 for
-analysis, 518 for outline, 480 for panels and 471 for palette/review. Historical
+analysis, 518 for outline, 480 for panels and 471 for review. Historical
 successful cost ledgers retained full completion totals, **not separate
 reasoning counts**. Those totals bound reasoning conservatively; they are not
 claimed to be measured reasoning usage. The margins and minimal effort improve
@@ -45,7 +43,7 @@ headroom but do not guarantee that an arbitrary future completion will fit. Any
 
 Recorded sources (local operational evidence, not committed prompts):
 
-- `/home/mani/icomic-linux-home/data/icomic-night-d-live-run/live-attempt-3-provider-costs.json`: maxima of 789 moderation, 678 analysis, 762 outline, 1056 panel and 809 palette completion tokens.
+- `/home/mani/icomic-linux-home/data/icomic-night-d-live-run/live-attempt-3-provider-costs.json`: maxima of 789 moderation, 678 analysis, 762 outline, 1056 panel and 809 retired-palette completion tokens.
 - `/home/mani/icomic-linux-home/data/icomic-live-long/provider-costs-30e9510243294f9ea7fca664642c8ccc.json`: moderation maximum 886 and analysis maximum 1995 completion tokens.
 - `/home/mani/icomic-linux-home/data/icomic-live-long/provider-costs-040cd4e19b4c48efb4ed08265e808885.json`: 13 moderation calls averaged 806.46 completion tokens; maximum 1056. Analysis maximum 1734.
 - `/home/mani/icomic-linux-home/data/icomic-live-long/diagnostics-040cd4e19b4c48efb4ed08265e808885/response-2012b25584b546c398a18ae88abbfa54.json`: HTTP 200, `finish_reason=length`, 797 content characters, 34 input / 1056 completion / 873 reasoning tokens.

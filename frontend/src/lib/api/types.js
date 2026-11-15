@@ -8,7 +8,6 @@ export const JOB_TYPES = {
 	CHARACTER_REFERENCE: 'character_reference',
 	DRAFT_SKETCH: 'draft_sketch',
 	FINAL_LINE_ART: 'final_line_art',
-	COLOUR_SUGGESTION: 'colour_suggestion',
 	PDF_ASSEMBLY: 'pdf_assembly'
 };
 
@@ -19,7 +18,6 @@ export const STAGES = {
 	PANELS: 'panels',
 	DRAFT: 'draft',
 	LINE_ART: 'line_art',
-	COLOUR: 'colour',
 	EXPORT: 'export'
 };
 
@@ -50,7 +48,6 @@ export const STAGE_ESTIMATED_COSTS = {
 	character_reference: 0.01,
 	draft_sketch: 0.01,
 	final_line_art: 0.01,
-	colour_suggestion: 0.005,
 	pdf_assembly: 0.001
 };
 
@@ -122,9 +119,6 @@ export function isOverlayPage(page) {
 export function exportDrawsLettering(page) {
 	return isOverlayPage(page) && !page.line_art_image_url;
 }
-
-// Ink stays baked-lettering only: the server answers 409 for overlay pages.
-export const INK_OVERLAY_NOTE = 'Ink is not available for overlay-lettered pages. Use Painted.';
 
 export const EXPORT_PREVIEW_NOTES = {
 	noArtwork: 'No approved artwork',

@@ -43,7 +43,7 @@ func TestAdmissionConcurrentRequests(t *testing.T) {
 }
 
 func TestRequestLimitConfiguration(t *testing.T) {
-	for _, key := range []string{"MAX_JSON_BYTES", "MAX_SCRIPT_BYTES", "MAX_SCRIPT_WORDS", "MAX_CHAPTERS", "MAX_TEXT_FIELD_BYTES", "MAX_COLOUR_IMAGE_BYTES", "MAX_COLOUR_IMAGE_PIXELS", "REQUESTS_PER_IP_PER_MINUTE", "REQUESTS_PER_USER_PER_MINUTE", "REQUEST_ADMISSION_KEYS"} {
+	for _, key := range []string{"MAX_JSON_BYTES", "MAX_SCRIPT_BYTES", "MAX_SCRIPT_WORDS", "MAX_CHAPTERS", "MAX_TEXT_FIELD_BYTES", "REQUESTS_PER_IP_PER_MINUTE", "REQUESTS_PER_USER_PER_MINUTE", "REQUEST_ADMISSION_KEYS"} {
 		t.Run(key, func(t *testing.T) {
 			limits, err := RequestLimitsFromEnv(func(name string) string {
 				if name == key {

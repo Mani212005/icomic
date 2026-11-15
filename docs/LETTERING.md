@@ -22,12 +22,13 @@ existing projects or pages. Even future allocations in the existing running book
 stay baked. Migration `000009` only adds columns, defaulting existing rows to baked;
 it never updates, downloads, relabels or overwrites existing images.
 
-Overlay drafts and painted pages use a `text_free` document. Ink pages always stay
-baked: requesting ink for an overlay page returns 409 rather than consuming a
-text-free draft through the legacy lettering prompt. GET on legacy/ink pages
-returns baked with no layer; PATCH returns 409. There is no client mode toggle.
-Exports draw eligible overlay layouts over the unchanged image. Baked/ink pages
-keep their existing comic content streams. The code default stays off so services started
+Overlay drafts and painted pages use a `text_free` document. The Ink route is
+retired: `variant=ink` is refused with 400 and never consumes a text-free draft
+through the legacy lettering prompt. A page finished with Ink before the route
+was removed (it holds line art) stays baked: GET returns baked with no layer;
+PATCH returns 409. There is no client mode toggle.
+Exports draw eligible overlay layouts over the unchanged image. Baked and legacy
+Ink pages keep their existing comic content streams. The code default stays off so services started
 without Compose, and the hermetic suites, keep the baked behaviour.
 
 ## Composition and text-free rendering
@@ -79,8 +80,8 @@ only geometry/zones plus visual story inputs. Its policy explicitly requests
 with readable text, and no letters, words, numbers, signs, labels, symbols, writing
 or glyph-like marks on props and scrolls**. Dialogue panels request a large low-detail
 empty pocket at the outer top, away from faces and mouths, with a clear tail path.
-Draft and painted stages use the same geometry; legacy ink
-never receives an overlay document. No image options or extra provider calls are
+Draft and painted stages use the same geometry; a legacy page finished
+with the retired Ink route never receives an overlay document. No image options or extra provider calls are
 added. The fake image adapter returns a portrait 256x384 text-free stand-in for
 this mode; baked fake output is unchanged.
 
@@ -397,7 +398,7 @@ The standalone fake runner also supports `make e2e-comic E2E_ARGS="--overlay-let
 It enables the setting for its isolated Compose stack, saves per-page JSON layouts,
 checks an override and source-image hashes, exports a PDF and verifies extractable
 text, page count and size. It refuses live
-mode. The ordinary baked runner retains ink/colour/PDF coverage.
+mode. The ordinary baked runner retains the painted/PDF coverage.
 
 For review-only real-art samples, use the AI environment:
 
@@ -416,7 +417,7 @@ model lettering and inspect full resolution, especially tails and caption paddin
 ## Editor preview and placement
 
 Overlay draft and painted previews use `LetteringPreview` and `LetteringLayer`.
-Baked/legacy/ink pages keep their original image preview, without lettering or
+Baked and legacy pages (including those finished with the retired Ink route) keep their original image preview, without lettering or
 controls. A frame follows the actual image bounds, and the SVG uses a physical
 page-height viewBox with `preserveAspectRatio="none"`: page-normalized coordinates
 scale to the same image pixels at every viewport width. Exact font glyph outlines

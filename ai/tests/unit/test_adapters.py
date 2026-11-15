@@ -58,15 +58,6 @@ def test_fake_vision_adapter():
     review = adapter.review("meta-llama-3.2-11b-vision-instruct", b"dummy", "Check line art")
     assert "OK" in review
 
-    palette = adapter.suggest_palette(
-        "meta-llama-3.2-11b-vision-instruct", b"dummy", "Cyberpunk alley"
-    )
-    assert len(palette.palette) > 0
-    assert palette.theme != ""
-    for item in palette.palette:
-        assert item.hex_color.startswith("#")
-        assert len(item.hex_color) == 7
-
 
 def test_fake_image_adapter():
     adapter = FakeImageAdapter()

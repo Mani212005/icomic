@@ -33,8 +33,7 @@ class TestContracts(unittest.TestCase):
             "/internal/v1/generate-chapter-outline",
             "/internal/v1/generate-panel-text",
             "/internal/v1/generate-draft-sketch",
-            "/internal/v1/generate-line-art",
-            "/internal/v1/suggest-colour-palette",
+            "/internal/v1/generate-painted-page",
             "/internal/v1/moderate-prompt",
             "/internal/v1/assemble-pdf",
             "/internal/v1/job/{id}/status",
@@ -111,11 +110,11 @@ class TestContracts(unittest.TestCase):
         router = (CONTRACTS_DIR.parent / "backend/internal/api/router.go").read_text()
         served = set(
             re.findall(
-                r'handle\("POST (/api/v1/[^"]+)", s\.(?:GenerateCharacterReference|GenerateDraft|GenerateLineArt|GeneratePaintedPage|SuggestColourPalette)\)',
+                r'handle\("POST (/api/v1/[^"]+)", s\.(?:GenerateCharacterReference|GenerateDraft|GeneratePaintedPage)\)',
                 router,
             )
         )
-        self.assertEqual(len(served), 5, "expected the five debited generation routes in the router")
+        self.assertEqual(len(served), 4, "expected the four debited generation routes in the router")
         self.assertEqual(served - set(public["paths"]), set(), "generation routes missing from generation-api.yaml")
         for path in served:
             responses = public["paths"][path]["post"]["responses"]
