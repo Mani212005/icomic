@@ -226,3 +226,244 @@ def test_standalone_fake_runner_overlay_flow_exports_pdf(
     assert len(list(tmp_path.glob("lettering-*.json"))) == (count if overlay else 0)
     assert guard.pdf_page_count == count + 1
     assert (tmp_path / "latest.pdf").read_bytes().startswith(b"%PDF")
+
+
+@pytest.mark.parametrize(
+    ("warning_payload", "export_status", "should_pass", "expected_err"),
+    [
+        (
+            [
+                {
+                    "code": "lettering_review_required",
+                    "flags": ["no_calm_zone"],
+                    "message": "Some lettering was withheld because no calm zone was found.",
+                    "page_number": 1,
+                }
+            ],
+            "completed",
+            True,
+            None,
+        ),
+        (
+            [
+                {
+                    "code": "unauthorized_code",
+                    "flags": ["no_calm_zone"],
+                    "message": "Unauthorized warning code.",
+                    "page_number": 1,
+                }
+            ],
+            "completed",
+            False,
+            "overlay export warnings",
+        ),
+        (
+            [
+                {
+                    "code": "lettering_review_required",
+                    "flags": ["out_of_panel"],
+                    "message": "Out of panel.",
+                    "page_number": 1,
+                }
+            ],
+            "completed",
+            False,
+            "overlay export warnings",
+        ),
+        (
+            [
+                {
+                    "code": "lettering_review_required",
+                    "flags": ["no_calm_zone", "out_of_panel"],
+                    "message": "Multiple flags.",
+                    "page_number": 1,
+                }
+            ],
+            "completed",
+            False,
+            "overlay export warnings",
+        ),
+        (
+            [
+                {
+                    "code": "lettering_review_required",
+                    "flags": [],
+                    "message": "Empty flags.",
+                    "page_number": 1,
+                }
+            ],
+            "completed",
+            False,
+            "overlay export warnings",
+        ),
+        (
+            [
+                {
+                    "code": "lettering_review_required",
+                    "flags": ["no_calm_zone"],
+                    "message": "Some lettering was withheld because no calm zone was found.",
+                    "page_number": 1,
+                }
+            ],
+            "failed",
+            False,
+            "export did not complete: failed",
+        ),
+    ],
+)
+def test_comic_e2e_fake_transport_export_warning_handling(
+    monkeypatch, tmp_path, capsys, warning_payload, export_status, should_pass, expected_err
+):
+    from scripts.e2e import comic_e2e as runner
+
+    content = b"BT /F1 12 Tf 72 712 Td (Hello world) Tj ET"
+    stream_len = len(content)
+    pdf_bytes = (
+        b"%PDF-1.4\n"
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+        b"2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj\n"
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >> endobj\n"
+        b"4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 6 0 R >> >> >> endobj\n"
+        b"5 0 obj << /Length " + str(stream_len).encode() + b" >>\n"
+        b"stream\n" + content + b"\nendstream\nendobj\n"
+        b"6 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n"
+        b"xref\n0 7\n"
+        b"0000000000 65535 f \n"
+        b"0000000009 00000 n \n"
+        b"0000000058 00000 n \n"
+        b"0000000123 00000 n \n"
+        b"0000000202 00000 n \n"
+        b"0000000320 00000 n \n"
+        b"0000000410 00000 n \n"
+        b"trailer << /Size 7 /Root 1 0 R >>\n"
+        b"startxref\n480\n%%EOF\n"
+    )
+
+    panels = [{"id": f"pan-{i}", "dialogue": "hi"} for i in range(4)]
+    pages = [
+        {
+            "id": "page-1",
+            "lettering_mode": "overlay",
+            "panel_ids": [f"pan-{i}" for i in range(4)],
+            "draft_image_url": "http://127.0.0.1:8080/media/draft.png",
+            "draft_approved_at": "2026-01-01T00:00:00Z",
+            "painted_page_image_url": "http://127.0.0.1:8080/media/painted.png",
+            "painted_page_approved_at": "2026-01-01T00:00:00Z",
+        }
+    ]
+
+    class FakeTransport:
+        def __init__(self):
+            self.download_called = False
+
+        def __call__(self, path: str, method: str = "GET", payload=None, extra_headers=None):
+            if path == "/healthz":
+                return {}
+            if path == "/api/v1/me/credit-usage":
+                return {"balance": 1000}
+            if path == "/api/v1/projects" and method == "POST":
+                return {"project": {"id": "proj-1", "finish_preset": "off"}}
+            if path == "/api/v1/projects/proj-1/characters":
+                return {"characters": [{"id": "char-1", "name": "Nia"}]}
+            if path == "/api/v1/characters/char-1/reference-image" and method == "POST":
+                return {}
+            if path == "/api/v1/characters/char-1/approve" and method == "POST":
+                return {}
+            if path == "/api/v1/projects/proj-1/chapters" and method == "GET":
+                return {"chapters": [{"id": "chap-1"}]}
+            if path == "/api/v1/projects/proj-1/chapters" and method == "POST":
+                return {"chapter": {"id": "chap-1"}}
+            if path == "/api/v1/chapters/chap-1/approve" and method == "POST":
+                return {}
+            if path == "/api/v1/chapters/chap-1/panels":
+                return {"panels": panels}
+            if path == "/api/v1/chapters/chap-1/pages":
+                return {"pages": pages}
+            if path == "/api/v1/panels/pan-0" and method == "PATCH":
+                return {}
+            if path == "/api/v1/pages/page-1/draft" and method == "POST":
+                return {}
+            if path == "/api/v1/pages/page-1/draft/approve" and method == "POST":
+                return {}
+            if path == "/api/v1/pages/page-1/painted-page" and method == "POST":
+                return {}
+            if path == "/api/v1/pages/page-1/line-art/approve" and method == "POST":
+                return {}
+            if path == "/api/v1/pages/page-1/lettering":
+                return {
+                    "lettering": {
+                        "version": "page-lettering-v1",
+                        "input": {
+                            "panels": [
+                                {
+                                    "panel_id": "pan-0",
+                                    "utterances": [
+                                        {
+                                            "utterance_id": "u-1",
+                                            "kind": "speech",
+                                            "text": "Hello world",
+                                        }
+                                    ],
+                                }
+                            ]
+                        },
+                        "layout": {
+                            "bubbles": [
+                                {"lines": [{"text": "Hello world"}], "flags": []},
+                                {"lines": [{"text": "Withheld"}], "flags": ["no_calm_zone"]},
+                            ]
+                        },
+                        "overrides": {},
+                    }
+                }
+            if path == "/api/v1/pages/page-1/lettering/utterances/u-1/override" and method == "PATCH":
+                return {
+                    "lettering": {
+                        "layout": {
+                            "bubbles": [
+                                {"lines": [{"text": "Hello world"}], "flags": []},
+                                {"lines": [{"text": "Withheld"}], "flags": ["no_calm_zone"]},
+                            ],
+                            "modified": True,
+                        },
+                        "overrides": {"u-1": {"center": {"x": 0.5, "y": 0.3}}},
+                    }
+                }
+            if path == "/api/v1/projects/proj-1/export" and method == "POST":
+                resp = {"export": {"id": "exp-1"}}
+                if warning_payload is not None:
+                    resp["warnings"] = warning_payload
+                return resp
+            if path == "/api/v1/exports/exp-1":
+                return {"export": {"id": "exp-1", "status": export_status}}
+            if path == "/api/v1/exports/exp-1/download":
+                self.download_called = True
+                return pdf_bytes
+            raise AssertionError(f"unexpected request: {method} {path}")
+
+    fake_transport = FakeTransport()
+    monkeypatch.setattr(runner, "json_request", fake_transport)
+    monkeypatch.setattr(runner, "fetch_line_art_image", lambda url: b"fake-png-bytes")
+    monkeypatch.setattr(
+        runner, "provision_run_user", lambda: "00000000-0000-0000-0000-000000000001"
+    )
+
+    guard = runner.CostGuard(float("inf"), False)
+    guard.overlay_lettering = True
+    guard.finish_preset = "off"
+
+    if should_pass:
+        count, project_id = runner.run_flow(guard, tmp_path)
+        assert project_id == "proj-1" and count == 1
+        assert fake_transport.download_called is True
+        assert (tmp_path / "latest.pdf").exists()
+        assert (tmp_path / "latest.pdf").read_bytes() == pdf_bytes
+        captured = capsys.readouterr()
+        assert "WARNING overlay export: lettering_review_required" in captured.out
+        assert "no_calm_zone" in captured.out
+    else:
+        with pytest.raises(runner.E2EError, match=expected_err):
+            runner.run_flow(guard, tmp_path)
+        assert fake_transport.download_called is False
+        assert not (tmp_path / "latest.pdf").exists()
+
