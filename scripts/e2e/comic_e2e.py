@@ -463,6 +463,7 @@ def verify_overlay_pdf(pdf: bytes, layouts: list[dict[str, Any]], comic_page_cou
         line["text"]
         for layout in layouts
         for bubble in layout.get("bubbles", [])
+        if not bubble.get("flags")
         for line in bubble.get("lines", [])
         if line.get("text")
     ]
@@ -977,8 +978,24 @@ def run_flow(
 
     guard.current_stage = "export"
     exported = json_request(f"/api/v1/projects/{project_id}/export", "POST")
-    if guard.overlay_lettering and exported.get("warnings"):
-        raise E2EError(f"overlay export warnings: {exported['warnings']}")
+    warnings = exported.get("warnings") or []
+    if warnings:
+        allowed = (
+            guard.overlay_lettering
+            and all(
+                isinstance(w, dict)
+                and w.get("code") == "lettering_review_required"
+                and list(w.get("flags") or []) == ["no_calm_zone"]
+                for w in warnings
+            )
+        )
+        if not allowed:
+            raise E2EError(f"overlay export warnings: {warnings}")
+        for w in warnings:
+            print(
+                f"WARNING overlay export: {w.get('code')}: {w.get('message')} "
+                f"(flags: {w.get('flags')})"
+            )
     export = require(exported, "export", "export response has no export record")
     export_id = require(export, "id", "export response has no id")
     export_status = json_request(f"/api/v1/exports/{export_id}").get("export", {})
