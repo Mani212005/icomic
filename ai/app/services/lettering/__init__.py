@@ -369,7 +369,17 @@ def _anchor_beside(face: Box, bubble: Box, aspect: float, panel: Box) -> tuple[f
     dx, dy = cx - nx, cy - ny
     length = math.hypot(dx, dy)
     if length > 1e-9:
-        nx, ny = nx + dx / length * 0.004, ny + dy / length * 0.004
+        cand_x, cand_y = nx + dx / length * 0.004, ny + dy / length * 0.004
+        if not (bubble.x <= cand_x <= bubble.right and bubble.y <= cand_y <= bubble.bottom):
+            nx, ny = cand_x, cand_y
+        else:
+            fx = face.center[0] * aspect
+            nx = bubble.right + 0.006 if cx < fx else bubble.x - 0.006
+            ny = min(max(cy, y0), y1)
+    elif bubble.x <= nx <= bubble.right and bubble.y <= ny <= bubble.bottom:
+        fx = face.center[0] * aspect
+        nx = bubble.right + 0.006 if cx < fx else bubble.x - 0.006
+        ny = min(max(cy, y0), y1)
     return (nx - panel.x) / panel.width, (ny - panel.y) / panel.height
 
 
@@ -392,6 +402,7 @@ def _fallback_drafts(
     blockers: list[Box],
     safety: ArtSafetyMap,
     hard: list[Box],
+    speaker_face: Box | None = None,
 ) -> list[Draft]:
     """Place a line that found no calm slot: split caption, then a margin strip.
 
@@ -434,7 +445,7 @@ def _fallback_drafts(
             occupied.append(best.box)
         if parts and len(placed) == len(parts):
             return placed
-    return _strip_draft(u, panel, cfg, aspect, blockers, safety, hard)
+    return _strip_draft(u, panel, cfg, aspect, blockers, safety, hard, speaker_face)
 
 
 def _strip_draft(
@@ -445,12 +456,14 @@ def _strip_draft(
     blockers: list[Box],
     safety: ArtSafetyMap,
     hard: list[Box],
+    speaker_face: Box | None = None,
 ) -> list[Draft]:
     """Last resort: a margin strip (captions) or the least-bad free slot, never over a subject.
 
     Captions try the panel's top and bottom edges first. Speech, and captions whose strips are
-    blocked, scan a grid over the whole panel. The least overlap with any subject wins, then
-    cost; only a slot that still touches a subject is flagged for review.
+    blocked, scan a grid over the whole panel, including slots beside or below the speaker.
+    The least overlap with any subject wins, then cost; only a slot that still touches a subject
+    is flagged for review.
     """
     options: list[tuple[float, float, float, float, Box, Draft]] = []
     is_caption = u.kind in {"narration", "caption"}
@@ -471,6 +484,11 @@ def _strip_draft(
                 ys += [
                     panel.y + i * step_y for i in range(int((panel.height - b.height) / step_y) + 1)
                 ]
+                if speaker_face:
+                    face_scaled_x = speaker_face.x * aspect
+                    face_scaled_r = speaker_face.right * aspect
+                    xs += [face_scaled_r + cfg.gap, face_scaled_x - b.width - cfg.gap]
+                    ys += [speaker_face.bottom + cfg.gap]
             for y in ys:
                 for x in xs:
                     slot = Box(x, y, b.width, b.height)
@@ -709,8 +727,18 @@ def _layout_panel(
         # Without any art pixels or boxes the zones stay hard and the old review flags apply.
         if d.utterance.utterance_id in placed_ids or not art_safety:
             continue
+        own_face = (
+            named_speaker_face(d.utterance) if d.utterance.kind in {"speech", "thought"} else None
+        )
         extra = _fallback_drafts(
-            d.utterance, p, cfg, aspect, [*pinned, *(c.box for c in chosen)], art_safety, hard_boxes
+            d.utterance,
+            p,
+            cfg,
+            aspect,
+            [*pinned, *(c.box for c in chosen)],
+            art_safety,
+            hard_boxes,
+            own_face,
         )
         chosen.extend(extra)
         if extra:
