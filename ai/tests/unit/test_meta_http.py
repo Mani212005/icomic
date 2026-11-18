@@ -509,3 +509,28 @@ def test_invalid_reasoning_environment_does_not_fail_import(monkeypatch):
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_token_usage_no_double_counting_reasoning_tokens():
+    # reasoning_tokens are already included in completion_tokens (output_tokens);
+    # they must not be added again.
+    fixture = load_fixture("chat_completion_content_parts.json")
+    _content, token_usage, _request_id, _meta = parse_chat_completion_response(fixture)
+
+    # completion_tokens=15 in fixture (includes 5 reasoning_tokens)
+    assert token_usage.output_tokens == 15  # NOT 15 + 5 = 20
+    assert token_usage.reasoning_tokens == 5
+    assert token_usage.total_tokens == 35
+
+
+def test_meta_empty_response_error_carries_finish_reason_and_reasoning_tokens():
+    fixture = load_fixture("chat_completion_empty_length.json")
+    with pytest.raises(MetaEmptyResponseError) as exc_info:
+        parse_chat_completion_response(fixture)
+
+    err = exc_info.value
+    assert err.finish_reason == "length"
+    assert err.reasoning_tokens == 10
+    assert err.token_usage is not None
+    assert err.token_usage.finish_reason == "length"
+    assert err.token_usage.reasoning_tokens == 10

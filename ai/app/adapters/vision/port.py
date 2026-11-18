@@ -26,7 +26,15 @@ class VisionPort(Protocol):
     """Protocol defining multimodal image review and subject detection interface."""
 
     def review(self, model: str, image_bytes: bytes, prompt: str, **kwargs) -> str:
-        """Review an image with a multimodal model."""
+        """Review an image with a multimodal model.
+
+        Supported kwargs may include:
+            reasoning_effort: Optional str ('minimal', 'low', 'medium', 'high', 'xhigh')
+                controlling the reasoning trace budget on reasoning-capable models.
+            max_tokens: Desired response token limit (headroom may be added by adapter).
+            temperature: Sampling temperature.
+            hashed_user_id: Pseudonymous user identifier for audit/abuse logging.
+        """
         ...
 
     def detect_subjects(
