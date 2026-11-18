@@ -133,11 +133,16 @@ class MetaEmptyResponseError(MetaAPIError):
         request_id: str | None = None,
         finish_reason: str | None = None,
         token_usage: TokenUsage | None = None,
+        reasoning_tokens: int | None = None,
     ) -> None:
         super().__init__(message, status_code=status_code, details=details, request_id=request_id)
         self.finish_reason = finish_reason
         self.token_usage = token_usage
-        self.reasoning_tokens = token_usage.reasoning_tokens if token_usage else None
+        self.reasoning_tokens = (
+            reasoning_tokens
+            if reasoning_tokens is not None
+            else (token_usage.reasoning_tokens if token_usage else None)
+        )
 
 
 class MetaRateLimitError(MetaAPIError):

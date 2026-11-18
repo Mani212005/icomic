@@ -25,7 +25,15 @@ class LanguagePort(Protocol):
     """Protocol defining LLM text generation and token estimation interface."""
 
     def complete(self, model: str, messages: list[Message], **kwargs) -> str:
-        """Execute a text completion request."""
+        """Execute a text completion request.
+
+        Supported kwargs may include:
+            reasoning_effort: Optional str ('minimal', 'low', 'medium', 'high', 'xhigh')
+                controlling the reasoning trace budget on reasoning-capable models.
+            max_tokens: Desired response token limit (headroom may be added by adapter).
+            temperature: Sampling temperature.
+            hashed_user_id: Pseudonymous user identifier for audit/abuse logging.
+        """
         ...
 
     def estimate_tokens(self, messages: list[Message]) -> TokenUsage:

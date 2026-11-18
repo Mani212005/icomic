@@ -104,6 +104,7 @@ def test_meta_language_adapter_empty_length_raises():
         )
 
     assert "finish_reason='length'" in str(exc_info.value)
+    assert exc_info.value.reasoning_tokens == 10
     assert adapter.last_finish_reason == "length"
     assert adapter.last_usage is not None
     assert adapter.last_usage.reasoning_tokens == 10
