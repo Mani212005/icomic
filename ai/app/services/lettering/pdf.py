@@ -16,7 +16,53 @@ from fontTools.ttLib import TTFont
 
 from ...gen.models import PageLetteringState, PdfLetteringWarning
 from . import source_digest
+from .geometry import Box
 from .typography import FONT_DIRECTORY, FONT_FILES
+
+HARD_SUBJECT_KINDS = ("face", "hand", "bird")
+HARD_SUBJECT_CONFIDENCE = 0.5
+MAX_MILD_SUBJECT_FRACTION = 0.15
+MAX_MILD_BUBBLE_FRACTION = 0.25
+
+
+def is_hard_subject_overlap(bubble, subjects) -> bool:
+    """Whether a placed bubble covers a confident face, hand or bird box.
+
+    A mild graze (at most 15% of the subject box and 25% of the bubble area, with
+    no text ink directly over the subject) or small overlap with non-critical
+    subjects (props, lamps, boats) is tolerated by the review gate.
+    """
+    if not subjects:
+        return True
+    b_bounds = bubble.shape.bounds
+    b_box = Box(b_bounds.x, b_bounds.y, b_bounds.width, b_bounds.height)
+    b_area = max(b_box.width * b_box.height, 1e-9)
+    for s in subjects:
+        kind = s.kind if hasattr(s, "kind") else s["kind"]
+        conf = s.confidence if hasattr(s, "confidence") else s["confidence"]
+        rect = getattr(s, "rect", getattr(s, "box", None)) or s["rect"]
+        s_box = Box(rect.x, rect.y, rect.width, rect.height) if hasattr(rect, "x") else Box(**rect)
+        s_area = max(s_box.width * s_box.height, 1e-9)
+        ox = max(0.0, min(b_box.right, s_box.right) - max(b_box.x, s_box.x))
+        oy = max(0.0, min(b_box.bottom, s_box.bottom) - max(b_box.y, s_box.y))
+        area = ox * oy
+        if area <= 0:
+            continue
+        if kind in HARD_SUBJECT_KINDS and conf >= HARD_SUBJECT_CONFIDENCE:
+            if (
+                area / s_area > MAX_MILD_SUBJECT_FRACTION
+                or area / b_area > MAX_MILD_BUBBLE_FRACTION
+            ):
+                return True
+            for line in bubble.lines:
+                l_bounds = line.bounds
+                l_box = Box(l_bounds.x, l_bounds.y, l_bounds.width, l_bounds.height)
+                if l_box.overlaps(s_box):
+                    return True
+        else:
+            if area / b_area > 0.50 or area / s_area > 0.50:
+                return True
+    return False
 
 
 def eligibility(page):
@@ -49,7 +95,8 @@ def eligibility(page):
         )
         if not flags:
             return state.layout, None
-        uncalm = {
+        bubble_by_id = {b.utterance_id: b for b in state.layout.bubbles}
+        uncalm_utterance_ids = {
             i.utterance_id
             for i in state.layout.issues
             if (i.flag.root if hasattr(i.flag, "root") else i.flag) == "no_calm_zone"
@@ -58,25 +105,43 @@ def eligibility(page):
             for b in state.layout.bubbles
             if any((f.root if hasattr(f, "root") else f) == "no_calm_zone" for f in b.flags)
         }
+        withheld_ids = set()
+        for u_id in uncalm_utterance_ids:
+            bubble = bubble_by_id.get(u_id)
+            if bubble is None or is_hard_subject_overlap(bubble, state.subjects):
+                withheld_ids.add(u_id)
+
         safe_bubbles = [
-            b for b in state.layout.bubbles if b.utterance_id not in uncalm and not b.flags
+            b
+            for b in state.layout.bubbles
+            if b.utterance_id not in withheld_ids
+            and not ({f.root if hasattr(f, "root") else f for f in b.flags} - {"no_calm_zone"})
         ]
         if flags == ["no_calm_zone"] and safe_bubbles:
-            # Export independently placed bubbles while retaining a visible review
-            # warning for lines the art could not safely accommodate.
+            if withheld_ids:
+                # Export independently placed bubbles while retaining a visible review
+                # warning for lines the art could not safely accommodate.
+                safe_layout = state.layout.model_copy(
+                    update={
+                        "issues": [],
+                        "bubbles": safe_bubbles,
+                    }
+                )
+                code, message = (
+                    "lettering_review_required",
+                    "Some lettering was withheld because no calm zone was found.",
+                )
+                return safe_layout, PdfLetteringWarning(
+                    page_number=page["page_number"], code=code, message=message, flags=flags
+                )
+            # All uncalm lines are tolerated mild grazes: export without withholding.
             safe_layout = state.layout.model_copy(
                 update={
                     "issues": [],
                     "bubbles": safe_bubbles,
                 }
             )
-            code, message = (
-                "lettering_review_required",
-                "Some lettering was withheld because no calm zone was found.",
-            )
-            return safe_layout, PdfLetteringWarning(
-                page_number=page["page_number"], code=code, message=message, flags=flags
-            )
+            return safe_layout, None
         code, message = (
             "lettering_review_required",
             "Lettering needs review: " + ", ".join(flags) + ". Fix before publishing.",

@@ -371,6 +371,156 @@ def test_live_5_no_calm_zone_warns_and_exports_safe_bubbles_offline():
     assert len(page_streams(pdf)) == 2
 
 
+def test_live_6_mild_brow_graze_exports_dialogue_offline():
+    from app.services.lettering import layout_page
+    from app.services.lettering.art_safety import Box, Subject
+    from app.services.lettering.pdf import eligibility
+
+    fixture = FIXTURES / "live-6/lettering-01.json"
+    saved_state = json.loads(fixture.read_text())
+    finished = (FIXTURES / "live-6/finished-art-01.jpg").read_bytes()
+    document = LetteringDocument.model_validate(saved_state["input"])
+    subjects = [
+        Subject(Box(**s["rect"]), s["kind"], s["confidence"], s.get("character"))
+        for s in saved_state["subjects"]
+    ]
+
+    # 1. Replay the saved live-6 page state (saved from probe 6 with Nia's panel 1 line flagged uncalm).
+    # The review gate recognizes the mild brow graze and tolerates it, exporting all 7 bubbles.
+    page_data_saved = {
+        "page_number": 1,
+        "page_id": document.page_id,
+        "image_bytes": finished,
+        "original_image_bytes": finished,
+        "lettering_mode": "overlay",
+        "finish_preset": "print-heavy",
+        "lettering": saved_state,
+    }
+    safe_layout_saved, warning_saved = eligibility(page_data_saved)
+    assert safe_layout_saved is not None
+    assert len(safe_layout_saved.bubbles) == 7
+    assert warning_saved is None
+
+    pdf_saved, writer_saved = build([page_data_saved])
+    assert len(writer_saved.warnings) == 0
+    extracted_saved = " ".join(extract(pdf_saved).split())
+    assert "LETTERING NOT EXPORTED" not in extracted_saved
+    assert "LETTERING REVIEW REQUIRED" not in extracted_saved
+    assert "What glows beside the lamp?" in extracted_saved
+    assert b"/FontFile2" in pdf_saved
+
+    # 2. Replay through fresh layout_page.
+    fresh_state = json.loads(fixture.read_text())
+    fresh_layout = layout_page(document, art_image=finished, subjects=subjects)
+    fresh_state["layout"] = fresh_layout.model_dump(mode="json")
+    fresh_state["overrides"] = {}
+    fresh_state["zone_overrides"] = {}
+    fresh_state["version"] = "page-lettering-v1"
+
+    assert len(fresh_layout.bubbles) == 7
+    panel1_bubble = next(
+        b
+        for b in fresh_layout.bubbles
+        if b.utterance_id == "a77ad062-12b8-4e92-88fd-e63e34e88c09-dialogue-0"
+    )
+    assert len(panel1_bubble.tail) > 0
+
+    page_data_fresh = {
+        "page_number": 1,
+        "page_id": document.page_id,
+        "image_bytes": finished,
+        "original_image_bytes": finished,
+        "lettering_mode": "overlay",
+        "finish_preset": "print-heavy",
+        "lettering": fresh_state,
+    }
+    safe_layout_fresh, warning_fresh = eligibility(page_data_fresh)
+    assert safe_layout_fresh is not None
+    assert len(safe_layout_fresh.bubbles) == 7
+    assert warning_fresh is None
+
+    pdf_fresh, writer_fresh = build([page_data_fresh])
+    assert len(writer_fresh.warnings) == 0
+    extracted_fresh = " ".join(extract(pdf_fresh).split())
+    assert "LETTERING REVIEW REQUIRED" not in extracted_fresh
+    assert "What glows beside the lamp?" in extracted_fresh
+    assert b"/FontFile2" in pdf_fresh
+
+
+def test_is_hard_subject_overlap_thresholds():
+    from app.gen.models import (
+        LetteringBubble,
+        LetteringGlyph,
+        LetteringPoint,
+        LetteringRect,
+        LetteringShape,
+        LetteringTextLine,
+    )
+    from app.services.lettering.art_safety import Box, Subject
+    from app.services.lettering.pdf import is_hard_subject_overlap
+
+    def make_bubble(x=0.1, y=0.1, w=0.2, h=0.1, line_rect=None):
+        line_rect = line_rect or LetteringRect(x=x + 0.02, y=y + 0.02, width=0.1, height=0.02)
+        return LetteringBubble(
+            panel_id="p1",
+            utterance_id="u1",
+            order=0,
+            kind="speech",
+            shape=LetteringShape(
+                kind="rounded_rect", radius=0.006, bounds=LetteringRect(x=x, y=y, width=w, height=h)
+            ),
+            lines=[
+                LetteringTextLine(
+                    text="Hello",
+                    font_id="comic-neue-v1",
+                    font_size=0.02,
+                    baseline=LetteringPoint(x=line_rect.x, y=line_rect.y + line_rect.height),
+                    bounds=line_rect,
+                    glyphs=[
+                        LetteringGlyph(
+                            glyph_id=1,
+                            cluster=0,
+                            x=line_rect.x,
+                            y=line_rect.y,
+                            advance_x=0.01,
+                            advance_y=0.0,
+                        )
+                    ],
+                )
+            ],
+            tail=[],
+            thought_tail=[],
+            flags=["no_calm_zone"],
+        )
+
+    # 1. Mild brow graze: face overlap is <= 15% of subject and <= 25% of bubble, no ink collision.
+    mild_subject = Subject(Box(0.28, 0.1, 0.2, 0.2), "face", 0.95, "Nia")
+    bubble = make_bubble()
+    assert is_hard_subject_overlap(bubble, [mild_subject]) is False
+
+    # 2. Hard overlap: face overlap exceeds 15% of subject area.
+    hard_subject = Subject(Box(0.23, 0.1, 0.2, 0.2), "face", 0.95, "Nia")
+    assert is_hard_subject_overlap(bubble, [hard_subject]) is True
+
+    # 3. Hard overlap: text ink directly intersects subject box.
+    bubble_ink_hit = make_bubble(line_rect=LetteringRect(x=0.27, y=0.11, width=0.05, height=0.02))
+    assert is_hard_subject_overlap(bubble_ink_hit, [mild_subject]) is True
+
+    # 4. Critical subjects: hands and birds also enforce hard overlap rules.
+    hand_subject = Subject(Box(0.23, 0.1, 0.2, 0.2), "hand", 0.95, "Nia")
+    assert is_hard_subject_overlap(bubble, [hand_subject]) is True
+    bird_subject = Subject(Box(0.23, 0.1, 0.2, 0.2), "bird", 0.95, "Brass Bird")
+    assert is_hard_subject_overlap(bubble, [bird_subject]) is True
+
+    # 5. Non-critical subjects (objects/props): small overlap tolerated.
+    obj_small = Subject(Box(0.28, 0.1, 0.2, 0.2), "object", 0.95)
+    assert is_hard_subject_overlap(bubble, [obj_small]) is False
+
+    # 6. Absence of vision subjects returns True (uncalm bubble cannot be verified mild).
+    assert is_hard_subject_overlap(bubble, []) is True
+    assert is_hard_subject_overlap(bubble, None) is True
+
+
 @pytest.mark.parametrize("name", ["speech-tail", "narration", "thought", "unicode-devanagari"])
 def test_pdf_render_matches_serialized_layout_raster(name, tmp_path):
     # The PNG export's rasterizer (stored glyph outlines and shape union, never shaping) must
