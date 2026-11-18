@@ -49,20 +49,25 @@ def eligibility(page):
         )
         if not flags:
             return state.layout, None
-        omitted = {i.utterance_id for i in state.layout.issues} - {
-            b.utterance_id for b in state.layout.bubbles
+        uncalm = {
+            i.utterance_id
+            for i in state.layout.issues
+            if (i.flag.root if hasattr(i.flag, "root") else i.flag) == "no_calm_zone"
+        } | {
+            b.utterance_id
+            for b in state.layout.bubbles
+            if any((f.root if hasattr(f, "root") else f) == "no_calm_zone" for f in b.flags)
         }
-        if (
-            flags == ["no_calm_zone"]
-            and omitted
-            and any(not bubble.flags for bubble in state.layout.bubbles)
-        ):
+        safe_bubbles = [
+            b for b in state.layout.bubbles if b.utterance_id not in uncalm and not b.flags
+        ]
+        if flags == ["no_calm_zone"] and safe_bubbles:
             # Export independently placed bubbles while retaining a visible review
             # warning for lines the art could not safely accommodate.
             safe_layout = state.layout.model_copy(
                 update={
                     "issues": [],
-                    "bubbles": [bubble for bubble in state.layout.bubbles if not bubble.flags],
+                    "bubbles": safe_bubbles,
                 }
             )
             code, message = (

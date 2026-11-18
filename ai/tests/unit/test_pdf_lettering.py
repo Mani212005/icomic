@@ -313,6 +313,64 @@ def test_live_3_text_free_art_relayouts_and_exports_offline():
     assert "REVIEW REQUIRED" not in extracted
 
 
+def test_live_5_no_calm_zone_warns_and_exports_safe_bubbles_offline():
+    from app.gen.models import LetteringDocument
+    from app.services.lettering import layout_page
+    from app.services.lettering.art_safety import Box, Subject
+    from app.services.lettering.pdf import eligibility
+
+    fixture = FIXTURES / "live-5/lettering-01.json"
+    state = json.loads(fixture.read_text())
+    finished = (FIXTURES / "live-5/finished-art-01.jpg").read_bytes()
+    document = LetteringDocument.model_validate(state["input"])
+    subjects = [
+        Subject(Box(**s["rect"]), s["kind"], s["confidence"], s.get("character"))
+        for s in state["subjects"]
+    ]
+    layout = layout_page(document, art_image=finished, subjects=subjects)
+    state["layout"] = layout.model_dump(mode="json")
+    state["overrides"] = {}
+    state["zone_overrides"] = {}
+    state["version"] = "page-lettering-v1"
+
+    assert len(layout.bubbles) == 7
+    uncalm_bubbles = [b for b in layout.bubbles if any(f.root == "no_calm_zone" for f in b.flags)]
+    assert len(uncalm_bubbles) == 1
+    assert uncalm_bubbles[0].utterance_id == "91ec77fb-bd1d-4bf2-9cef-62b52fc3c1a1-dialogue-0"
+    assert [i.flag.root for i in layout.issues] == ["no_calm_zone"]
+
+    page_data = {
+        "page_number": 1,
+        "page_id": document.page_id,
+        "image_bytes": finished,
+        "original_image_bytes": finished,
+        "lettering_mode": "overlay",
+        "finish_preset": "print-heavy",
+        "lettering": state,
+    }
+
+    safe_layout, warning = eligibility(page_data)
+    assert safe_layout is not None
+    assert len(safe_layout.bubbles) == 6
+    assert warning.code == "lettering_review_required"
+    assert warning.message == "Some lettering was withheld because no calm zone was found."
+    assert [f.root for f in warning.flags] == ["no_calm_zone"]
+
+    pdf, writer = build([page_data])
+    assert [w.code for w in writer.warnings] == ["lettering_review_required"]
+    extracted = " ".join(extract(pdf).split())
+    assert "LETTERING NOT EXPORTED" not in extracted
+    assert "LETTERING REVIEW REQUIRED" in extracted
+    assert "Some lettering was withheld because no calm zone was found." in extracted
+
+    safe_lines = [line.text for bubble in safe_layout.bubbles for line in bubble.lines]
+    assert all(line in extracted for line in safe_lines)
+    uncalm_lines = [line.text for bubble in uncalm_bubbles for line in bubble.lines]
+    assert not any(line in extracted for line in uncalm_lines)
+    assert b"/FontFile2" in pdf
+    assert len(page_streams(pdf)) == 2
+
+
 @pytest.mark.parametrize("name", ["speech-tail", "narration", "thought", "unicode-devanagari"])
 def test_pdf_render_matches_serialized_layout_raster(name, tmp_path):
     # The PNG export's rasterizer (stored glyph outlines and shape union, never shaping) must

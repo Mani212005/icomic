@@ -782,7 +782,7 @@ def _layout_panel(
         ):
             d.flags.append("out_of_panel")
         review_flags = sorted(set(d.flags))
-        flags = [flag for flag in review_flags if flag != "no_calm_zone"]
+        flags = review_flags
         bubble = LetteringBubble(
             panel_id=panel.panel_id,
             utterance_id=d.utterance.utterance_id,
